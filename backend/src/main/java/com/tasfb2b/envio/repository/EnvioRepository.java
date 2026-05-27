@@ -4,7 +4,9 @@ import com.tasfb2b.envio.domain.Envio;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 public interface EnvioRepository extends CrudRepository<Envio, Long> {
@@ -45,6 +47,10 @@ public interface EnvioRepository extends CrudRepository<Envio, Long> {
 
     @Query("SELECT e.fecha as fecha, SUM(e.cantidadMaletas) as total FROM Envio e GROUP BY e.fecha ORDER BY SUM(e.cantidadMaletas) ASC")
     List<DailyTotal> findDailyTotals();
+
+    /** Devuelve los codigoPedido ya registrados para un origen, para pre-filtrar duplicados. */
+    @Query("SELECT e.codigoPedido FROM Envio e WHERE e.origen.icaoCode = :icao")
+    Set<String> findCodigosByOrigenIcao(@Param("icao") String icao);
 
     interface DailyTotal {
         java.time.LocalDate getFecha();

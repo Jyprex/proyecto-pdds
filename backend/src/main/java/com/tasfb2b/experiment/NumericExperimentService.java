@@ -1,5 +1,12 @@
 package com.tasfb2b.experiment;
 
+/*
+ * Sistema TASF.B2B — Motor de Optimización Logística
+ * Grupo 4D — Curso de Proyecto de Diseño de Software
+ * Autores: Jim Navarrete, Diego Silvestre, Jose Avalos, Mathias Medina
+ * Fecha: Mayo 2026
+ */
+
 import com.tasfb2b.aeropuerto.domain.Aeropuerto;
 import com.tasfb2b.aeropuerto.repository.AeropuertoRepository;
 import com.tasfb2b.planificador.domain.Route;
@@ -29,6 +36,13 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+/**
+ * Servicio de experimentación numérica DOE (Design of Experiments) sobre el dataset TASF.B2B.
+ *
+ * <p>Calcula 5 niveles de demanda (MIN, MID_LOW, AVG, MID_HIGH, MAX) a partir de los archivos
+ * históricos de envíos, ejecuta el algoritmo seleccionado (HGA o ALNS) sobre cada nivel y
+ * produce métricas de eficiencia logística para comparación estadística.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -42,10 +56,17 @@ public class NumericExperimentService {
     @Value("${tasf.data.path}")
     private String dataPath;
 
-    private static final long ALGO_WINDOW_MS = 5_000L;
-    private static final int CAPACIDAD_AVIONES_DIA = 946_000;
+    /** Ventana de ejecución ALNS — escenario TIEMPO_REAL (~6.5 s). */
+    private static final long ALNS_WINDOW_MS  = 6_500L;
+    /** Ventana de ejecución HGA — escenario PERIODO (~45 s). */
+    private static final long HGA_WINDOW_MS   = 45_000L;
+    /**
+     * Umbral de colapso computacional (Sa). Si {@code planningTimeMs >= SA_THRESHOLD_MS},
+     * el algoritmo excedió la ventana operativa antes del siguiente despegue crítico.
+     */
+    private static final long SA_THRESHOLD_MS     = 15_000L;
+    private static final int  CAPACIDAD_AVIONES_DIA = 946_000;
 
-    // Sesiones activas en memoria
     private final Map<String, ExperimentSession> activeSessions = new ConcurrentHashMap<>();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -226,11 +247,10 @@ public class NumericExperimentService {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 4. EJECUCIÓN DE UN NIVEL INDIVIDUAL
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /** API pública para ExcelExportService */
+    /**
+     * Punto de entrada pública para {@link com.tasfb2b.experiment.ExcelExportService}.
+     * Delega en la implementación privada del ciclo de experimentación por nivel.
+     */
     public ExperimentRunResult runSingleLevelPublic(int levelIndex,
                                                     ExperimentSession.LevelDefinition levelDef,
                                                     String algorithm,
@@ -244,39 +264,41 @@ public class NumericExperimentService {
                                                String algorithm,
                                                Map<String, Aeropuerto> airportMap,
                                                List<SuperLot> lots) {
-        // El día histórico del nivel: sus datos ya vienen completos, sin cap artificial.
-        // La demanda real es la suma de maletas del día que representó ese nivel en el histórico.
         LocalDate fecha = LocalDate.parse(levelDef.getFecha());
         long totalMaletasDia = lots.stream().mapToLong(SuperLot::getTotalMaletas).sum();
 
-        // ── Recursos del sistema ───────────────────────────────────────────────
         OperatingSystemMXBean osBean =
                 (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         Runtime runtime = Runtime.getRuntime();
-        long loadingTimeMs = 0; // La carga ya se realizó en runExperiment (agruparDia por fecha de nivel)
+        long loadingTimeMs = 0;
+
+        long windowMs = "ALNS".equalsIgnoreCase(algorithm) ? ALNS_WINDOW_MS : HGA_WINDOW_MS;
 
         long t1 = System.currentTimeMillis();
         Solution sol;
         if ("ALNS".equalsIgnoreCase(algorithm)) {
-            sol = alnsPlanner.plan(lots, ALGO_WINDOW_MS);
+            sol = alnsPlanner.plan(lots, windowMs);
         } else {
-            sol = hgaPlanner.plan(lots, null, ALGO_WINDOW_MS);
+            sol = hgaPlanner.plan(lots, null, windowMs);
         }
         long planningTimeMs = System.currentTimeMillis() - t1;
 
-        // ── 4. Correr simulación del día ──────────────────────────────────────
+        boolean colapsoComputacional = planningTimeMs >= SA_THRESHOLD_MS;
+        if (colapsoComputacional) {
+            log.warn("[COLAPSO COMPUTACIONAL] Nivel {} | Algoritmo: {} | Ta={}ms >= Sa={}ms",
+                    levelDef.getLevelTag(), algorithm, planningTimeMs, SA_THRESHOLD_MS);
+        }
+
         long t2 = System.currentTimeMillis();
         long epochStart = LocalDateTime.of(fecha, LocalTime.MIN)
                 .toInstant(ZoneOffset.UTC).toEpochMilli();
         SimulationState state = simulationRunner.run(sol.getRoutes(), airportMap, epochStart);
         long simulationTimeMs = System.currentTimeMillis() - t2;
 
-        // ── 5. Capturar métricas de recursos ─────────────────────────────────
         long totalTimeMs = loadingTimeMs + planningTimeMs + simulationTimeMs;
         double cpuLoad   = osBean.getSystemCpuLoad() * 100.0;
         double memUsed   = (runtime.totalMemory() - runtime.freeMemory()) / (1024.0 * 1024.0);
 
-        // ── 6. Calcular KPIs Logísticos y estadísticas de rutas ──────────────
         long totalAtendidas   = 0;
         double totalDelayHoras = 0;
         int lotesAtendidos    = 0;
@@ -305,11 +327,8 @@ public class NumericExperimentService {
 
         long ecap       = Math.max(0, (totalMaletasDia - totalAtendidas) - capAeroTotal);
         double compliance = totalMaletasDia > 0 ? (totalAtendidas * 100.0) / totalMaletasDia : 0;
-        double occupancy  = (totalAtendidas * 100.0) / CAPACIDAD_AVIONES_DIA;
-        double leadTime   = lotesAtendidos > 0 ? totalDelayHoras / lotesAtendidos : 0;
         double satAero    = state.getSaturacionAeropuerto();
 
-        // ── 7. Función Objetivo: 10A − 0.005Ecap − 2Dh − 12Saero ────────────
         double score = (10.0 * lotesAtendidos)
                      - (0.005 * ecap)
                      - (2.0  * totalDelayHoras)
@@ -331,25 +350,23 @@ public class NumericExperimentService {
                 .leadTimeAvg(round1(lotesAtendidos > 0 ? totalDelayHoras / lotesAtendidos : 0))
                 .complianceRate(round1(totalMaletasDia > 0 ? (totalAtendidas * 100.0) / totalMaletasDia : 0))
                 .fitnessScore(round2(score))
-                // Resumen de carga
                 .totalProcessed(totalMaletasDia)
                 .totalAttended(totalAtendidas)
                 .totalEcap(ecap)
-                // Estadísticas de rutas
                 .totalRoutes(totalRutas)
                 .routesServed(lotesAtendidos)
                 .routesUnserved(lotesNoAtendidos)
                 .maxRouteCapacity(maxCapRuta)
                 .avgRouteCapacity(round1(avgCapRuta))
-                // Desglose de tiempos
                 .loadingTimeMs(loadingTimeMs)
                 .planningTimeMs(planningTimeMs)
                 .simulationTimeMs(simulationTimeMs)
                 .executionTimeMs(totalTimeMs)
-                // Computacional
                 .memoryUsedMb(round1(memUsed))
                 .cpuUsagePercent(round1(cpuLoad))
                 .avgAirportSaturation(round1(satAero))
+                .algorithmWindowMs(windowMs)
+                .colapsoComputacional(colapsoComputacional)
                 .build();
     }
 
@@ -371,7 +388,6 @@ public class NumericExperimentService {
         Map<String, DailyAccumulator> acum = new HashMap<>();
         Path folder = Path.of(dataPath);
 
-        // Mapa ICAO → continente (para calcular SLA)
         Map<String, Integer> continents = airportMap.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey,
                         e -> e.getValue().getContinent() != null ? e.getValue().getContinent().ordinal() : 0));

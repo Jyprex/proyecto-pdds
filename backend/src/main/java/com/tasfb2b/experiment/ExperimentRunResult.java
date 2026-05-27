@@ -42,4 +42,14 @@ public class ExperimentRunResult {
     private double memoryUsedMb;         // Memoria RAM usada (MB)
     private double cpuUsagePercent;      // CPU promedio durante el cálculo (%)
     private double avgAirportSaturation; // Saturación aeroportuaria promedio (%)
+
+    // ── Colapso Computacional (Ta >= Sa) ─────────────────────────────────────
+    /** Ventana de tiempo asignada al algoritmo para este nivel (ms). ALNS=6500, HGA=45000. */
+    private long algorithmWindowMs;
+    /**
+     * true si el tiempo real de planificación (Ta = planningTimeMs) superó el
+     * umbral operativo máximo (Sa = 15 000 ms). Indica que el software habría
+     * dejado partir el vuelo sin una solución óptima → Colapso Computacional.
+     */
+    private boolean colapsoComputacional;
 }

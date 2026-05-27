@@ -8,6 +8,7 @@ import com.tasfb2b.envio.util.EnvioParser;
 import com.tasfb2b.envio.util.NombreArchivoParser;
 import com.tasfb2b.envio.util.ParsedEnvio;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class EnvioService {
 
     private final EnvioRepository envioRepo;
@@ -42,6 +44,9 @@ public class EnvioService {
             return;
         }
 
+        // Pre-cargar los códigos ya existentes para este origen — evita excepciones de Hibernate
+        java.util.Set<String> existentes = envioRepo.findCodigosByOrigenIcao(origenIcao);
+
         List<Envio> batch = new ArrayList<>(BATCH_SIZE);
 
         for (String linea : lineas) {
@@ -49,9 +54,15 @@ public class EnvioService {
             try {
                 parsed = EnvioParser.parse(linea);
             } catch (Exception e) {
-                continue; // linea malformada, se ignora
+                continue;
             }
             if (parsed == null) continue;
+
+            // Saltar si ya existe en BD (pre-filtro preventivo)
+            if (existentes.contains(parsed.codigo())) {
+                log.debug("Envío ya registrado, omitido: {}", parsed.codigo());
+                continue;
+            }
 
             Aeropuerto destino = aeropuertoCache.get(parsed.destinoIcao());
             if (destino == null) {
@@ -70,21 +81,13 @@ public class EnvioService {
                     .build());
 
             if (batch.size() == BATCH_SIZE) {
-                try {
-                    envioRepo.saveAll(batch);
-                } catch (Exception ignored) {
-                    // Lote con duplicados o restriccion de integridad: se omite y se continua
-                }
+                envioRepo.saveAll(batch);
                 batch.clear();
             }
         }
 
         if (!batch.isEmpty()) {
-            try {
-                envioRepo.saveAll(batch);
-            } catch (Exception ignored) {
-                // idem
-            }
+            envioRepo.saveAll(batch);
         }
     }
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)

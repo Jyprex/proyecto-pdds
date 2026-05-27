@@ -1,5 +1,12 @@
 package com.tasfb2b.planificador.web;
 
+/*
+ * Sistema TASF.B2B — Motor de Optimización Logística
+ * Grupo 4D — Curso de Proyecto de Diseño de Software
+ * Autores: Jim Navarrete, Diego Silvestre, Jose Avalos, Mathias Medina
+ * Fecha: Mayo 2026
+ */
+
 import com.tasfb2b.planificador.service.SimulationExcelService;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import com.tasfb2b.planificador.service.SimulationProgressHolder;
@@ -17,13 +24,15 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Controlador REST para la simulación multi-día de Tasf.B2B.
+ * Controlador REST para la simulación multi-día de TASF.B2B.
  *
- * <p>Endpoints:
+ * <p>Expone tres grupos de endpoints:
  * <ul>
- *   <li>POST /api/v1/simulation/run/{dias}     → inicia simulación async, retorna UUID (202)</li>
- *   <li>GET  /api/v1/simulation/status/{id}    → estado y métricas en tiempo real</li>
- *   <li>GET  /api/v1/simulation/export/{id}    → descarga CSV de los resultados</li>
+ *   <li>POST /api/v1/simulation/run/{dias}          → simulación estándar</li>
+ *   <li>POST /api/v1/simulation/run-collapse/{dias} → simulación con inyección de colapso</li>
+ *   <li>GET  /api/v1/simulation/status/{id}         → estado y métricas en tiempo real</li>
+ *   <li>POST /api/v1/simulation/export-excel/{id}   → exportación Excel</li>
+ *   <li>GET  /api/v1/simulation/export/{id}         → exportación CSV (legado)</li>
  * </ul>
  */
 @RestController
@@ -37,15 +46,6 @@ public class SimulationController {
     private final SimulationExcelService     excelService;
     private final EnvioService               envioService;
 
-    // ── POST /run/{dias} ────────────────────────────────────────────────────
-
-    /**
-     * Inicia la simulación de forma asíncrona.
-     * Retorna HTTP 202 Accepted con el UUID de sesión inmediatamente.
-     * El cliente debe hacer polling a /status/{sessionId} para ver el progreso.
-     *
-     * @param dias número de días a simular (default 5)
-     */
     @PostMapping("/run/{dias}")
     public ResponseEntity<Map<String, String>> startSimulation(
             @PathVariable(required = false) Integer dias,
@@ -55,7 +55,6 @@ public class SimulationController {
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         String sessionId = UUID.randomUUID().toString();
 
-        // Parsear startDate si viene del frontend; null usa el fallback del servicio
         java.time.LocalDate fechaInicio = null;
         if (startDate != null && !startDate.isBlank()) {
             try { fechaInicio = java.time.LocalDate.parse(startDate); } catch (Exception ignored) {}
@@ -74,8 +73,6 @@ public class SimulationController {
 
         return ResponseEntity.accepted().body(response);
     }
-
-    // ── POST /run-collapse/{dias} ───────────────────────────────────────────
 
     @PostMapping("/run-collapse/{dias}")
     public ResponseEntity<Map<String, String>> startCollapseSimulation(

@@ -38,8 +38,6 @@ export const useControlTowerController = () => {
   const [simState, setSimState] = useState("idle");
   const [simSpeed, setSimSpeed] = useState(1);
 
-  // ── Estado de integración real ──────────────────────────────────────────────
-  /** UUID retornado por POST /api/v1/simulation/run — null si no hay sesión activa */
   const [sessionId, setSessionId] = useState(null);
 
   /** Métricas vivas recibidas del backend via polling */
@@ -50,8 +48,6 @@ export const useControlTowerController = () => {
 
   const isCollapseScenario = activeTab === "colapso";
   const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
-
-  // ── Helpers de panel y navegación ──────────────────────────────────────────
 
   const togglePanel = useCallback((panelName = "") => {
     if (!panelName) return;
@@ -99,15 +95,6 @@ export const useControlTowerController = () => {
     setIsAirportDetailOpen(true);
   }, []);
 
-  // ── Integración con backend ────────────────────────────────────────────────
-
-  /**
-   * Inicia una simulación real en el backend.
-   * POST /api/v1/simulation/run/{dias} → HTTP 202 + { sessionId }
-   * Luego activa el polling de /status/{sessionId} cada 2 s.
-   *
-   * @param {number} dias número de días a simular
-   */
   const startSimulation = useCallback(async (dias = 5) => {
     try {
       setSimState("running");
@@ -178,26 +165,32 @@ export const useControlTowerController = () => {
   }, []);
 
   /**
-   * Inicia simulación de colapso
+   * Inicia simulación de colapso con fecha de inicio opcional.
+   * @param {number} dias - Días a simular (default 5)
+   * @param {string} startDate - Fecha inicio YYYY-MM-DD (opcional)
    */
-  const startCollapseSimulation = useCallback(async (dias = 5) => {
+  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null) => {
     try {
       setSimState("running");
       setLiveStatus(null);
 
-      const res = await fetch(`/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}`, {
-        method: "POST",
-      });
+      const dateParam = startDate ? `&startDate=${startDate}` : "";
+      const res = await fetch(
+        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}`,
+        { method: "POST" }
+      );
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
 
       const data = await res.json();
       setSessionId(data.sessionId);
+      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()}`);
     } catch (err) {
       console.error("[Tasf.B2B] Error al iniciar simulación de colapso:", err);
       setSimState("idle");
     }
   }, [selectedAlgorithm]);
+
 
   /**
    * Polling: consulta /api/v1/simulation/status/{sessionId} cada 2 segundos
@@ -238,8 +231,6 @@ export const useControlTowerController = () => {
       pollIntervalRef.current = null;
     };
   }, [sessionId]);
-
-  // ── Datos de mapa: reales si hay sesión, mock si no ───────────────────────
 
   const airportByCode = AIRPORT_BY_ICAO;
 
@@ -516,7 +507,6 @@ export const useControlTowerController = () => {
   const currentEpochTime = liveStatus?.currentEpochTime ?? 0;
   const totalBagsWaiting = liveStatus?.totalBagsWaiting ?? 0;
 
-  // Lógica de Ventana Móvil: Vuelos que despegan en las próximas 24h
   const activeShipments = useMemo(() => {
     if (!liveStatus?.activeRoutes || !currentEpochTime) return [];
     const oneDayMs = 24 * 3600 * 1000;
