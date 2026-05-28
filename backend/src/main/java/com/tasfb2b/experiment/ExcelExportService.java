@@ -3,7 +3,6 @@ package com.tasfb2b.experiment;
 import com.tasfb2b.aeropuerto.domain.Aeropuerto;
 import com.tasfb2b.aeropuerto.repository.AeropuertoRepository;
 import com.tasfb2b.planificador.service.ALNSPlannerService;
-import com.tasfb2b.planificador.service.HGAPlannerService;
 import com.tasfb2b.planificador.simulation.SimulationRunner;
 import com.tasfb2b.superlote.domain.SuperLot;
 import lombok.RequiredArgsConstructor;
@@ -32,7 +31,6 @@ public class ExcelExportService {
 
     private final AeropuertoRepository airportRepo;
     private final ALNSPlannerService alnsPlanner;
-    private final HGAPlannerService hgaPlanner;
     private final SimulationRunner simulationRunner;
     private final NumericExperimentService experimentService;
 

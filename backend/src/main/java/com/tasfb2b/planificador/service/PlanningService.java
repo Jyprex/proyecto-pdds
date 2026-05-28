@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Fachada de planificación que expone tanto HGA como ALNS.
+ * Fachada de planificación que expone ALNS.
  * Los controllers dependen de esta clase, no de los planners directamente.
  */
 @Service
@@ -18,21 +18,9 @@ public class PlanningService {
 
     private final SuperLotService        superLotService;
     private final VueloService           vueloService;
-    private final HGAPlannerService      hgaPlanner;
 
     private final ALNSPlannerService     alnsPlanner;
     private final PlanningSessionHolder  sessionHolder;
-
-    /**
-     * Ejecuta la planificación inicial con HGA.
-     * Guarda el resultado en {@link PlanningSessionHolder}.
-     */
-    public Solution ejecutarHGA(long windowMs) {
-        var lots = superLotService.agruparEnvios();
-        Solution sol = hgaPlanner.plan(lots, null, windowMs);
-        sessionHolder.store(sol);
-        return sol;
-    }
 
     /**
      * Ejecuta la planificación inicial con ALNS.

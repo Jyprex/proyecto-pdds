@@ -152,13 +152,34 @@ public class Vuelo {
         return departure >= currentTimeMs;
     }
 
-    public long getDepartureEpoch() {
-        return origen.toEpochMillis(departureMinute); //ms
+    /**
+     * Epoch UTC del departure en el día de simulación dado.
+     *
+     * @param dayStartEpochMs epoch UTC del inicio del día simulado
+     *   (calculado por SimulationService como
+     *   {@code fechaInicio.plusDays(day).atStartOfDay(ZoneOffset.UTC).toEpochMilli()}).
+     *   No tiene relación con el reloj del servidor.
+     */
+    public long getDepartureEpoch(long dayStartEpochMs) {
+        int depUtc = (departureMinute - origen.getGmtOffset() * 60 + 1440) % 1440;
+        return dayStartEpochMs + (depUtc * 60_000L);
     }
 
-    public long getArrivalEpoch() {
-        return destino.toEpochMillis(arrivalMinute); //ms
+    /**
+     * Epoch UTC del arrival en el día de simulación dado.
+     * Maneja cruce de medianoche UTC: si el arrival cae antes del departure
+     * en el mismo día (UTC), se suma 24 h para posicionarlo en el día siguiente.
+     *
+     * @param dayStartEpochMs epoch UTC del inicio del día simulado.
+     */
+    public long getArrivalEpoch(long dayStartEpochMs) {
+        int depUtc = (departureMinute - origen.getGmtOffset()  * 60 + 1440) % 1440;
+        int arrUtc = (arrivalMinute   - destino.getGmtOffset() * 60 + 1440) % 1440;
+        long dep = dayStartEpochMs + (depUtc * 60_000L);
+        long arr = dayStartEpochMs + (arrUtc * 60_000L);
+        // Cruce de medianoche UTC: el avión llega al día siguiente
+        if (arr <= dep) arr += 24L * 60 * 60_000L;
+        return arr;
     }
-
 
 }

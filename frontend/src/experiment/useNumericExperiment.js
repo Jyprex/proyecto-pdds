@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
+import { apiFetch } from '../hooks/api';
 
-const API_BASE = 'http://localhost:8080/api/v1/numeric-experiment';
+const API_BASE = '/api/v1/numeric-experiment';
 
 export function useNumericExperiment() {
     const [doeData, setDoeData] = useState(null);      // { levels: [...] }
@@ -14,7 +15,7 @@ export function useNumericExperiment() {
     const loadDOE = async () => {
         setError(null);
         try {
-            const res = await fetch(`${API_BASE}/doe`);
+            const res = await apiFetch(`${API_BASE}/doe`);
             if (!res.ok) throw new Error(`Error ${res.status} al calcular niveles DOE`);
             const data = await res.json();
             setDoeData(data);
@@ -31,7 +32,7 @@ export function useNumericExperiment() {
         setSessionData(null);
 
         try {
-            const res = await fetch(`${API_BASE}/start`, {
+            const res = await apiFetch(`${API_BASE}/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ algorithm })
@@ -54,7 +55,7 @@ export function useNumericExperiment() {
         if (timerRef.current) clearInterval(timerRef.current);
         timerRef.current = setInterval(async () => {
             try {
-                const res = await fetch(`${API_BASE}/status/${id}`);
+                const res = await apiFetch(`${API_BASE}/status/${id}`);
                 if (!res.ok) return;
                 const data = await res.json();
                 setSessionData(data);
@@ -90,6 +91,7 @@ export function useNumericExperiment() {
         doeLoaded: !!doeData,
 
         // Estado sesión
+        sessionId,
         sessionData,
         status,
         isRunning: status === 'RUNNING',

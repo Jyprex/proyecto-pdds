@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  define: {
+    global: 'globalThis',
+  },
   optimizeDeps: {
     include: ['react-simple-maps', 'prop-types'],
   },
@@ -15,6 +18,14 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false,
+      },
+
+      // WebSocket/SockJS endpoint
+      '/ws': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
       },
     },
   },

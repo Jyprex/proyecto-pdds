@@ -10,10 +10,44 @@ const REPLAN_HISTORY = [
   { date: '2026-04-09 18:42', reason: 'Cancelación vuelo BOG→MEX', oldRoute: 'LIM→BOG→MEX→MAD', newRoute: 'LIM→BOG→IAD→LHR→MAD' },
 ]
 
-function ShipmentDetailPanel({ isVisible, onHide }) {
+const STATUS_LABELS = {
+  normal: "En tránsito",
+  high: "Carga alta",
+  critical: "Crítico",
+  blocked: "Bloqueado",
+  rescued: "Rescatado",
+  cancelled: "Cancelado",
+};
+
+function ShipmentDetailPanel({ isVisible, onHide, selectedAircraft = null, airportByCode = {} }) {
   if (!isVisible) {
     return null
   }
+
+  const fromAirport = selectedAircraft ? airportByCode[selectedAircraft.from] : null;
+  const toAirport = selectedAircraft ? airportByCode[selectedAircraft.to] : null;
+  const routeLabel = selectedAircraft ? `${selectedAircraft.from} → ${selectedAircraft.to}` : "--";
+  const statusLabel = selectedAircraft
+    ? (STATUS_LABELS[selectedAircraft.status] ?? selectedAircraft.status ?? "En tránsito")
+    : "--";
+  const progressPct = selectedAircraft
+    ? Math.round((selectedAircraft.progress ?? 0) * 100)
+    : 0;
+  const travelPlan = selectedAircraft ? [
+    {
+      airport: selectedAircraft.from,
+      arrived: "—",
+      departed: "—",
+      status: progressPct > 10 ? "completado" : "en escala",
+    },
+    {
+      airport: selectedAircraft.to,
+      arrived: "—",
+      departed: "—",
+      status: progressPct > 85 ? "en escala" : "pendiente",
+    },
+  ] : MOCK_PLAN;
+  const showMockHistory = !selectedAircraft;
 
   return (
     <aside className="ct-panel ct-panel--shipment" aria-label="Detalle de envío">
@@ -25,37 +59,42 @@ function ShipmentDetailPanel({ isVisible, onHide }) {
       </div>
 
       <div className="ct-shipment-detail">
+        {!selectedAircraft && (
+          <p style={{ marginBottom: 10, fontSize: 12, color: "#9ca3af" }}>
+            Selecciona un vuelo en el mapa para ver su ruta y progreso.
+          </p>
+        )}
         <div className="ct-shipment-detail__summary">
           <div className="ct-shipment-detail__field">
             <span>ID Envío</span>
-            <strong>ENV-10421</strong>
+            <strong>{selectedAircraft?.id ?? "—"}</strong>
           </div>
           <div className="ct-shipment-detail__field">
-            <span>Aerolínea</span>
-            <strong>LATAM Airlines</strong>
+            <span>Origen</span>
+            <strong>{fromAirport?.city ?? selectedAircraft?.from ?? "—"}</strong>
+          </div>
+          <div className="ct-shipment-detail__field">
+            <span>Destino</span>
+            <strong>{toAirport?.city ?? selectedAircraft?.to ?? "—"}</strong>
           </div>
           <div className="ct-shipment-detail__field">
             <span>Ruta</span>
-            <strong>LIM → MAD</strong>
-          </div>
-          <div className="ct-shipment-detail__field">
-            <span>Maletas</span>
-            <strong>12</strong>
+            <strong>{routeLabel}</strong>
           </div>
           <div className="ct-shipment-detail__field">
             <span>Estado</span>
-            <strong className="ct-text-amber">En tránsito</strong>
+            <strong className="ct-text-amber">{statusLabel}</strong>
           </div>
           <div className="ct-shipment-detail__field">
-            <span>ETA</span>
-            <strong>2026-04-10 18:00 UTC</strong>
+            <span>Progreso</span>
+            <strong>{selectedAircraft ? `${progressPct}%` : "—"}</strong>
           </div>
         </div>
 
         <div className="ct-config-section">
           <p className="ct-config-section__title">🗺️ PLAN DE VIAJE</p>
           <div className="ct-travel-plan">
-            {MOCK_PLAN.map((stop, i) => (
+            {travelPlan.map((stop, i) => (
               <div key={i} className={`ct-travel-stop ct-travel-stop--${stop.status === 'completado' ? 'done' : stop.status === 'en escala' ? 'current' : 'pending'}`}>
                 <div className="ct-travel-stop__dot" />
                 <div className="ct-travel-stop__info">
@@ -71,7 +110,7 @@ function ShipmentDetailPanel({ isVisible, onHide }) {
           </div>
         </div>
 
-        {REPLAN_HISTORY.length > 0 && (
+        {showMockHistory && REPLAN_HISTORY.length > 0 && (
           <div className="ct-config-section">
             <p className="ct-config-section__title">🔄 HISTORIAL REPLANIFICACIÓN</p>
             {REPLAN_HISTORY.map((r, i) => (

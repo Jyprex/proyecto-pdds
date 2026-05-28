@@ -13,8 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>Endpoints:
  * <ul>
- *   <li>POST /planificador/ejecutar          → planificación inicial con HGA</li>
- *   <li>POST /planificador/ejecutar-alns     → planificación inicial con ALNS</li>
+ *   <li>POST /planificador/ejecutar          → planificación inicial con ALNS</li>
  *   <li>POST /planificador/replanificar      → replanificación operativa por cancelación</li>
  *   <li>GET  /planificador/solucion-actual   → estado del plan vigente</li>
  * </ul>
@@ -26,28 +25,14 @@ public class PlanningController {
 
     private final PlanningService planningService;
 
-    // ── HGA: Planificación inicial ────────────────────────────────
-
-    /**
-     * Ejecuta el HGA sobre todos los SuperLots.
-     *
-     * @param windowMs tiempo máximo de ejecución en ms (default 5000)
-     */
-    @PostMapping("/ejecutar")
-    public Solution ejecutarHGA(
-            @RequestParam(defaultValue = "5000") long windowMs) {
-        return planningService.ejecutarHGA(windowMs);
-    }
-
     // ── ALNS: Planificación inicial ───────────────────────────────
 
     /**
      * Ejecuta el ALNS sobre todos los SuperLots.
-     * Útil para experimentación numérica y comparación con HGA.
      *
      * @param windowMs tiempo máximo de ejecución en ms (default 5000)
      */
-    @PostMapping("/ejecutar-alns")
+    @PostMapping("/ejecutar")
     public Solution ejecutarALNS(
             @RequestParam(defaultValue = "5000") long windowMs) {
         return planningService.ejecutarALNS(windowMs);
@@ -83,7 +68,7 @@ public class PlanningController {
     // ── Estado actual ─────────────────────────────────────────────
 
     /**
-     * Retorna la solución actualmente en memoria (último plan HGA o ALNS).
+     * Retorna la solución actualmente en memoria (último plan ALNS).
      * Retorna 204 No Content si no hay ningún plan activo.
      */
     @GetMapping("/solucion-actual")

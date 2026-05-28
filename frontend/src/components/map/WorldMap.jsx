@@ -99,6 +99,7 @@ const WorldMap = ({
   onAirportSelect = () => {},
   selectedAircraftId = null,
   onAircraftSelect = () => {},
+  showCityLabels = true,
   zoom = 1,
   center = [0, 20],
   onMoveEnd = () => {},
@@ -144,6 +145,10 @@ const WorldMap = ({
             const from = airportByIcao[plane.from];
             const to   = airportByIcao[plane.to];
             if (!from || !to) return null;
+
+            const progress = smoothedProgress[plane.id] ?? plane.progress ?? 0;
+            if (progress <= 0 || progress >= 1) return null;
+
             return (
               <Line
                 key={`arc-${plane.id}`}
@@ -163,10 +168,17 @@ const WorldMap = ({
 
             // Usar progress suavizado (interpolado por rAF) en lugar del discreto
             const progress   = smoothedProgress[plane.id] ?? plane.progress ?? 0;
+            if (progress <= 0 || progress >= 1) return null;
+
             const position   = interpolateCoordinates(from, to, progress);
             const isBlocked  = plane.status === "blocked";
             const isCancelled= plane.status === "cancelled";
             const isRescued  = plane.status === "rescued";
+            const isSelected = selectedAircraftId === plane.id;
+
+            const dx = to.coordinates[0] - from.coordinates[0];
+            const dy = to.coordinates[1] - from.coordinates[1];
+            const angle = Math.atan2(-dy, dx) * (180 / Math.PI) + 90;
 
             return (
               <Marker
@@ -176,24 +188,28 @@ const WorldMap = ({
               >
                 <g
                   className={`ct-aircraft-pin ct-aircraft-pin--${plane.status} ${
-                    selectedAircraftId === plane.id ? "ct-aircraft-pin--selected" : ""
+                    isSelected ? "ct-aircraft-pin--selected" : ""
                   }`}
                   role="button"
                   tabIndex={0}
                   aria-label={`Vuelo ${plane.from} → ${plane.to}${isBlocked ? " — BLOQUEADO" : ""}${isCancelled ? " — CANCELADO" : ""}${isRescued ? " — RESCATADO" : ""}`}
                   onClick={() => onAircraftSelect(plane.id)}
                   onKeyDown={(e) => e.key === "Enter" && onAircraftSelect(plane.id)}
-                  style={{ cursor: "pointer", color: isCancelled ? "#ef4444" : isRescued ? "#3b82f6" : undefined }}
+                  style={{ cursor: "pointer", color: isCancelled ? '#ef4444' : isRescued ? '#10b981' : undefined }}
                 >
-                  <text
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    className={isBlocked ? "ct-aircraft-pin__blocked" : "ct-aircraft-pin__icon"}
-                    y={0}
-                    style={{ fontSize: isBlocked || isCancelled ? "12px" : "16px", fill: "currentColor" }}
-                  >
-                    {isCancelled ? "💥" : isBlocked ? "⚠️" : "✈"}
-                  </text>
+                  <g transform={`rotate(${angle}) scale(0.6)`}>
+                    {isCancelled ? (
+                      <text textAnchor="middle" dominantBaseline="central" fontSize="20" transform={`rotate(${-angle})`}>💥</text>
+                    ) : isBlocked ? (
+                      <text textAnchor="middle" dominantBaseline="central" fontSize="20" transform={`rotate(${-angle})`}>⚠️</text>
+                    ) : (
+                      <path
+                        d="M10,2 L14,8 L22,8 C23.1,8 24,8.9 24,10 C24,11.1 23.1,12 22,12 L14,12 L10,18 L7,18 L9,12 L3,12 L1,14 L-1,14 L0,10 L-1,6 L1,6 L3,8 L9,8 L7,2 L10,2 Z"
+                        transform="translate(-12, -10)"
+                        fill="currentColor"
+                      />
+                    )}
+                  </g>
                 </g>
               </Marker>
             );
@@ -219,19 +235,32 @@ const WorldMap = ({
                   onKeyDown={(e) => e.key === "Enter" && onAirportSelect(airport.icao)}
                   style={{ cursor: "pointer" }}
                 >
+                  {/* Anillo exterior (pulso) */}
                   <circle r={isSaturated ? 11 : 8} className="ct-airport-marker__ring" />
+                  {/* Punto central */}
                   <circle r={isSaturated ? 6 : 4.5} className="ct-airport-marker__dot" />
-                  <text y={-13} textAnchor="middle" className="ct-airport-marker__label">
+                  {/* Etiqueta ICAO */}
+                  <text
+                    y={-13}
+                    textAnchor="middle"
+                    className="ct-airport-marker__label"
+                  >
                     {airport.icao}
                   </text>
-                  <text y={22} textAnchor="middle" className="ct-airport-marker__city">
-                    {airport.city}
-                  </text>
+                  {/* Etiqueta ciudad (se oculta en mobile via CSS) */}
+                  {showCityLabels && (
+                    <text
+                      y={22}
+                      textAnchor="middle"
+                      className="ct-airport-marker__city"
+                    >
+                      {airport.city}
+                    </text>
+                  )}
                 </g>
               </Marker>
             );
           })}
-
         </ZoomableGroup>
       </ComposableMap>
     </div>

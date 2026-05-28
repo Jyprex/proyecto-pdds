@@ -38,6 +38,7 @@ const App = () => {
     totalBagsWaiting,
     activeShipments,
     handleTabChange,
+    handleSelectAircraft,
     hideAirportDetail,
     isAirportDetailOpen,
     isCollapseScenario,
@@ -48,6 +49,7 @@ const App = () => {
     kpiCards,
     liveStatus,
     panelVisibility,
+    selectedAircraft,
     selectedAircraftId,
     selectedAirport,
     selectedAirportCode,
@@ -57,14 +59,12 @@ const App = () => {
     selectedFromAirport,
     selectedToAirport,
     sessionId,
-    setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,
     setSimState,
     showAirportDetail,
     simSpeed,
     simState,
-    startSimulation,
     startDayToDaySimulation,
     startCollapseSimulation,
     exportSimulationExcel,
@@ -150,7 +150,8 @@ const App = () => {
             selectedToAirport={selectedToAirport}
             onAirportSelect={showAirportDetail}
             selectedAircraftId={selectedAircraftId}
-            onAircraftSelect={setSelectedAircraftId}
+            onAircraftSelect={handleSelectAircraft}
+            showCityLabels={activeAircraft.length < 80}
             zoom={mapZoom}
             center={mapCenter}
             onMoveEnd={(position) => {
@@ -246,6 +247,8 @@ const App = () => {
               <ShipmentDetailPanel
                 isVisible={panelVisibility.shipmentDetail}
                 onHide={() => togglePanel("shipmentDetail")}
+                selectedAircraft={selectedAircraft}
+                airportByCode={airportByCode}
               />
             </div>
           </div>

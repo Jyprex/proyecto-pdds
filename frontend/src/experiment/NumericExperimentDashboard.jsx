@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNumericExperiment } from './useNumericExperiment';
+import { apiFetch, apiUrl } from '../hooks/api';
 
 // ── Paleta de colores por nivel ──────────────────────────────────────────────
 const LEVEL_COLORS = {
@@ -60,7 +61,7 @@ const ProgressBar = ({ running, done, color }) => (
 );
 
 // ── Componente: Card de nivel individual ─────────────────────────────────────
-const LevelCard = ({ levelDef, result, isRunning, index }) => {
+const LevelCard = ({ levelDef, result, isRunning }) => {
     const colors    = LEVEL_COLORS[levelDef.levelTag] || LEVEL_COLORS.AVG;
     const icon      = LEVEL_ICONS[levelDef.levelTag] || '📋';
     const isDone    = !!result;
@@ -217,7 +218,7 @@ const NumericExperimentDashboard = () => {
 
     const {
         doeData, doeLoaded,
-        sessionData, status, isRunning, isDone, isFailed,
+        sessionData, isRunning, isDone, isFailed,
         loadDOE, startExperiment, reset, error,
     } = useNumericExperiment();
 
@@ -240,7 +241,7 @@ const NumericExperimentDashboard = () => {
         setExportSession(null);
         setExportLabel('Iniciando...');
         try {
-            const res = await fetch('http://localhost:8080/api/v1/numeric-experiment/export/start', {
+            const res = await apiFetch('/api/v1/numeric-experiment/export/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ algorithm: selectedAlgo }),
@@ -254,7 +255,7 @@ const NumericExperimentDashboard = () => {
             if (exportTimerRef.current) clearInterval(exportTimerRef.current);
             exportTimerRef.current = setInterval(async () => {
                 try {
-                    const r2 = await fetch(`http://localhost:8080/api/v1/numeric-experiment/export/status/${eid}`);
+                    const r2 = await apiFetch(`/api/v1/numeric-experiment/export/status/${eid}`);
                     const d2 = await r2.json();
                     setExportProgress(d2.progressPercent || 0);
                     setExportLabel(`Iteración ${d2.currentIteration}/10 · Nivel ${d2.currentLevel}/5 (${d2.completedWork}/${d2.totalWork})`);
@@ -265,7 +266,7 @@ const NumericExperimentDashboard = () => {
                         setExportLabel(`✅ Archivo listo: ${d2.fileName}`);
                         // Auto-descarga
                         const a = document.createElement('a');
-                        a.href = `http://localhost:8080/api/v1/numeric-experiment/export/download/${eid}`;
+                        a.href = apiUrl(`/api/v1/numeric-experiment/export/download/${eid}`);
                         a.download = d2.fileName || `ResultadoIteraciones${selectedAlgo}.xlsx`;
                         a.click();
                     } else if (d2.status === 'FAILED') {
@@ -273,8 +274,10 @@ const NumericExperimentDashboard = () => {
                         setExportStatus('FAILED');
                         setExportLabel(`❌ Error: ${d2.errorMessage}`);
                     }
-                } catch (_) {}
-            }, 3000);
+                } catch (err) {
+                    console.warn('[Export] Error polling:', err)
+                }
+             }, 3000);
         } catch (e) {
             setExportStatus('FAILED');
             setExportLabel(`❌ ${e.message}`);
@@ -406,7 +409,6 @@ const NumericExperimentDashboard = () => {
                         return (
                             <LevelCard
                                 key={idx}
-                                index={idx}
                                 levelDef={levelDef}
                                 result={result}
                                 isRunning={isActive}
@@ -436,7 +438,7 @@ const NumericExperimentDashboard = () => {
                     {exportStatus === 'DONE' && exportSession && (
                         <div style={{ marginTop: 10, textAlign: 'right' }}>
                             <a
-                                href={`http://localhost:8080/api/v1/numeric-experiment/export/download/${exportSession}`}
+                                href={apiUrl(`/api/v1/numeric-experiment/export/download/${exportSession}`)}
                                 download
                                 style={{ fontSize: 12, color: '#6366f1', fontWeight: 700, textDecoration: 'none',
                                     background: 'rgba(99,102,241,0.1)', padding: '5px 14px', borderRadius: 8,

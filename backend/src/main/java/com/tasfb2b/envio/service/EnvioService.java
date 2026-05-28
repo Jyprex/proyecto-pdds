@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -46,7 +48,7 @@ public class EnvioService {
 
         // Pre-cargar los códigos ya existentes para este origen — evita excepciones de Hibernate
         java.util.Set<String> existentes = envioRepo.findCodigosByOrigenIcao(origenIcao);
-
+        Set<String> seenInBatch = new HashSet<>();
         List<Envio> batch = new ArrayList<>(BATCH_SIZE);
 
         for (String linea : lineas) {
@@ -58,9 +60,9 @@ public class EnvioService {
             }
             if (parsed == null) continue;
 
-            // Saltar si ya existe en BD (pre-filtro preventivo)
-            if (existentes.contains(parsed.codigo())) {
-                log.debug("Envío ya registrado, omitido: {}", parsed.codigo());
+            String codigo = parsed.codigo();
+            // Saltar si ya existe en BD o si ya lo vimos en este mismo lote de carga
+            if (existentes.contains(codigo) || !seenInBatch.add(codigo)) {
                 continue;
             }
 
@@ -71,7 +73,7 @@ public class EnvioService {
             }
 
             batch.add(Envio.builder()
-                    .codigoPedido(parsed.codigo())
+                    .codigoPedido(codigo)
                     .fecha(LocalDate.parse(parsed.fecha(), DateTimeFormatter.BASIC_ISO_DATE))
                     .hora(LocalTime.parse(parsed.hora()))
                     .origen(origen)
@@ -91,7 +93,11 @@ public class EnvioService {
         }
     }
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
-    public void cargarPorFecha(LocalDate inicio, LocalDate fin, String dataPath) {
+    public synchronized void cargarPorFecha(LocalDate inicio, LocalDate fin, String dataPath) {
+        if (envioRepo.existsByFechaBetween(inicio, fin)) {
+            return; // Ya está cargado en H2, evitamos SQL Error 23505 (Unique Constraint)
+        }
+
         java.nio.file.Path folder = java.nio.file.Path.of(dataPath);
         String startStr = inicio.format(DateTimeFormatter.BASIC_ISO_DATE);
         String endStr = fin.format(DateTimeFormatter.BASIC_ISO_DATE);

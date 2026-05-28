@@ -112,6 +112,11 @@ public class SimulationProgressHolder {
         return sessions.get(sessionId);
     }
 
+    /** Snapshot de ids activos (thread-safe) para broadcasting/monitoreo. */
+    public List<String> getAllSessionIds() {
+        return new ArrayList<>(sessions.keySet());
+    }
+
     /** Retorna el diccionario global de comparativa de algoritmos. */
     public Map<String, Map<String, Object>> getComparisonResults() {
         return comparisonResults;

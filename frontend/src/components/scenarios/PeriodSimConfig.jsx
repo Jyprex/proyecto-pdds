@@ -439,11 +439,4 @@ function MRow({ label, value, color }) {
   );
 }
 
-const btnSm = {
-  width: 32, height: 32, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
-  background: "rgba(255,255,255,0.07)", color: "#e2e8f0",
-  fontSize: 18, fontWeight: 700, cursor: "pointer",
-  display: "flex", alignItems: "center", justifyContent: "center",
-};
-
 export default PeriodSimConfig;

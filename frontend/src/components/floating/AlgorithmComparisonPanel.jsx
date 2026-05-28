@@ -1,3 +1,5 @@
+import { apiFetch } from '../../hooks/api'
+
 /**
  * Panel de comparativa de algoritmos.
  *
@@ -23,7 +25,7 @@ function AlgorithmComparisonPanel({ isVisible, onHide, sessionId = null, compari
     }
 
     try {
-      const res = await fetch(`/api/v1/simulation/export/${sessionId}`)
+      const res = await apiFetch(`/api/v1/simulation/export/${sessionId}`)
 
       if (res.status === 409) {
         alert('La simulación aún está en curso. Espere a que finalice.')

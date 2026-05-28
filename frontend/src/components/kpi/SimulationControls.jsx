@@ -76,11 +76,13 @@ function SimulationControls({
 
       <div className="ct-sim-controls__status">
         <span className={`ct-sim-status-badge ct-sim-status-badge--${simState}`}>
-          {simState === 'idle' && 'Listo'}
-          {simState === 'running' && 'En ejecución'}
-          {simState === 'paused' && 'Pausado'}
-          {simState === 'completed' && 'Completado'}
-          {simState === 'collapsed' && '⚠ Colapsado'}
+          {{
+            idle: 'Listo',
+            running: 'En ejecución',
+            paused: 'Pausado',
+            completed: 'Completado',
+            collapsed: '⚠ Colapsado'
+          }[simState] || 'Desconocido'}
         </span>
       </div>
     </div>

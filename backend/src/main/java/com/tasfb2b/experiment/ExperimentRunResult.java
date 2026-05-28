@@ -34,7 +34,7 @@ public class ExperimentRunResult {
 
     // ── Desglose de Tiempos (Fases) ──────────────────────────────────────────
     private long loadingTimeMs;      // Fase 1: Filtrado de SuperLots con cap
-    private long planningTimeMs;     // Fase 2: Tiempo del algoritmo (ALNS/HGA)
+    private long planningTimeMs;     // Fase 2: Tiempo del algoritmo (ALNS)
     private long simulationTimeMs;   // Fase 3: Tiempo de SimulationRunner
     private long executionTimeMs;    // Total (suma de las 3 fases)
 
@@ -44,7 +44,7 @@ public class ExperimentRunResult {
     private double avgAirportSaturation; // Saturación aeroportuaria promedio (%)
 
     // ── Colapso Computacional (Ta >= Sa) ─────────────────────────────────────
-    /** Ventana de tiempo asignada al algoritmo para este nivel (ms). ALNS=6500, HGA=45000. */
+    /** Ventana de tiempo asignada al algoritmo para este nivel (ms). */
     private long algorithmWindowMs;
     /**
      * true si el tiempo real de planificación (Ta = planningTimeMs) superó el

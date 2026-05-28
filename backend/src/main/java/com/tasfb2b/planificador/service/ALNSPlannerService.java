@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
  * <ul>
  *   <li>{@link #plan}: planificación desde cero, usada en experimentación numérica.</li>
  *   <li>{@link #replanificar}: replanificación operativa ante cancelación de vuelo,
- *       con warm-start sobre backup routes precalculadas por el HGA.</li>
+ *       con warm-start sobre backup routes.</li>
  * </ul>
  *
  * <p>Parámetros del algoritmo:
@@ -259,7 +259,7 @@ public class ALNSPlannerService {
 
     private double evalFitness(List<Route> routes, Map<String, Aeropuerto> airportMap, long startTime) {
         if (routes.isEmpty()) return 0;
-        SimulationState state = simulator.run(routes, airportMap, startTime);
+        SimulationState state = simulator.run(routes, airportMap, startTime, startTime);
         return fitnessEval.evaluate(routes, state);
     }
 
@@ -289,8 +289,10 @@ public class ALNSPlannerService {
         return List.of(new GreedyRepairOp(routeBuilder), new RegretRepairOp(routeBuilder));
     }
 
-    private Solution buildSolution(List<Route> routes, Map<String, Aeropuerto> airportMap, long startTime) {
-        SimulationState state = simulator.run(routes, airportMap, startTime);
+    private Solution buildSolution(List<Route> routes,
+                                   Map<String, Aeropuerto> airportMap,
+                                   long startTime) {
+        SimulationState state = simulator.run(routes, airportMap, startTime, startTime);
         double fit = fitnessEval.evaluate(routes, state);
 
         Solution sol = new Solution();

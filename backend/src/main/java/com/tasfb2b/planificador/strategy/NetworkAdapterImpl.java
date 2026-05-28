@@ -73,15 +73,15 @@ public class NetworkAdapterImpl implements NetworkAdapter {
 
     @Override
     public List<Vuelo> findBestRoute(Aeropuerto origen, Aeropuerto destino, SuperLot lot) {
-        return calcularRuta(origen, destino, lot.getReadyTime(),
+        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getSla(),
                 Collections.emptySet(), Collections.emptyMap());
     }
 
     @Override
     public List<Vuelo> findBestRoute(Aeropuerto origen, Aeropuerto destino,
                                      SuperLot lot, Map<Long, Integer> remainingCap) {
-        // Dijkstra consciente de capacidad: filtra vuelos sin espacio disponible.
-        return calcularRuta(origen, destino, lot.getReadyTime(),
+        // Dijkstra consciente de capacidad: filtra vuelos sin espacio disponible y respeta SLA.
+        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getSla(),
                 Collections.emptySet(), remainingCap);
     }
 
@@ -90,7 +90,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
                                              Aeropuerto destino,
                                              SuperLot lot,
                                              Set<Long> excludedFlightIds) {
-        return calcularRuta(origen, destino, lot.getReadyTime(),
+        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getSla(),
                 excludedFlightIds, Collections.emptyMap());
     }
 
@@ -108,6 +108,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
     private List<Vuelo> calcularRuta(Aeropuerto origen,
                                      Aeropuerto destino,
                                      long startTime,
+                                     long deadline,
                                      Set<Long> excludedFlightIds,
                                      Map<Long, Integer> remainingCap) {
 
@@ -128,26 +129,38 @@ public class NetworkAdapterImpl implements NetworkAdapter {
             if (current.airport.equals(destIcao)) break;
 
             for (Vuelo v : localGraph.getOrDefault(current.airport, List.of())) {
-                if (Boolean.TRUE.equals(v.getCancelled())) continue;
                 if (excludedFlightIds.contains(v.getId())) continue; // exclusión para backup
 
                 // Fix Dijkstra-ciego: saltar vuelos sin capacidad disponible.
-                // Un vuelo con cap=0 no puede absorber ningún lote; excluirlo fuerza
-                // a Dijkstra a encontrar una ruta alternativa con espacio real.
-                // Si remainingCap está vacío (modo legacy), este filtro no aplica.
                 if (!remainingCap.isEmpty()) {
                     int capRestante = remainingCap.getOrDefault(v.getId(), v.getCapacidadTotal());
                     if (capRestante <= 0) continue;
                 }
 
                 long wait = calcularEsperaMatematica(current.time, v);
-                long newTime = current.time + wait + v.getDuracionMs();
+                
+                // Si el vuelo fue cancelado hoy, estará disponible al día siguiente (+24h).
+                // Bonificamos ligeramente su costo (-1h virtual) para que el algoritmo lo 
+                // prefiera frente a una ruta con muchas escalas (afinidad al mismo vuelo).
+                long costoEspera = wait;
+                if (Boolean.TRUE.equals(v.getCancelled())) {
+                    wait += PERIODO_DIARIO_MS;
+                    costoEspera = wait - (3600_000L); // -1h de penalidad virtual (bonificación)
+                }
+
+                long llegadaReal = current.time + wait + v.getDuracionMs();
+                long costoLlegada = current.time + costoEspera + v.getDuracionMs();
+
+                // Filtro Duro (Viabilidad SLA):
+                // Si la hora de llegada real supera el deadline de la maleta, descartamos este camino.
+                if (llegadaReal > deadline) continue;
+
                 String next = v.getDestino().getIcaoCode();
 
-                if (newTime < bestTime.getOrDefault(next, Long.MAX_VALUE)) {
-                    bestTime.put(next, newTime);
+                if (costoLlegada < bestTime.getOrDefault(next, Long.MAX_VALUE)) {
+                    bestTime.put(next, costoLlegada);
                     prevFlight.put(next, v);
-                    pq.add(new Node(next, newTime));
+                    pq.add(new Node(next, costoLlegada));
                 }
             }
         }
@@ -156,7 +169,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
     }
 
     private long calcularEsperaMatematica(long currentTime, Vuelo v) {
-        long dep = v.getDepartureEpoch();
+        long dep = v.getDepartureEpoch(0L); // epoch relativo (minutos del día en ms): base 0L es correcto para Dijkstra
         if (currentTime <= dep) return dep - currentTime;
 
         // Aritmética modular: calcula cuánto falta para el próximo ciclo del vuelo.

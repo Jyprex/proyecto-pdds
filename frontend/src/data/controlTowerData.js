@@ -93,7 +93,7 @@ export const SUMMARY_BY_SCENARIO = {
   vivo: {
     scenarioLabel: "Operación día a día",
     operationStart: "12:28 AM",
-    systemClock: "2026-04-09 14:28 UTC",
+    systemClock: "2026-04-09 14:28",
     globalCapacity: "68%",
     networkLatency: "12MS",
     flightsInCourse: { value: 142, delta: "+6 vs última hora", status: "green" },
@@ -106,7 +106,7 @@ export const SUMMARY_BY_SCENARIO = {
   periodo: {
     scenarioLabel: "Simulación de periodo",
     operationStart: "12:28 AM",
-    systemClock: "2026-04-12 09:16 UTC",
+    systemClock: "2026-04-12 09:16",
     globalCapacity: "74%",
     networkLatency: "16MS",
     flightsInCourse: { value: 167, delta: "+12 vs última hora", status: "amber" },
@@ -119,7 +119,7 @@ export const SUMMARY_BY_SCENARIO = {
   colapso: {
     scenarioLabel: "Simulación de colapso",
     operationStart: "12:28 AM",
-    systemClock: "2026-04-14 03:42 UTC",
+    systemClock: "2026-04-14 03:42",
     globalCapacity: "92%",
     networkLatency: "25MS",
     flightsInCourse: { value: 214, delta: "+21 vs última hora", status: "red" },

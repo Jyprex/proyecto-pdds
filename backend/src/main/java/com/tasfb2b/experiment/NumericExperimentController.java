@@ -15,7 +15,6 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/numeric-experiment")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class NumericExperimentController {
 
     private final NumericExperimentService experimentService;

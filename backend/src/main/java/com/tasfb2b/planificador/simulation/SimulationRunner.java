@@ -19,7 +19,8 @@ public class SimulationRunner {
 
     public SimulationState run(List<Route> routes,
                                Map<String, Aeropuerto> airports,
-                               long startTime) {
+                               long startTime,
+                               long dayStartEpochMs) {
 
         List<Vuelo> vuelos = routes.stream()
                 .flatMap(r -> r.getFlights().stream())
@@ -33,7 +34,7 @@ public class SimulationRunner {
                         startTime
                 );
 
-        List<Event> events = engine.buildEvents(routes);
+        List<Event> events = engine.buildEvents(routes, dayStartEpochMs);
         events.sort((a, b) -> Long.compare(a.getTime(), b.getTime()));
 
         for (Event e : events) {

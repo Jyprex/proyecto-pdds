@@ -48,7 +48,7 @@ public class AeropuertoParser {
 
             boolean paisMultipalabra = ultimoToken.contains(".")
                     || ultimoToken.length() <= 2
-                    || penultimoToken.equalsIgnoreCase("Saudita");
+                    || ultimoToken.equalsIgnoreCase("Saudita");
 
             String pais, ciudad;
             if (paisMultipalabra && partes.length >= 2) {

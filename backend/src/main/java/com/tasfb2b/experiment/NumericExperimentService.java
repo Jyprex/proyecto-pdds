@@ -12,7 +12,6 @@ import com.tasfb2b.aeropuerto.repository.AeropuertoRepository;
 import com.tasfb2b.planificador.domain.Route;
 import com.tasfb2b.planificador.domain.Solution;
 import com.tasfb2b.planificador.service.ALNSPlannerService;
-import com.tasfb2b.planificador.service.HGAPlannerService;
 import com.tasfb2b.planificador.simulation.SimulationRunner;
 import com.tasfb2b.planificador.simulation.SimulationState;
 import com.tasfb2b.superlote.domain.SuperLot;
@@ -50,7 +49,6 @@ public class NumericExperimentService {
 
     private final AeropuertoRepository airportRepo;
     private final ALNSPlannerService alnsPlanner;
-    private final HGAPlannerService hgaPlanner;
     private final SimulationRunner simulationRunner;
 
     @Value("${tasf.data.path}")
@@ -58,8 +56,6 @@ public class NumericExperimentService {
 
     /** Ventana de ejecución ALNS — escenario TIEMPO_REAL (~6.5 s). */
     private static final long ALNS_WINDOW_MS  = 6_500L;
-    /** Ventana de ejecución HGA — escenario PERIODO (~45 s). */
-    private static final long HGA_WINDOW_MS   = 45_000L;
     /**
      * Umbral de colapso computacional (Sa). Si {@code planningTimeMs >= SA_THRESHOLD_MS},
      * el algoritmo excedió la ventana operativa antes del siguiente despegue crítico.
@@ -272,15 +268,8 @@ public class NumericExperimentService {
         Runtime runtime = Runtime.getRuntime();
         long loadingTimeMs = 0;
 
-        long windowMs = "ALNS".equalsIgnoreCase(algorithm) ? ALNS_WINDOW_MS : HGA_WINDOW_MS;
-
         long t1 = System.currentTimeMillis();
-        Solution sol;
-        if ("ALNS".equalsIgnoreCase(algorithm)) {
-            sol = alnsPlanner.plan(lots, windowMs);
-        } else {
-            sol = hgaPlanner.plan(lots, null, windowMs);
-        }
+        Solution sol = alnsPlanner.plan(lots, ALNS_WINDOW_MS);
         long planningTimeMs = System.currentTimeMillis() - t1;
 
         boolean colapsoComputacional = planningTimeMs >= SA_THRESHOLD_MS;
@@ -292,7 +281,7 @@ public class NumericExperimentService {
         long t2 = System.currentTimeMillis();
         long epochStart = LocalDateTime.of(fecha, LocalTime.MIN)
                 .toInstant(ZoneOffset.UTC).toEpochMilli();
-        SimulationState state = simulationRunner.run(sol.getRoutes(), airportMap, epochStart);
+        SimulationState state = simulationRunner.run(sol.getRoutes(), airportMap, epochStart, epochStart);
         long simulationTimeMs = System.currentTimeMillis() - t2;
 
         long totalTimeMs = loadingTimeMs + planningTimeMs + simulationTimeMs;
@@ -365,7 +354,7 @@ public class NumericExperimentService {
                 .memoryUsedMb(round1(memUsed))
                 .cpuUsagePercent(round1(cpuLoad))
                 .avgAirportSaturation(round1(satAero))
-                .algorithmWindowMs(windowMs)
+                .algorithmWindowMs(ALNS_WINDOW_MS)
                 .colapsoComputacional(colapsoComputacional)
                 .build();
     }

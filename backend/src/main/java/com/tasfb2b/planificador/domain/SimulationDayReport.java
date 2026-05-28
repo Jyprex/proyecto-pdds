@@ -33,6 +33,13 @@ public class SimulationDayReport {
     private int malatetasAtendidas;
 
     /**
+     * Maletas entregadas al cliente durante este día de simulación (eventos BAGGAGE_PICKUP).
+     * Representa las maletas que efectivamente salieron del almacén destino.
+     * Invariante: maletasEntregadas <= malatetasAtendidas.
+     */
+    private int maletasEntregadas;
+
+    /**
      * Lotes no atendidos o con exceso de capacidad que no pudieron ser
      * procesados completamente en este día. Se pasan al día N+1 con prioridad máxima.
      */

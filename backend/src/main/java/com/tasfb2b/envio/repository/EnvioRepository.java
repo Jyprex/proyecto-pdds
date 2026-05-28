@@ -11,6 +11,11 @@ import java.util.stream.Stream;
 
 public interface EnvioRepository extends CrudRepository<Envio, Long> {
 
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByFechaBetween(java.time.LocalDate inicio, java.time.LocalDate fin);
+
+    boolean existsByFechaBetween(java.time.LocalDate inicio, java.time.LocalDate fin);
+
     @Query("""
     SELECT
         e.origen.icaoCode       AS origenIcao,
@@ -18,6 +23,7 @@ public interface EnvioRepository extends CrudRepository<Envio, Long> {
         e.cantidadMaletas       AS cantidadMaletas,
         e.origen.continent      AS origenContinente,
         e.destino.continent     AS destinoContinente,
+        e.origen.gmtOffset      AS origenGmtOffset,
         e.fecha                 AS fecha,
         e.hora                  AS hora
     FROM Envio e
@@ -32,6 +38,7 @@ public interface EnvioRepository extends CrudRepository<Envio, Long> {
         e.cantidadMaletas       AS cantidadMaletas,
         e.origen.continent      AS origenContinente,
         e.destino.continent     AS destinoContinente,
+        e.origen.gmtOffset      AS origenGmtOffset,
         e.fecha                 AS fecha,
         e.hora                  AS hora
     FROM Envio e

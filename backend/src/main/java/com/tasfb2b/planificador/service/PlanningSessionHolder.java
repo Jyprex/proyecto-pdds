@@ -6,13 +6,13 @@ import org.springframework.stereotype.Component;
 /**
  * Memoria de trabajo del planificador para el día actual.
  *
- * <p>Mantiene la última {@link Solution} generada (por HGA o ALNS) como
+ * <p>Mantiene la última {@link Solution} generada (por ALNS) como
  * estado compartido en memoria. El ALNS usa este holder para acceder a
  * las rutas vigentes sin necesidad de que el frontend las envíe en cada request.
  *
  * <p>Ciclo de vida típico:
  * <ol>
- *   <li>POST /planificador/ejecutar → HGA guarda la solución aquí.</li>
+ *   <li>POST /planificador/ejecutar → ALNS guarda la solución aquí.</li>
  *   <li>POST /planificador/replanificar → ALNS lee las rutas desde aquí.</li>
  *   <li>Al finalizar ALNS → la nueva solución reemplaza a la anterior.</li>
  * </ol>

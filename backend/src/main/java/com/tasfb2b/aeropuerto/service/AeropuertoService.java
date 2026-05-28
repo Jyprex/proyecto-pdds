@@ -54,7 +54,7 @@ public class AeropuertoService {
         try {
 
             byte[] rawBytes = Files.readAllBytes(rutaArchivo);
-            String content = new String(rawBytes, java.nio.charset.StandardCharsets.UTF_16BE);
+            String content = new String(rawBytes, java.nio.charset.StandardCharsets.UTF_16);
 
             List<Aeropuerto> aeropuertos = new ArrayList<>();
 

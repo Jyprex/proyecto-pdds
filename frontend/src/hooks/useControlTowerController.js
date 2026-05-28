@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch } from "./api";
+import { createStompClient } from './ws'
 import {
   AIRPORT_NODES,
   AIRPORT_ROWS,
@@ -17,7 +19,8 @@ const PANEL_VISIBILITY_DEFAULT = {
 };
 
 const KPI_COLLAPSED_STORAGE_KEY = "ct-kpi-collapsed";
-const POLL_INTERVAL_MS = 1000;
+// Antes: polling; ahora el estado live viene por WebSocket.
+const MAX_MAP_ROUTES = 140;
 
 const readStoredKpiCollapsed = () => {
   if (typeof window === "undefined") return false;
@@ -29,7 +32,7 @@ export const useControlTowerController = () => {
   const [activeTab, setActiveTab] = useState("vivo");
   const [panelVisibility, setPanelVisibility] = useState(PANEL_VISIBILITY_DEFAULT);
   const [isKpiCollapsed, setIsKpiCollapsed] = useState(readStoredKpiCollapsed);
-  const [selectedAircraftId, setSelectedAircraftId] = useState(1);
+  const [selectedAircraftId, setSelectedAircraftId] = useState(null);
   const [selectedAirportCode, setSelectedAirportCode] = useState(null);
   const [isAirportDetailOpen, setIsAirportDetailOpen] = useState(false);
   const [isDockCollapsed, setIsDockCollapsed] = useState(false);
@@ -40,11 +43,15 @@ export const useControlTowerController = () => {
 
   const [sessionId, setSessionId] = useState(null);
 
-  /** Métricas vivas recibidas del backend via polling */
+  /** Métricas vivas recibidas del backend via WebSocket (STOMP) */
   const [liveStatus, setLiveStatus] = useState(null);
 
-  /** Referencia al intervalo de polling para poder limpiarlo */
-  const pollIntervalRef = useRef(null);
+  // ── Clock local para interpolar movimiento ───────────────────────────────
+  const simClockRef = useRef({
+    serverEpoch: 0,
+    receivedAt: 0,
+  });
+  const [simClockEpoch, setSimClockEpoch] = useState(0);
 
   const isCollapseScenario = activeTab === "colapso";
   const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
@@ -71,6 +78,16 @@ export const useControlTowerController = () => {
     setIsDockCollapsed((current) => !current);
   }, []);
 
+  const showShipmentDetail = useCallback(() => {
+    setPanelVisibility((current) => ({ ...current, shipmentDetail: true }));
+  }, []);
+
+  const handleSelectAircraft = useCallback((aircraftId) => {
+    if (!aircraftId) return;
+    setSelectedAircraftId(aircraftId);
+    showShipmentDetail();
+  }, [showShipmentDetail]);
+
   /**
    * Reinicia la simulación a estado idle.
    * Usado por el botón "Nueva simulación" en los paneles de config.
@@ -79,10 +96,6 @@ export const useControlTowerController = () => {
     setSimState("idle");
     setSessionId(null);
     setLiveStatus(null);
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
   }, []);
 
   const hideAirportDetail = useCallback(() => {
@@ -100,7 +113,7 @@ export const useControlTowerController = () => {
       setSimState("running");
       setLiveStatus(null);
 
-      const res = await fetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}`, {
+      const res = await apiFetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}`, {
         method: "POST",
       });
 
@@ -125,7 +138,7 @@ export const useControlTowerController = () => {
       setLiveStatus(null);
 
       const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}`;
-      const res = await fetch(url, { method: "POST" });
+      const res = await apiFetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
 
@@ -145,7 +158,7 @@ export const useControlTowerController = () => {
   const exportSimulationExcel = useCallback(async (sid, algorithm = "ALNS") => {
     if (!sid) return;
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/v1/simulation/export-excel/${sid}?algorithm=${algorithm}`,
         { method: "POST" }
       );
@@ -175,7 +188,7 @@ export const useControlTowerController = () => {
       setLiveStatus(null);
 
       const dateParam = startDate ? `&startDate=${startDate}` : "";
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}`,
         { method: "POST" }
       );
@@ -193,44 +206,140 @@ export const useControlTowerController = () => {
 
 
   /**
-   * Polling: consulta /api/v1/simulation/status/{sessionId} cada 2 segundos
-   * mientras la simulación esté en curso.
+   * Conexión WebSocket (STOMP) a /ws
+   * Recibe actualizaciones en tiempo real y finaliza con un fetch final a v1 para los reportes completos.
    */
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) return
 
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/v1/simulation/status/${sessionId}`);
-        if (!res.ok) return;
+    const client = createStompClient()
 
-        const status = await res.json();
-        setLiveStatus(status);
+    setLiveStatus((prev) => prev || { eventLog: [] })
 
-        if (status.status === "DONE") {
-          setSimState("completed");
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        } else if (status.status === "FAILED") {
-          setSimState("idle");
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-          console.error("[Tasf.B2B] Simulación falló:", status.errorMessage);
+    client.onConnect = () => {
+      client.subscribe(`/topic/sim/${sessionId}/snapshot`, (msg) => {
+        try {
+          const envelope = JSON.parse(msg.body)
+          const data = envelope?.data ?? {}
+          if (data.currentEpochTime) {
+            simClockRef.current = {
+              serverEpoch: data.currentEpochTime,
+              receivedAt: Date.now(),
+            }
+          }
+          setLiveStatus((prev) => ({
+            ...prev,
+            status: data.status,
+            simulatedTime: data.simulatedTime,
+            currentEpochTime: data.currentEpochTime,
+            activeRoutes: data.activeRoutes,
+          }))
+        } catch (err) {
+          console.error('Error parsing snapshot:', err)
         }
-      } catch (err) {
-        console.error("[Tasf.B2B] Error en polling:", err);
-      }
-    };
+      })
 
-    // Primera consulta inmediata, luego cada POLL_INTERVAL_MS
-    poll();
-    pollIntervalRef.current = setInterval(poll, POLL_INTERVAL_MS);
+      client.subscribe(`/topic/sim/${sessionId}/kpi`, async (msg) => {
+        try {
+          const envelope = JSON.parse(msg.body)
+          const data = envelope?.data ?? {}
+
+          setLiveStatus((prev) => ({
+            ...prev,
+            status: data.status,
+            percent: data.percent,
+            currentDay: data.currentDay,
+            totalDays: data.totalDays,
+            slaPercent: data.slaPercent,
+            globalOccupancy: data.globalOccupancy,
+            criticalNodes: data.criticalNodes,
+            airportLoads: data.airportLoads || prev?.airportLoads,
+            totalBagsWaiting: data.totalBagsWaiting,
+            isCollapseMode: data.isCollapseMode,
+            rescuedFlights: data.rescuedFlights,
+            errorMessage: data.errorMessage,
+          }))
+
+          if (data.status === 'DONE') {
+            setSimState('completed')
+            try {
+              const finalRes = await apiFetch(`/api/v1/simulation/status/${sessionId}`)
+              if (finalRes.ok) {
+                const finalStatus = await finalRes.json()
+                setLiveStatus((prev) => ({
+                  ...prev,
+                  ...finalStatus,
+                }))
+              }
+            } catch (err) {
+              console.error('Error fetching final status', err)
+            }
+            client.deactivate()
+          } else if (data.status === 'FAILED') {
+            setSimState('idle')
+            console.error('[Tasf.B2B] Simulación falló:', data.errorMessage)
+            client.deactivate()
+          }
+        } catch (err) {
+          console.error('Error parsing kpi:', err)
+        }
+      })
+
+      client.subscribe(`/topic/sim/${sessionId}/eventLog`, (msg) => {
+        try {
+          const envelope = JSON.parse(msg.body)
+          const logEntry = envelope?.data
+          if (!logEntry) return
+          setLiveStatus((prev) => {
+            const currentLog = prev?.eventLog || []
+            return {
+              ...prev,
+              eventLog: [...currentLog, logEntry],
+            }
+          })
+        } catch (err) {
+          console.error('Error parsing eventLog:', err)
+        }
+      })
+    }
+
+    client.onStompError = (frame) => {
+      console.warn('[Tasf.B2B] STOMP error:', frame?.headers?.message, frame?.body)
+    }
+
+    client.onWebSocketError = (err) => {
+      console.warn('[Tasf.B2B] WS error:', err)
+    }
+
+    client.activate()
 
     return () => {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    };
-  }, [sessionId]);
+      client.deactivate()
+    }
+  }, [sessionId])
+
+  // Interpolar clock para animacion suave
+  useEffect(() => {
+    let rafId
+    let isActive = true
+
+    const tick = () => {
+      if (!isActive) return
+      const { serverEpoch, receivedAt } = simClockRef.current
+      if (serverEpoch && receivedAt) {
+        const elapsed = Date.now() - receivedAt
+        const simNow = serverEpoch + elapsed
+        setSimClockEpoch(simNow)
+      }
+      rafId = requestAnimationFrame(tick)
+    }
+
+    rafId = requestAnimationFrame(tick)
+    return () => {
+      isActive = false
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [])
 
   const airportByCode = AIRPORT_BY_ICAO;
 
@@ -264,34 +373,59 @@ export const useControlTowerController = () => {
       }));
   }, [liveStatus, isCollapseScenario]);
 
+  const currentEpochTime = simClockEpoch || liveStatus?.currentEpochTime || 0;
+
+  // Lógica de Ventana Móvil: Vuelos que despegan en las próximas 24h
+  const activeShipments = useMemo(() => {
+    if (!liveStatus?.activeRoutes || !currentEpochTime) return [];
+    const oneDayMs = 24 * 3600 * 1000;
+    return liveStatus.activeRoutes.filter(r =>
+      r.departureTime >= currentEpochTime && r.departureTime <= currentEpochTime + oneDayMs
+    ).sort((a, b) => a.departureTime - b.departureTime);
+  }, [liveStatus?.activeRoutes, currentEpochTime]);
+
   /**
    * Aviones en el mapa: si hay rutas activas del backend, se usan.
    * Si no, la lista está vacía (sin aviones volando en el mapa).
    */
+  const computeLocalProgress = (route, simNow) => {
+    const dep = route?.departureTime ?? 0
+    const arr = route?.arrivalTime ?? 0
+    if (!dep || !arr || arr <= dep) return route?.progress ?? 0
+    const p = (simNow - dep) / (arr - dep)
+    if (p < 0) return 0
+    if (p > 1) return 1
+    return p
+  }
+
   const activeAircraft = useMemo(() => {
-    if (liveStatus?.activeRoutes && liveStatus.activeRoutes.length > 0) {
-      return liveStatus.activeRoutes.map((r) => ({
-        id: r.id,
-        from: r.from,
-        to: r.to,
-        progress: r.progress ?? 0.5,
-        status: r.status ?? "normal",
-      }));
-    }
-    return [];
-  }, [liveStatus]);
+    const routes = activeShipments.length > 0
+      ? activeShipments
+      : (liveStatus?.activeRoutes ?? []);
+    if (routes.length === 0) return [];
+
+    return routes
+      .map((r) => {
+        const progress = computeLocalProgress(r, currentEpochTime);
+        return {
+          id: r.id,
+          from: r.from,
+          to: r.to,
+          progress,
+          status: r.status ?? "normal",
+          departureTime: r.departureTime,
+        };
+      })
+      .filter((r) => r.progress >= 0 && r.progress < 1)
+      .slice(0, MAX_MAP_ROUTES);
+  }, [activeShipments, liveStatus?.activeRoutes, currentEpochTime]);
 
   const selectedAircraft = useMemo(
     () => activeAircraft.find((p) => p.id === selectedAircraftId) ?? null,
     [activeAircraft, selectedAircraftId],
   );
 
-  const selectedFromAirport = selectedAircraft
-    ? (AIRPORT_BY_ICAO[selectedAircraft.from] ?? null)
-    : null;
-  const selectedToAirport = selectedAircraft
-    ? (AIRPORT_BY_ICAO[selectedAircraft.to] ?? null)
-    : null;
+  // selectedFromAirport/selectedToAirport se calculan en App (ruta seleccionada en el mapa)
 
   const selectedAirport = selectedAirportCode
     ? (AIRPORT_BY_ICAO[selectedAirportCode] ?? null)
@@ -504,16 +638,7 @@ export const useControlTowerController = () => {
   }, [liveStatus]);
 
   const eventLog = liveStatus?.eventLog ?? [];
-  const currentEpochTime = liveStatus?.currentEpochTime ?? 0;
   const totalBagsWaiting = liveStatus?.totalBagsWaiting ?? 0;
-
-  const activeShipments = useMemo(() => {
-    if (!liveStatus?.activeRoutes || !currentEpochTime) return [];
-    const oneDayMs = 24 * 3600 * 1000;
-    return liveStatus.activeRoutes.filter(r => 
-      r.departureTime >= currentEpochTime && r.departureTime <= currentEpochTime + oneDayMs
-    ).sort((a, b) => a.departureTime - b.departureTime);
-  }, [liveStatus?.activeRoutes, currentEpochTime]);
 
   // ── Efectos secundarios ────────────────────────────────────────────────────
 
@@ -544,6 +669,7 @@ export const useControlTowerController = () => {
     currentEpochTime,
     totalBagsWaiting,
     activeShipments,
+    handleSelectAircraft,
     handleTabChange,
     hideAirportDetail,
     isAirportDetailOpen,
@@ -555,6 +681,7 @@ export const useControlTowerController = () => {
     kpiCards,
     liveStatus,
     panelVisibility,
+    selectedAircraft,
     selectedAircraftId,
     selectedAirportCode,
     selectedAirport,
@@ -577,7 +704,6 @@ export const useControlTowerController = () => {
     toggleKpiStrip,
     togglePanel,
     toggleScenarioConfig,
-    setSimSpeed,
     setSimState,
     showAirportDetail,
   };

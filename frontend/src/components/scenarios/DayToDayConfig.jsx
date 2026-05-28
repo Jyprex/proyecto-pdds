@@ -11,7 +11,6 @@ function DayToDayConfig({
   onAlgorithmChange,
   activeShipments,
   totalBagsWaiting,
-  currentEpochTime,
   simState,
   liveStatus,
   onStartDayToDay,
@@ -202,8 +201,8 @@ function DayToDayConfig({
                   </div>
                 ) : activeShipments.slice(0, 6).map(s => {
                   const depDate = new Date(s.departureTime);
-                  const depFmt  = depDate.toLocaleTimeString("en-GB",
-                    { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC";
+                  const depFmt  = depDate.toLocaleTimeString("es-PE",
+                    { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
                   const colors  = { cancelled: "#ef4444", rescued: "#3b82f6",
                                     blocked: "#f59e0b", critical: "#f97316" };
                   const dot     = colors[s.status] ?? "#10b981";

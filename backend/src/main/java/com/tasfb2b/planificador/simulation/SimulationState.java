@@ -34,6 +34,12 @@ public class SimulationState {
     /** true si ALGÚN aeropuerto supera su storageCapacity en este instante. */
     private boolean colapso = false;
 
+    /**
+     * Acumulado de maletas entregadas al cliente (eventos BAGGAGE_PICKUP procesados).
+     * Se usa para poblar SimulationDayReport.maletasEntregadas.
+     */
+    private int maletasEntregadas = 0;
+
     /** Mapa de aeropuertos, necesario para reevaluar saturación en DEPARTURE. */
     private Map<String, Aeropuerto> airportMap;
 
@@ -99,6 +105,18 @@ public class SimulationState {
 
             case LOT_ARRIVAL -> {
                 // solo informativo
+            }
+
+            case BAGGAGE_PICKUP -> {
+                // El cliente retira sus maletas del almacén destino.
+                // Se reduce la carga del aeropuerto y se reevalúa la saturación.
+                // Garantía: carga nunca baja de 0 (Math.max protege invariante).
+                String icaoDestino = event.getVuelo().getDestino().getIcaoCode();
+                int cargaActual = cargaAeropuerto.getOrDefault(icaoDestino, 0);
+                int nuevaCarga  = Math.max(0, cargaActual - event.getLoad());
+                cargaAeropuerto.put(icaoDestino, nuevaCarga);
+                maletasEntregadas += event.getLoad();
+                recalcularSaturacion(airports);
             }
         }
     }

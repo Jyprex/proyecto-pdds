@@ -31,6 +31,7 @@ public class SuperLotService {
 
                 long readyTime = LocalDateTime
                         .of(e.getFecha(), e.getHora())
+                        .minusHours(e.getOrigenGmtOffset())
                         .toInstant(ZoneOffset.UTC)
                         .toEpochMilli();
 
@@ -94,6 +95,7 @@ public class SuperLotService {
 
                 long readyTime = java.time.LocalDateTime
                         .of(e.getFecha(), e.getHora())
+                        .minusHours(e.getOrigenGmtOffset())
                         .toInstant(ZoneOffset.UTC)
                         .toEpochMilli();
 

@@ -20,10 +20,6 @@ const SLA_VIOLATIONS = [
 ]
 
 // Fecha mínima = hoy, máxima = 31 dic 2026
-function getTodayStr() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
 
 function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChange, onStart, liveStatus }) {
   const [activeSection, setActiveSection] = useState('config')
@@ -33,7 +29,6 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
 
   const isRunning   = liveStatus?.status === 'RUNNING'
   const isCompleted = liveStatus?.status === 'DONE'
-  const isCollapsed = liveStatus?.isCollapseMode && liveStatus?.percent > 0
 
   const stressLabel = useMemo(() => {
     if (stressFactor <= 2) return { text: 'Bajo', color: '#10b981' }
