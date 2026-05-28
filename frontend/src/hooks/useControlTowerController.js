@@ -375,12 +375,18 @@ export const useControlTowerController = () => {
 
   const currentEpochTime = simClockEpoch || liveStatus?.currentEpochTime || 0;
 
-  // Lógica de Ventana Móvil: Vuelos que despegan en las próximas 24h
+  // Lógica de Ventana Móvil: Vuelos que están en el aire O despegan en el ciclo actual.
+  // Ahora el backend nos envía estrictamente vuelos en curso, por lo que simplemente
+  // los consideramos a todos activos para el mapa y las cards, pero lo mantenemos robusto
+  // por si acaso llegan futuros vuelos en el batch.
   const activeShipments = useMemo(() => {
     if (!liveStatus?.activeRoutes || !currentEpochTime) return [];
-    const oneDayMs = 24 * 3600 * 1000;
+    
+    // Mostraremos vuelos que han despegado y aún no han aterrizado
+    // O que están por despegar inminentemente (ventana pequeña para UI)
+    const viewWindow = 2 * 3600 * 1000; // 2 horas de inminencia
     return liveStatus.activeRoutes.filter(r =>
-      r.departureTime >= currentEpochTime && r.departureTime <= currentEpochTime + oneDayMs
+      r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow
     ).sort((a, b) => a.departureTime - b.departureTime);
   }, [liveStatus?.activeRoutes, currentEpochTime]);
 

@@ -73,7 +73,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
 
     @Override
     public List<Vuelo> findBestRoute(Aeropuerto origen, Aeropuerto destino, SuperLot lot) {
-        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getSla(),
+        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getDeadline(),
                 Collections.emptySet(), Collections.emptyMap());
     }
 
@@ -81,7 +81,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
     public List<Vuelo> findBestRoute(Aeropuerto origen, Aeropuerto destino,
                                      SuperLot lot, Map<Long, Integer> remainingCap) {
         // Dijkstra consciente de capacidad: filtra vuelos sin espacio disponible y respeta SLA.
-        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getSla(),
+        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getDeadline(),
                 Collections.emptySet(), remainingCap);
     }
 
@@ -90,7 +90,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
                                              Aeropuerto destino,
                                              SuperLot lot,
                                              Set<Long> excludedFlightIds) {
-        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getSla(),
+        return calcularRuta(origen, destino, lot.getReadyTime(), lot.getDeadline(),
                 excludedFlightIds, Collections.emptyMap());
     }
 

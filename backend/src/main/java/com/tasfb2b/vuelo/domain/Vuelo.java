@@ -94,14 +94,18 @@ public class Vuelo {
 
     /**
      * Calcula el siguiente departureTime válido en base a un tiempo actual.
+     * Considera el offset GMT para alinear el vuelo con el epoch absoluto UTC.
      */
     public long calcularSiguienteSalida(long currentTimeMs) {
-
         long dayMs = 24L * 60 * 60 * 1000;
+        
+        // Ajustamos la hora local al UTC del aeropuerto origen
+        int depUtc = departureMinute - (origen.getGmtOffset() * 60);
+        // Normalizamos para manejar cruces de medianoche hacia atrás
+        depUtc = (depUtc + 1440) % 1440;
 
         long baseDay = (currentTimeMs / dayMs) * dayMs;
-
-        long departure = baseDay + departureMinute * 60_000L;
+        long departure = baseDay + depUtc * 60_000L;
 
         if (departure < currentTimeMs) {
             departure += dayMs; // siguiente día

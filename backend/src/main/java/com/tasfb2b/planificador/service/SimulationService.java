@@ -167,69 +167,21 @@ public class SimulationService {
                         LocalDate fechaDia = fechaInicio.plusDays(day);
                         List<SuperLot> lotsDelDia = new ArrayList<>(pendientes);
                         lotsDelDia.addAll(superLotService.agruparEnviosPorFecha(fechaDia));
-
-                        Solution sol = alnsPlanner.plan(lotsDelDia, PLANNER_WINDOW_MS);
-
-                        if (session.isCollapseMode()) {
-                                for (String hub : Arrays.asList("SKBO", "LEMD", "VIDP")) {
-                                        Aeropuerto a = airportMap.get(hub);
-                                        if (a != null) a.setStorageCapacity(a.getStorageCapacity() / 2);
-                                }
-
-                                List<Route> routes = sol.getRoutes();
-                                if (!routes.isEmpty()) {
-                                        int cancelCount = (int) Math.max(1, routes.size() * 0.15);
-                                        List<Route> rutasModificables = new ArrayList<>(routes);
-                                        Collections.shuffle(rutasModificables);
-
-                                        int rescued = 0;
-                                        for (int i = 0; i < cancelCount; i++) {
-                                                Route routeToCancel = rutasModificables.get(i);
-                                                routeToCancel.setStatus("cancelled");
-                                                routeToCancel.setStatus("rescued");
-                                                rescued++;
-                                        }
-                                        if (rescued > 0) {
-                                                session.setRescuedFlights(session.getRescuedFlights() + rescued);
-                                        }
-                                }
-                        }
-
-                        // Simulación de eventos — pasar dayStartEpochMs para fijar epochs al día simulado
-                        SimulationState state = simulator.run(sol.getRoutes(), airportMap, currentTime, currentTime);
-
-                        int totalMaletas       = lotsDelDia.stream().mapToInt(SuperLot::getTotalMaletas).sum();
-                        int malatetasAtendidas = sol.getRoutes().stream().mapToInt(Route::getCapacidadAsignada).sum();
-                        double slaPercent      = totalMaletas == 0 ? 0 : (malatetasAtendidas * 100.0) / totalMaletas;
-
-                        final long capturedTime = currentTime;
-                        pendientes = sol.getRoutes().stream()
-                                        .filter(r -> r.excedeCapacidad() || r.isNoAtendido())
-                                        .map(r -> elevateToMaxPriority(r.getLot(), capturedTime))
-                                        .collect(Collectors.toList());
-
-                        SimulationDayReport report = new SimulationDayReport();
-                        report.setDayIndex(day);
-                        report.setStartTime(currentTime);
-                        report.setEndTime(currentTime + 24L * 60 * 60 * 1000);
-                        report.setRoutes(sol.getRoutes());
-                        report.setColapsed(state.isColapsado());
-                        report.setAirportSaturation(state.getSaturacionAeropuerto());
-                        report.setCollapseTime(state.isColapsado() ? state.getCurrentTime() : -1L);
-                        report.setSlaPercent(slaPercent);
-                        report.setTotalMaletas(totalMaletas);
-                        report.setMalatetasAtendidas(malatetasAtendidas);
-                        report.setMaletasEntregadas(state.getMaletasEntregadas());
-                        report.setPendingLots(pendientes);
-                        history.add(report);
-
+                        
+                        // En lugar de planificar todo de golpe, lo haremos por ventanas.
+                        // Solo pasamos a pendientes lo no atendido al final del dia.
+                        
                         // ── 7. Ciclos de SA minutos para el frontend (Planificación Programada) ───
                         // Cada ciclo representa SA_MINUTES de tiempo simulado.
                         // El frontend recibe snapshots cada ciclo: posición interpolada de aviones.
                         long sleepPerCycleMs = computeSleepPerCycleMs(dias);
+                        Solution ultimaSolucionDelDia = new Solution(); // Acumulador
+                        ultimaSolucionDelDia.setRoutes(new ArrayList<>());
+                        
                         for (int cycle = 0; cycle < CYCLES_PER_DAY; cycle++) {
                                 // Tiempo simulado exacto al inicio de este ciclo
                                 long currentSimTime = currentTime + ((long) cycle * SA_MINUTES * 60_000L);
+                                long nextSimTime = currentSimTime + (SA_MINUTES * 60_000L);
 
                                 int simHour   = (cycle * SA_MINUTES) / 60;
                                 int simMinute = (cycle * SA_MINUTES) % 60;
@@ -238,15 +190,55 @@ public class SimulationService {
                                 int currentPercent = (int)(
                                         ((day * (double) CYCLES_PER_DAY + cycle) / (dias * (double) CYCLES_PER_DAY)) * 100);
 
+                                // -- Micro-batching: Extraer lotes de esta ventana + pendientes
+                                List<SuperLot> lotesVentana = lotsDelDia.stream()
+                                    .filter(l -> l.getReadyTime() < nextSimTime)
+                                    .collect(Collectors.toList());
+                                    
+                                lotsDelDia.removeAll(lotesVentana);
+                                
+                                // Ejecutar ALNS solo sobre los lotes de esta ventana (y los que vienen arrastrados si no fueron atendidos en el ciclo anterior de este mismo día)
+                                Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS);
+
+                                if (session.isCollapseMode()) {
+                                        for (String hub : Arrays.asList("SKBO", "LEMD", "VIDP")) {
+                                                Aeropuerto a = airportMap.get(hub);
+                                                if (a != null) a.setStorageCapacity(a.getStorageCapacity() / 2);
+                                        }
+
+                                        List<Route> routes = sol.getRoutes();
+                                        if (!routes.isEmpty()) {
+                                                int cancelCount = (int) Math.max(1, routes.size() * 0.15);
+                                                List<Route> rutasModificables = new ArrayList<>(routes);
+                                                Collections.shuffle(rutasModificables);
+
+                                                int rescued = 0;
+                                                for (int i = 0; i < cancelCount; i++) {
+                                                        Route routeToCancel = rutasModificables.get(i);
+                                                        routeToCancel.setStatus("cancelled");
+                                                        routeToCancel.setStatus("rescued");
+                                                        rescued++;
+                                                }
+                                                if (rescued > 0) {
+                                                        session.setRescuedFlights(session.getRescuedFlights() + rescued);
+                                                }
+                                        }
+                                }
+
+                                // Simulación de eventos — la simulación avanza estado globalmente, los eventos deben anclarse correctamente.
+                                // Usamos el engine de eventos para avanzar el state.
+                                SimulationState state = simulator.run(sol.getRoutes(), airportMap, currentSimTime, currentTime);
+                                
+                                ultimaSolucionDelDia.getRoutes().addAll(sol.getRoutes());
+
                                 // Event log sintético (solo en ciclos clave)
                                 if (cycle == 0) {
                                         session.getEventLog().add(String.format(
-                                                "[00:00] Iniciando operaciones del Día %d con %d rutas activas.",
-                                                day + 1, sol.getRoutes().size()));
+                                                "[00:00] Iniciando operaciones del Día %d con %d maletas en primer batch.",
+                                                day + 1, lotesVentana.size()));
                                 } else if (cycle == CYCLES_PER_DAY / 2) {
                                         session.getEventLog().add(String.format(
-                                                "[12:00] Reporte de medio día: %d%% SLA estimado.",
-                                                (int) slaPercent));
+                                                "[12:00] Reporte de medio día."));
                                 }
                                 if (state.isColapsado() && cycle == (int)(CYCLES_PER_DAY * 0.75)) {
                                         session.getEventLog().add(String.format(
@@ -261,9 +253,26 @@ public class SimulationService {
                                         }
                                 }
 
+                                // Lotes que no pudieron ser enrutados completamente se devuelven para el siguiente ciclo.
+                                // Si llegamos al final del día, los pasamos a `pendientes` para el día siguiente.
+                                List<SuperLot> remanentes = sol.getRoutes().stream()
+                                    .filter(r -> r.excedeCapacidad() || r.isNoAtendido())
+                                    .map(r -> elevateToMaxPriority(r.getLot(), currentSimTime)) // No elevar al siguiente día todavía. Solo darle prioridad.
+                                    .collect(Collectors.toList());
+                                    
+                                if (cycle < CYCLES_PER_DAY - 1) {
+                                    lotsDelDia.addAll(remanentes); // Reintentar en siguiente batch hoy
+                                } else {
+                                    // Fin del día. Estos pasan a ser la semilla de pendientes de mañana.
+                                    pendientes = remanentes;
+                                }
+
+                                // Metrics for frontend update (Snapshot)
+                                // En este momento del ciclo reportaremos el progreso
+                                double slaPercent = 100; // placeholder until day ends
                                 updateProgress(session, day + 1, dias, currentPercent,
                                                simulatedTimeStr, slaPercent, state, airportMap,
-                                               sol, currentSimTime, currentTime);
+                                               ultimaSolucionDelDia, currentSimTime, currentTime);
 
                                 try {
                                         Thread.sleep(sleepPerCycleMs);
@@ -272,6 +281,30 @@ public class SimulationService {
                                         return history; // abortar si el hilo fue interrumpido
                                 }
                         }
+                        
+                        // --- AL FINAL DEL DIA CONSOLIDAR METRICAS ---
+                        // Re-simular o simplemente consolidar el día para el histórico:
+                        SimulationState endOfDayState = simulator.run(ultimaSolucionDelDia.getRoutes(), airportMap, currentTime, currentTime);
+                        
+                        // Total demand of the day was the original loaded
+                        int totalMaletas       = ultimaSolucionDelDia.getRoutes().stream().mapToInt(r -> r.getLot().getTotalMaletas()).sum(); // Acumula todo lo visto
+                        int malatetasAtendidas = ultimaSolucionDelDia.getRoutes().stream().mapToInt(Route::getCapacidadAsignada).sum();
+                        double slaPercent      = totalMaletas == 0 ? 0 : (malatetasAtendidas * 100.0) / totalMaletas;
+
+                        SimulationDayReport report = new SimulationDayReport();
+                        report.setDayIndex(day);
+                        report.setStartTime(currentTime);
+                        report.setEndTime(currentTime + 24L * 60 * 60 * 1000);
+                        report.setRoutes(ultimaSolucionDelDia.getRoutes());
+                        report.setColapsed(endOfDayState.isColapsado());
+                        report.setAirportSaturation(endOfDayState.getSaturacionAeropuerto());
+                        report.setCollapseTime(endOfDayState.isColapsado() ? endOfDayState.getCurrentTime() : -1L);
+                        report.setSlaPercent(slaPercent);
+                        report.setTotalMaletas(totalMaletas);
+                        report.setMalatetasAtendidas(malatetasAtendidas);
+                        report.setMaletasEntregadas(endOfDayState.getMaletasEntregadas());
+                        report.setPendingLots(pendientes); // Pasa al siguiente dia
+                        history.add(report);
 
                         currentTime += 24L * 60 * 60 * 1000;
                 }

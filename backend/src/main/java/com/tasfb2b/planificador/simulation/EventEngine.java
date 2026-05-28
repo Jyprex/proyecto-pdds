@@ -24,25 +24,33 @@ public class EventEngine {
 
             int load = r.getCapacidadAsignada();
 
+            // Aseguramos secuencialidad: el próximo vuelo no puede salir antes de que aterrice el anterior o de que el lote esté listo.
+            long sequenceTime = r.getLot().getReadyTime();
+
             for (Vuelo v : flights) {
 
-                // salida — epoch anclado al día simulado actual
+                // departure anclado a partir del sequenceTime
+                long depTime = v.calcularSiguienteSalida(sequenceTime);
                 events.add(new Event(
-                        v.getDepartureEpoch(dayStartEpochMs),
+                        depTime,
                         EventType.FLIGHT_DEPARTURE,
                         r.getLot(),
                         v,
                         load
                 ));
 
-                // llegada — epoch anclado al día simulado actual (con cruce de medianoche)
+                // llegada del vuelo
+                long arrTime = depTime + v.getDuracionMs();
                 events.add(new Event(
-                        v.getArrivalEpoch(dayStartEpochMs),
+                        arrTime,
                         EventType.FLIGHT_ARRIVAL,
                         r.getLot(),
                         v,
                         load
                 ));
+                
+                // Actualizamos el sequenceTime para el siguiente tramo (si lo hay)
+                sequenceTime = arrTime;
             }
 
             // ── BAGGAGE_PICKUP ────────────────────────────────────────────────
