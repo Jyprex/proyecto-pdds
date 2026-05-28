@@ -401,12 +401,3 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
 }
 
 export default CollapseSimConfig
-  </div>
-        )}
-
-      </div>
-    </aside>
-  )
-}
-
-export default CollapseSimConfig
