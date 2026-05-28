@@ -37,7 +37,7 @@ export const useControlTowerController = () => {
   const [isAirportDetailOpen, setIsAirportDetailOpen] = useState(false);
   const [isDockCollapsed, setIsDockCollapsed] = useState(false);
   const [isScenarioConfigOpen, setIsScenarioConfigOpen] = useState(false);
-  const [selectedAlgorithm, setSelectedAlgorithm] = useState("hga");
+  const [selectedAlgorithm, setSelectedAlgorithm] = useState("alns");
   const [simState, setSimState] = useState("idle");
   const [simSpeed, setSimSpeed] = useState(1);
 
@@ -610,19 +610,9 @@ export const useControlTowerController = () => {
   const comparisonData = useMemo(() => {
     if (liveStatus?.comparisonResults) {
       // Intentar leer la llave en mayúscula o minúscula para mayor robustez
-      const hgaResult = liveStatus.comparisonResults.hga || liveStatus.comparisonResults.HGA;
       const alnsResult = liveStatus.comparisonResults.alns || liveStatus.comparisonResults.ALNS;
 
       return {
-        hga: hgaResult ? {
-          execTime: hgaResult.execTime ?? "-",
-          deliveredOnTime: hgaResult.deliveredOnTime?.toLocaleString('es-PE') ?? "-",
-          totalDeliveries: hgaResult.totalDeliveries?.toLocaleString('es-PE') ?? "-",
-          slaPercent: hgaResult.slaPercent?.toFixed(1) ?? "-",
-          avgRouteLength: hgaResult.avgRouteLength ?? "-",
-          replanifications: hgaResult.replanifications ?? "-",
-          rescuedFlights: hgaResult.rescuedFlights ?? 0,
-        } : null,
         alns: alnsResult ? {
           execTime: alnsResult.execTime ?? "-",
           deliveredOnTime: alnsResult.deliveredOnTime?.toLocaleString('es-PE') ?? "-",

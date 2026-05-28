@@ -203,7 +203,6 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
               <div style={{ background: 'rgba(15,23,42,0.5)', borderRadius: 10, padding: '10px 12px', marginTop: 6 }}>
                 {[
                   { val: 'alns', label: 'ALNS — Recomendado ★', sub: 'Rescata vuelos cancelados en ~6.5 s', color: '#818cf8' },
-                  { val: 'hga',  label: 'HGA — Comparación',    sub: 'Pierde maletas de rutas canceladas', color: '#6b7280' },
                 ].map(opt => (
                   <label key={opt.val} className="ct-algorithm-option" style={{ marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
                     <input
@@ -394,6 +393,15 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
               </div>
             )}
           </div>
+        )}
+
+      </div>
+    </aside>
+  )
+}
+
+export default CollapseSimConfig
+  </div>
         )}
 
       </div>

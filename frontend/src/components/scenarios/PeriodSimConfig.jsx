@@ -188,8 +188,7 @@ function PeriodSimConfig({
               <p className="ct-config-section__title">⚡ ALGORITMO</p>
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 {[
-                  { val: "alns", icon: "⚡", name: "ALNS", sub: "Adaptive Large Neighborhood" },
-                  { val: "hga",  icon: "🧬", name: "HGA",  sub: "Hybrid Genetic Algorithm" },
+                  { val: "alns", icon: "⚡", name: "ALNS", sub: "Adaptive Large Neighborhood Search" },
                 ].map(opt => (
                   <button key={opt.val} id={`period-algo-${opt.val}`} type="button"
                     onClick={() => onAlgorithmChange(opt.val)}

@@ -305,7 +305,7 @@ const NumericExperimentDashboard = () => {
                 <div style={s.controls}>
                     {/* Selector de algoritmo */}
                     <div style={s.algoSelector}>
-                        {['ALNS', 'HGA'].map(algo => (
+                        {['ALNS'].map(algo => (
                             <button
                                 key={algo}
                                 onClick={() => setSelectedAlgo(algo)}

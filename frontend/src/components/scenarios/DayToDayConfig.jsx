@@ -323,8 +323,8 @@ function DayToDayConfig({
           <div className="ct-config-section">
             <p className="ct-config-section__title">ALGORITMO PLANIFICADOR</p>
             <div className="ct-algorithm-selector">
-              {[{ val: "hga", label: "Algoritmo A — HGA", sub: "Hybrid Genetic Algorithm" },
-                { val: "alns", label: "Algoritmo B — ALNS", sub: "Adaptive Large Neighborhood Search" }
+              {[
+                { val: "alns", label: "Algoritmo único — ALNS", sub: "Adaptive Large Neighborhood Search" }
               ].map(opt => (
                 <label key={opt.val} className="ct-algorithm-option">
                   <input
