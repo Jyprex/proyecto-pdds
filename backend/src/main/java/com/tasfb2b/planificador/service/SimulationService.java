@@ -17,8 +17,11 @@ import com.tasfb2b.planificador.simulation.SimulationState;
 import com.tasfb2b.superlote.domain.SuperLot;
 import com.tasfb2b.superlote.service.SuperLotService;
 import com.tasfb2b.envio.service.EnvioService;
+import com.tasfb2b.vuelo.domain.Vuelo;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +42,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SimulationService {
 
         private final SimulationRunner simulator;
@@ -48,12 +52,21 @@ public class SimulationService {
         private final SuperLotService superLotService;
         private final SimulationProgressHolder progressHolder;
         private final EnvioService envioService;
+        private final SimpMessagingTemplate messagingTemplate;
 
         @Value("${tasf.data.path}")
         private String dataPath;
 
+        @Value("${tasf.sim.playback.targetMinutes:60}")
+        private int playbackTargetMinutes;
+
+        private static final int SA_MINUTES = 30;
+        private static final int CYCLES_PER_DAY = 1440 / SA_MINUTES;
+
         private static final LocalDate DEFAULT_START_DATE = LocalDate.of(2026, 1, 1);
-        private static final long HGA_WINDOW_MS = 500;
+        private static final long HGA_WINDOW_MS = 45_000L;
+
+        public record WsEnvelope<T>(long seq, T data) {}
 
         /**
          * Inicia la simulación en el pool {@code simulationExecutor}.
@@ -65,11 +78,11 @@ public class SimulationService {
          * @param startDate fecha de inicio; si es null se usa {@code DEFAULT_START_DATE}
          */
         @Async("simulationExecutor")
-        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate) {
+        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes) {
                 SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
-                if (session == null) return;
-
-                LocalDate fechaInicio = (startDate != null) ? startDate : DEFAULT_START_DATE;
+                if (session == null) {
+                        return;
+                } LocalDate fechaInicio = (startDate != null) ? startDate : DEFAULT_START_DATE;
 
                 try {
                         LocalDate fin = fechaInicio.plusDays(dias - 1);
@@ -79,7 +92,7 @@ public class SimulationService {
                                 .toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
                         session.setStartEpoch(startEpochMs);
 
-                        List<SimulationDayReport> reports = runFullSimulation(dias, session, algorithm, fechaInicio);
+                        List<SimulationDayReport> reports = runFullSimulation(dias, session, algorithm, fechaInicio, playbackMinutes);
                         session.getReports().addAll(reports);
 
                         int totalAttended = reports.stream().mapToInt(SimulationDayReport::getMalatetasAtendidas).sum();
@@ -91,20 +104,39 @@ public class SimulationService {
                         session.setTotalMissed(totalMissed);
                         session.setSlaFinal(slaFinal);
 
+                        // Calcular longitud promedio de ruta real (vuelos por ruta)
+                        double avgRouteLength = reports.stream()
+                                .flatMap(r -> r.getRoutes().stream())
+                                .filter(r -> !r.getFlights().isEmpty())
+                                .mapToInt(r -> r.getFlights().size())
+                                .average()
+                                .orElse(0.0);
+
                         Map<String, Object> metrics = new HashMap<>();
                         metrics.put("deliveredOnTime",  totalAttended);
                         metrics.put("totalDeliveries",  totalDemand);
                         metrics.put("slaPercent",        slaFinal);
-                        metrics.put("avgRouteLength",    2.1);
-                        metrics.put("replanifications",  0);
+                        metrics.put("avgRouteLength",    Math.round(avgRouteLength * 10.0) / 10.0);
+                        metrics.put("replanifications",  session.getRescuedFlights());
                         metrics.put("execTime",          "Completado");
                         metrics.put("rescuedFlights",    session.getRescuedFlights());
 
                         progressHolder.saveAlgorithmResult(algorithm != null ? algorithm : "HGA", metrics);
                         progressHolder.markDone(sessionId);
+                        
+                        // Enviar mensaje final de completado
+                        messagingTemplate.convertAndSend(
+                            "/topic/sim/" + sessionId + "/kpi", 
+                            new WsEnvelope<>(System.currentTimeMillis(), session)
+                        );
 
                 } catch (Exception ex) {
                         progressHolder.markFailed(sessionId, ex.getMessage());
+                        // Enviar mensaje final de error
+                        messagingTemplate.convertAndSend(
+                            "/topic/sim/" + sessionId + "/kpi", 
+                            new WsEnvelope<>(System.currentTimeMillis(), session)
+                        );
                 }
         }
 
@@ -112,7 +144,8 @@ public class SimulationService {
                         int dias,
                         SimulationProgressHolder.SimulationSessionState session,
                         String algorithm,
-                        LocalDate fechaInicio) {
+                        LocalDate fechaInicio,
+                        int playbackMinutes) {
 
                 Map<String, Aeropuerto> airportMap = airportRepo.findAll().stream()
                                 .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
@@ -142,7 +175,11 @@ public class SimulationService {
 
                                 List<Route> routes = sol.getRoutes();
                                 if (!routes.isEmpty()) {
-                                        int cancelCount = (int) Math.max(1, routes.size() * 0.15);
+                                        double cancelFraction = session.getStressFactor() * 0.03; // ×1→3%, ×10→30%
+                                        int cancelCount = (int) Math.max(1, routes.size() * cancelFraction);
+                                        log.info("[Colapso] Estrés ×{} → cancelando {} rutas ({} %)",
+                                                session.getStressFactor(), cancelCount,
+                                                Math.round(cancelFraction * 100));
                                         List<Route> rutasModificables = new ArrayList<>(routes);
                                         Collections.shuffle(rutasModificables);
 
@@ -150,9 +187,21 @@ public class SimulationService {
                                         for (int i = 0; i < cancelCount; i++) {
                                                 Route routeToCancel = rutasModificables.get(i);
                                                 routeToCancel.setStatus("cancelled");
-                                                if ("alns".equalsIgnoreCase(algorithm)) {
-                                                        routeToCancel.setStatus("rescued");
-                                                        rescued++;
+                                                if ("alns".equalsIgnoreCase(algorithm)
+                                                                && !routeToCancel.getFlights().isEmpty()) {
+                                                        Long vueloId = routeToCancel.getFlights().get(0).getId();
+                                                        try {
+                                                                Solution replanned = alnsPlanner.replanificar(vueloId, 6_500L);
+                                                                if (replanned != null && !replanned.getRoutes().isEmpty()) {
+                                                                        routeToCancel.setStatus("rescued");
+                                                                        rescued++;
+                                                                } else {
+                                                                        routeToCancel.setCapacidadAsignada(0);
+                                                                }
+                                                        } catch (Exception e) {
+                                                                log.warn("Fallo en replanificación ALNS para vuelo {}: {}", vueloId, e.getMessage());
+                                                                routeToCancel.setCapacidadAsignada(0);
+                                                        }
                                                 } else {
                                                         routeToCancel.setCapacidadAsignada(0);
                                                 }
@@ -189,25 +238,37 @@ public class SimulationService {
                         report.setPendingLots(pendientes);
                         history.add(report);
 
-                        for (int hour = 0; hour < 24; hour++) {
-                                int currentPercent = (int) ((((day * 24.0) + hour) / (dias * 24.0)) * 100);
-                                String simulatedTimeStr = String.format("Día %d - %02d:00", day + 1, hour);
+                        long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes);
+                        for (int cycle = 0; cycle < CYCLES_PER_DAY; cycle++) {
+                                long currentSimTime = currentTime + ((long) cycle * SA_MINUTES * 60_000L);
+                                int simHour   = (cycle * SA_MINUTES) / 60;
+                                int simMinute = (cycle * SA_MINUTES) % 60;
+                                String simulatedTimeStr = String.format("Día %d - %02d:%02d", day + 1, simHour, simMinute);
 
-                                if (hour == 0) {
-                                        session.getEventLog().add(String.format("[%02d:00] Iniciando operaciones del Día %d con %d rutas activas.", hour, day + 1, sol.getRoutes().size()));
-                                } else if (hour == 12) {
-                                        session.getEventLog().add(String.format("[%02d:00] Reporte de medio día: %d%% SLA estimado.", hour, (int) slaPercent));
+                                int currentPercent = (int) (((day * (double) CYCLES_PER_DAY + cycle) / (dias * (double) CYCLES_PER_DAY)) * 100);
+
+                                if (cycle == 0) {
+                                        String logMsg = String.format("[00:00] Iniciando operaciones del Día %d con %d rutas activas.", day + 1, sol.getRoutes().size());
+                                        session.getEventLog().add(logMsg);
+                                        messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/eventLog", new WsEnvelope<>(System.currentTimeMillis(), logMsg));
+                                } else if (cycle == CYCLES_PER_DAY / 2) {
+                                        String logMsg = String.format("[12:00] Reporte de medio día: %d%% SLA estimado.", (int) slaPercent);
+                                        session.getEventLog().add(logMsg);
+                                        messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/eventLog", new WsEnvelope<>(System.currentTimeMillis(), logMsg));
                                 }
-                                if (state.isColapsado() && hour == 18) {
-                                        session.getEventLog().add(String.format("[%02d:00] ALERTA: posible colapso detectado en la red.", hour));
+                                if (state.isColapsado() && cycle == (int)(CYCLES_PER_DAY * 0.75)) {
+                                        String logMsg = "[18:00] ¡ALERTA! Posible colapso detectado en la red.";
+                                        session.getEventLog().add(logMsg);
+                                        messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/eventLog", new WsEnvelope<>(System.currentTimeMillis(), logMsg));
                                 }
 
-                                updateProgress(session, day + 1, dias, currentPercent, simulatedTimeStr, slaPercent, state, airportMap, sol, hour, currentTime);
+                                updateProgress(session, day + 1, dias, currentPercent, simulatedTimeStr, slaPercent, state, airportMap, sol, currentSimTime, currentTime);
 
                                 try {
-                                        Thread.sleep(250);
+                                        Thread.sleep(sleepPerCycleMs);
                                 } catch (InterruptedException e) {
                                         Thread.currentThread().interrupt();
+                                        return history;
                                 }
                         }
 
@@ -217,17 +278,7 @@ public class SimulationService {
                 return history;
         }
 
-        private List<SuperLot> buildDayLots(List<SuperLot> pendientes, List<SuperLot> base, long currentTime, int day) {
-                List<SuperLot> result = new ArrayList<>(pendientes);
-                long dayOffset = (long) day * 24 * 60 * 60 * 1000;
-                for (SuperLot lot : base) {
-                        result.add(new SuperLot(
-                                lot.getId(), lot.getOrigenIcao(), lot.getDestinoIcao(),
-                                lot.getTotalMaletas(), lot.getReadyTime() + dayOffset,
-                                lot.getSla(), lot.isIntercontinental(), lot.getPriority()));
-                }
-                return result;
-        }
+
 
         /**
          * Eleva un lote no atendido a prioridad máxima para el día siguiente,
@@ -246,7 +297,7 @@ public class SimulationService {
                         int completedDays, int totalDays, int currentPercent,
                         String simulatedTime, double slaPercent,
                         SimulationState state, Map<String, Aeropuerto> airportMap,
-                        Solution sol, int hour, long baseTime) {
+                        Solution sol, long currentSimTime, long baseTime) {
 
                 session.setCurrentDay(completedDays);
                 session.setPercent(currentPercent);
@@ -260,17 +311,15 @@ public class SimulationService {
                 int critical = (int) loads.values().stream().filter(pct -> pct >= 90).count();
                 session.setCriticalNodes(critical);
 
-                long currentEpochTime = baseTime + (hour * 3600_000L);
-                session.setCurrentEpochTime(currentEpochTime);
+                session.setCurrentEpochTime(currentSimTime);
 
                 int totalBagsWaiting = state.getCargaAeropuerto().values().stream().mapToInt(Integer::intValue).sum();
                 session.setTotalBagsWaiting(totalBagsWaiting);
 
                 List<Map<String, Object>> activeRoutes = new ArrayList<>();
                 for (Route r : sol.getRoutes()) {
-                        if (r.getFlights().isEmpty()) continue;
-                        String fromIcao = r.getHops().get(0);
-                        String toIcao   = r.getHops().get(r.getHops().size() - 1);
+                        List<Vuelo> flights = r.getFlights();
+                        if (flights.isEmpty()) continue;
 
                         String baseStatus  = r.isTarde() ? "critical" : (r.isNoAtendido() ? "blocked" : "normal");
                         String routeStatus = "normal".equals(r.getStatus()) ? baseStatus : r.getStatus();
@@ -279,20 +328,54 @@ public class SimulationService {
                                 ? (r.getCapacidadAsignada() * 100.0) / Math.max(1, r.getDemandaTotal())
                                 : 0.0;
 
-                        Map<String, Object> routeMap = new HashMap<>();
-                        routeMap.put("id",       r.getLot().getId());
-                        routeMap.put("from",     fromIcao);
-                        routeMap.put("to",       toIcao);
-                        routeMap.put("progress", hour / 24.0);
-                        routeMap.put("status",   routeStatus);
+                        for (int i = 0; i < flights.size(); i++) {
+                                Vuelo v = flights.get(i);
+                                String fromIcao = r.getHops().get(i);
+                                String toIcao   = r.getHops().get(i + 1);
 
-                        long dayOffset  = (long) (completedDays - 1) * 24 * 60 * 60 * 1000;
-                        long flightEpoch = dayOffset + r.getFlights().get(0).getOrigen()
-                                .toEpochMillis(r.getFlights().get(0).getDepartureMinute());
-                        routeMap.put("departureTime",    flightEpoch);
-                        routeMap.put("capacityPercent",  capacityPercent);
-                        activeRoutes.add(routeMap);
+                                long depEpoch = v.getDepartureEpoch(baseTime);
+                                long arrEpoch = v.getArrivalEpoch(baseTime);
+
+                                if (currentSimTime < depEpoch || currentSimTime >= arrEpoch) {
+                                        continue;
+                                }
+
+                                Map<String, Object> segMap = new HashMap<>();
+                                segMap.put("id",             r.getLot().getId() * 100L + i);
+                                segMap.put("from",           fromIcao);
+                                segMap.put("to",             toIcao);
+                                segMap.put("progress",       computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
+                                segMap.put("status",         routeStatus);
+                                segMap.put("departureTime",  depEpoch);
+                                segMap.put("arrivalTime",    arrEpoch);
+                                segMap.put("capacityPercent",capacityPercent);
+                                activeRoutes.add(segMap);
+                        }
                 }
                 session.setActiveRoutes(activeRoutes);
+                
+                // Broadcastear estado por WebSocket
+                WsEnvelope<SimulationProgressHolder.SimulationSessionState> env = new WsEnvelope<>(System.currentTimeMillis(), session);
+                messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/kpi", env);
+                messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/snapshot", env);
+        }
+
+        private long computeSleepPerCycleMs(int totalDays, int playbackMinutes) {
+                int minutes = playbackMinutes;
+                if (minutes < 1) minutes = 1;
+                minutes = Math.max(1, Math.min(minutes, 90));
+                long totalCycles = (long) totalDays * CYCLES_PER_DAY;
+                long ms = (long) minutes * 60_000L / totalCycles;
+                return Math.max(250L, ms);
+        }
+
+        private double computeFlightProgress(long currentEpochTime, long dep, long arr) {
+                if (dep <= 0 || arr <= 0 || arr <= dep) {
+                        return 0.0;
+                }
+                double p = (currentEpochTime - dep) / (double) (arr - dep);
+                if (p < 0) return 0.0;
+                if (p > 1) return 1.0;
+                return p;
         }
 }

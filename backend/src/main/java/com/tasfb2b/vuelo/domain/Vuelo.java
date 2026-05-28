@@ -152,12 +152,18 @@ public class Vuelo {
         return departure >= currentTimeMs;
     }
 
-    public long getDepartureEpoch() {
-        return origen.toEpochMillis(departureMinute); //ms
+    public long getDepartureEpoch(long dayStartEpochMs) {
+        int depUtc = (departureMinute - origen.getGmtOffset() * 60 + 1440) % 1440;
+        return dayStartEpochMs + (depUtc * 60_000L);
     }
 
-    public long getArrivalEpoch() {
-        return destino.toEpochMillis(arrivalMinute); //ms
+    public long getArrivalEpoch(long dayStartEpochMs) {
+        int depUtc = (departureMinute - origen.getGmtOffset()  * 60 + 1440) % 1440;
+        int arrUtc = (arrivalMinute   - destino.getGmtOffset() * 60 + 1440) % 1440;
+        long dep = dayStartEpochMs + (depUtc * 60_000L);
+        long arr = dayStartEpochMs + (arrUtc * 60_000L);
+        if (arr <= dep) arr += 24L * 60 * 60_000L;
+        return arr;
     }
 
 

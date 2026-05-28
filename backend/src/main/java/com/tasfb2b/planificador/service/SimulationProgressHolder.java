@@ -80,6 +80,8 @@ public class SimulationProgressHolder {
         /** Métricas de colapso */
         private boolean isCollapseMode;
         private int rescuedFlights;
+        /** Factor de estrés operativo (1–10). Determina el % de rutas canceladas: stress × 3%. */
+        private int stressFactor = 5;
 
         /** Diccionario general de resultados por algortimo */
         private Map<String, Map<String, Object>> comparisonResults;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Client } from '@stomp/stompjs';
 import {
   AIRPORT_NODES,
   AIRPORT_ROWS,
@@ -39,12 +40,14 @@ export const useControlTowerController = () => {
   const [simSpeed, setSimSpeed] = useState(1);
 
   const [sessionId, setSessionId] = useState(null);
+  const [isFluidMode, setIsFluidMode] = useState(false);
 
   /** Métricas vivas recibidas del backend via polling */
   const [liveStatus, setLiveStatus] = useState(null);
 
-  /** Referencia al intervalo de polling para poder limpiarlo */
-  const pollIntervalRef = useRef(null);
+  /** Reloj de simulación interpolado a 60 FPS */
+  const [simClockEpoch, setSimClockEpoch] = useState(0);
+  const simClockRef = useRef({ serverEpoch: 0, receivedAt: 0 });
 
   const isCollapseScenario = activeTab === "colapso";
   const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
@@ -100,7 +103,8 @@ export const useControlTowerController = () => {
       setSimState("running");
       setLiveStatus(null);
 
-      const res = await fetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}`, {
+      const playbackMin = isFluidMode ? 60 : 1;
+      const res = await fetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&playbackMinutes=${playbackMin}`, {
         method: "POST",
       });
 
@@ -124,7 +128,8 @@ export const useControlTowerController = () => {
       setSimState("running");
       setLiveStatus(null);
 
-      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}`;
+      const playbackMin = isFluidMode ? 60 : 1;
+      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${playbackMin}`;
       const res = await fetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
@@ -165,18 +170,60 @@ export const useControlTowerController = () => {
   }, []);
 
   /**
+   * Descarga un reporte en formato Markdown de la simulación.
+   */
+  const exportSimulationReportMd = useCallback(async (sid, name = "Escenario") => {
+    if (!sid) return;
+    try {
+      const res = await fetch(`/api/v1/simulation/status/${sid}`);
+      if (!res.ok) throw new Error(`Error al obtener status: ${res.status}`);
+      const finalStatus = await res.json();
+      
+      let md = `# Resultados: ${name}\n\n`;
+      md += `**ID Sesión:** ${sid}\n`;
+      md += `**Duración Simulada:** ${finalStatus.totalDays} días\n`;
+      md += `**SLA Final:** ${(finalStatus.slaFinal ?? 0).toFixed(2)}%\n`;
+      md += `**Total Maletas Atendidas:** ${finalStatus.totalAttended} / ${(finalStatus.totalMissed ?? 0) + (finalStatus.totalAttended ?? 0)}\n`;
+      md += `**Demanda Perdida:** ${finalStatus.totalMissed}\n\n`;
+      md += `## Reporte Diario\n\n`;
+      md += `| Día | Atendidas | Demanda | SLA % | Colapsado |\n`;
+      md += `| --- | --------- | ------- | ----- | --------- |\n`;
+      
+      if (finalStatus.reports) {
+        for (const d of finalStatus.reports) {
+          md += `| ${d.dayIndex + 1} | ${d.malatetasAtendidas} | ${d.totalMaletas} | ${(d.slaPercent ?? 0).toFixed(2)}% | ${d.colapsed ? 'Sí' : 'No'} |\n`;
+        }
+      }
+      
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `ResultadosDeEscenario_${name.replace(/\s+/g, '')}_${sid.substring(0, 8)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[Tasf.B2B] Error al exportar MD:", err);
+    }
+  }, []);
+
+  /**
    * Inicia simulación de colapso con fecha de inicio opcional.
    * @param {number} dias - Días a simular (default 5)
    * @param {string} startDate - Fecha inicio YYYY-MM-DD (opcional)
    */
-  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null) => {
+  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5) => {
     try {
       setSimState("running");
       setLiveStatus(null);
 
-      const dateParam = startDate ? `&startDate=${startDate}` : "";
+      const playbackMin = isFluidMode ? 60 : 1;
+      const dateParam   = startDate    ? `&startDate=${startDate}`       : "";
+      const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
       const res = await fetch(
-        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}`,
+        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}&playbackMinutes=${playbackMin}`,
         { method: "POST" }
       );
 
@@ -184,7 +231,7 @@ export const useControlTowerController = () => {
 
       const data = await res.json();
       setSessionId(data.sessionId);
-      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()}`);
+      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()} | estrés ×${stressFactor}`);
     } catch (err) {
       console.error("[Tasf.B2B] Error al iniciar simulación de colapso:", err);
       setSimState("idle");
@@ -193,44 +240,138 @@ export const useControlTowerController = () => {
 
 
   /**
-   * Polling: consulta /api/v1/simulation/status/{sessionId} cada 2 segundos
-   * mientras la simulación esté en curso.
+   * Conexión WebSocket / STOMP
    */
   useEffect(() => {
     if (!sessionId) return;
 
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/v1/simulation/status/${sessionId}`);
-        if (!res.ok) return;
+    const client = new Client({
+      brokerURL: 'ws://localhost:8080/ws/websocket', // Usando endpoint websocket nativo de SockJS
+      reconnectDelay: 5000,
+      heartbeatIncoming: 4000,
+      heartbeatOutgoing: 4000,
+    });
 
-        const status = await res.json();
-        setLiveStatus(status);
+    client.onConnect = () => {
+      console.info('[Tasf.B2B] STOMP conectado al backend.');
 
-        if (status.status === "DONE") {
-          setSimState("completed");
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        } else if (status.status === "FAILED") {
-          setSimState("idle");
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-          console.error("[Tasf.B2B] Simulación falló:", status.errorMessage);
+      client.subscribe(`/topic/sim/${sessionId}/snapshot`, (msg) => {
+        try {
+          const envelope = JSON.parse(msg.body);
+          const data = envelope?.data ?? {};
+          if (data.currentEpochTime) {
+            simClockRef.current = {
+              serverEpoch: data.currentEpochTime,
+              receivedAt: Date.now(),
+            };
+          }
+          setLiveStatus((prev) => ({
+            ...prev,
+            status: data.status,
+            simulatedTime: data.simulatedTime,
+            currentEpochTime: data.currentEpochTime,
+            activeRoutes: data.activeRoutes,
+          }));
+        } catch (err) {
+          console.error('Error parsing snapshot:', err);
         }
-      } catch (err) {
-        console.error("[Tasf.B2B] Error en polling:", err);
-      }
+      });
+
+      client.subscribe(`/topic/sim/${sessionId}/kpi`, async (msg) => {
+        try {
+          const envelope = JSON.parse(msg.body);
+          const data = envelope?.data ?? {};
+
+          setLiveStatus((prev) => ({
+            ...prev,
+            status: data.status,
+            percent: data.percent,
+            currentDay: data.currentDay,
+            totalDays: data.totalDays,
+            slaPercent: data.slaPercent,
+            globalOccupancy: data.globalOccupancy,
+            criticalNodes: data.criticalNodes,
+            airportLoads: data.airportLoads || prev?.airportLoads,
+            totalBagsWaiting: data.totalBagsWaiting,
+            isCollapseMode: data.isCollapseMode,
+            rescuedFlights: data.rescuedFlights,
+            errorMessage: data.errorMessage,
+            comparisonResults: data.comparisonResults || prev?.comparisonResults,
+          }));
+
+          if (data.status === 'DONE') {
+            setSimState('completed');
+            try {
+              const finalRes = await fetch(`/api/v1/simulation/status/${sessionId}`);
+              if (finalRes.ok) {
+                const finalStatus = await finalRes.json();
+                setLiveStatus((prev) => ({ ...prev, ...finalStatus }));
+              }
+            } catch (err) {
+              console.error('Error fetching final status', err);
+            }
+            client.deactivate();
+          } else if (data.status === 'FAILED') {
+            setSimState('idle');
+            console.error('[Tasf.B2B] Simulación falló:', data.errorMessage);
+            client.deactivate();
+          }
+        } catch (err) {
+          console.error('Error parsing kpi:', err);
+        }
+      });
+
+      client.subscribe(`/topic/sim/${sessionId}/eventLog`, (msg) => {
+        try {
+          const envelope = JSON.parse(msg.body);
+          const logEntry = envelope?.data;
+          if (!logEntry) return;
+          setLiveStatus((prev) => {
+            const currentLog = prev?.eventLog || [];
+            return {
+              ...prev,
+              eventLog: [...currentLog, logEntry],
+            };
+          });
+        } catch (err) {
+          console.error('Error parsing eventLog:', err);
+        }
+      });
     };
 
-    // Primera consulta inmediata, luego cada POLL_INTERVAL_MS
-    poll();
-    pollIntervalRef.current = setInterval(poll, POLL_INTERVAL_MS);
+    client.onStompError = (frame) => {
+      console.warn('[Tasf.B2B] STOMP error:', frame?.headers?.message, frame?.body);
+    };
+
+    client.activate();
 
     return () => {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
+      client.deactivate();
     };
   }, [sessionId]);
+
+  // Interpolar clock para animacion suave a 60 FPS
+  useEffect(() => {
+    let rafId;
+    let isActive = true;
+
+    const tick = () => {
+      if (!isActive) return;
+      const { serverEpoch, receivedAt } = simClockRef.current;
+      if (serverEpoch && receivedAt) {
+        const elapsed = Date.now() - receivedAt;
+        const simNow = serverEpoch + elapsed;
+        setSimClockEpoch(simNow);
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      isActive = false;
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
 
   const airportByCode = AIRPORT_BY_ICAO;
 
@@ -264,22 +405,50 @@ export const useControlTowerController = () => {
       }));
   }, [liveStatus, isCollapseScenario]);
 
+  const currentEpochTime = simClockEpoch || liveStatus?.currentEpochTime || 0;
+
+  const activeShipments = useMemo(() => {
+    if (!liveStatus?.activeRoutes || !currentEpochTime) return [];
+    const oneDayMs = 24 * 3600 * 1000;
+    return liveStatus.activeRoutes.filter(r => 
+      r.departureTime >= currentEpochTime && r.departureTime <= currentEpochTime + oneDayMs
+    ).sort((a, b) => a.departureTime - b.departureTime);
+  }, [liveStatus?.activeRoutes, currentEpochTime]);
+
+  const computeLocalProgress = (route, simNow) => {
+    const dep = route?.departureTime ?? 0;
+    const arr = route?.arrivalTime ?? 0;
+    if (!dep || !arr || arr <= dep) return route?.progress ?? 0;
+    const p = (simNow - dep) / (arr - dep);
+    if (p < 0) return 0;
+    if (p > 1) return 1;
+    return p;
+  };
+
   /**
-   * Aviones en el mapa: si hay rutas activas del backend, se usan.
-   * Si no, la lista está vacía (sin aviones volando en el mapa).
+   * Aviones en el mapa con filtro hop-a-hop
    */
   const activeAircraft = useMemo(() => {
-    if (liveStatus?.activeRoutes && liveStatus.activeRoutes.length > 0) {
-      return liveStatus.activeRoutes.map((r) => ({
-        id: r.id,
-        from: r.from,
-        to: r.to,
-        progress: r.progress ?? 0.5,
-        status: r.status ?? "normal",
-      }));
-    }
-    return [];
-  }, [liveStatus]);
+    const routes = activeShipments.length > 0 
+      ? activeShipments 
+      : (liveStatus?.activeRoutes ?? []);
+    if (routes.length === 0) return [];
+
+    return routes
+      .map((r) => {
+        const progress = computeLocalProgress(r, currentEpochTime);
+        return {
+          id: r.id,
+          from: r.from,
+          to: r.to,
+          progress,
+          status: r.status ?? "normal",
+          departureTime: r.departureTime,
+        };
+      })
+      .filter((r) => r.progress >= 0 && r.progress < 1)
+      .slice(0, 220); // Límite seguro
+  }, [activeShipments, liveStatus?.activeRoutes, currentEpochTime]);
 
   const selectedAircraft = useMemo(
     () => activeAircraft.find((p) => p.id === selectedAircraftId) ?? null,
@@ -504,16 +673,7 @@ export const useControlTowerController = () => {
   }, [liveStatus]);
 
   const eventLog = liveStatus?.eventLog ?? [];
-  const currentEpochTime = liveStatus?.currentEpochTime ?? 0;
   const totalBagsWaiting = liveStatus?.totalBagsWaiting ?? 0;
-
-  const activeShipments = useMemo(() => {
-    if (!liveStatus?.activeRoutes || !currentEpochTime) return [];
-    const oneDayMs = 24 * 3600 * 1000;
-    return liveStatus.activeRoutes.filter(r => 
-      r.departureTime >= currentEpochTime && r.departureTime <= currentEpochTime + oneDayMs
-    ).sort((a, b) => a.departureTime - b.departureTime);
-  }, [liveStatus?.activeRoutes, currentEpochTime]);
 
   // ── Efectos secundarios ────────────────────────────────────────────────────
 
@@ -560,7 +720,11 @@ export const useControlTowerController = () => {
     selectedAirport,
     selectedAirportLevel,
     selectedAlgorithm,
+    selectedFromAirport,
+    selectedToAirport,
     sessionId,
+    isFluidMode,
+    setIsFluidMode,
     setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,
@@ -570,6 +734,7 @@ export const useControlTowerController = () => {
     startDayToDaySimulation,
     startCollapseSimulation,
     exportSimulationExcel,
+    exportSimulationReportMd,
     resetSimulation,
     summary,
     tabs: SCENARIO_TABS,

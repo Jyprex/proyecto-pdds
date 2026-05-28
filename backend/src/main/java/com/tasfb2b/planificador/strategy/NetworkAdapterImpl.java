@@ -156,7 +156,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
     }
 
     private long calcularEsperaMatematica(long currentTime, Vuelo v) {
-        long dep = v.getDepartureEpoch();
+        long dep = v.getDepartureEpoch(0L);
         if (currentTime <= dep) return dep - currentTime;
 
         // Aritmética modular: calcula cuánto falta para el próximo ciclo del vuelo.

@@ -11,7 +11,7 @@ import java.util.*;
 @Component
 public class EventEngine {
 
-    public List<Event> buildEvents(List<Route> routes) {
+    public List<Event> buildEvents(List<Route> routes, long startTime) {
 
         List<Event> events = new ArrayList<>();
 
@@ -25,7 +25,7 @@ public class EventEngine {
 
                 // salida
                 events.add(new Event(
-                        v.getDepartureEpoch(),
+                        v.getDepartureEpoch(startTime),
                         EventType.FLIGHT_DEPARTURE,
                         r.getLot(),
                         v,
@@ -34,7 +34,7 @@ public class EventEngine {
 
                 // llegada
                 events.add(new Event(
-                        v.getArrivalEpoch(),
+                        v.getArrivalEpoch(startTime),
                         EventType.FLIGHT_ARRIVAL,
                         r.getLot(),
                         v,

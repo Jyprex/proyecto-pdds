@@ -8,8 +8,8 @@ public interface EnvioResumen {
     String getOrigenIcao();
     String getDestinoIcao();
     int getCantidadMaletas();
-    int getOrigenContinente();
-    int getDestinoContinente();
+    String getOrigenContinente();
+    String getDestinoContinente();
 
     LocalDate getFecha();
     LocalTime getHora();

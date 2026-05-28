@@ -26,6 +26,7 @@ function PeriodSimConfig({
   sessionId,
   simState,
   onExportExcel,
+  onExportMd,
   onReset,           // () => void — reinicia simState a idle
 }) {
   // ── Todos los hooks PRIMERO ───────────────────────────────────────────────
@@ -397,6 +398,19 @@ function PeriodSimConfig({
                   }}
                 >
                   📊 Exportar a Excel
+                </button>
+              )}
+              {onExportMd && (
+                <button id="period-btn-export-md" type="button"
+                  onClick={() => onExportMd(sessionId, `Periodo_${selectedAlgorithm?.toUpperCase() ?? "ALNS"}`)}
+                  style={{
+                    padding: "11px 0", borderRadius: 8, border: "none",
+                    background: "linear-gradient(135deg, #4f46e5, #4338ca)",
+                    color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                    boxShadow: "0 4px 15px rgba(79, 70, 229, 0.35)",
+                  }}
+                >
+                  📝 Exportar Reporte (.md)
                 </button>
               )}
               <button id="period-btn-new" type="button"

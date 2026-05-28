@@ -33,7 +33,7 @@ public class SimulationRunner {
                         startTime
                 );
 
-        List<Event> events = engine.buildEvents(routes);
+        List<Event> events = engine.buildEvents(routes, startTime);
         events.sort((a, b) -> Long.compare(a.getTime(), b.getTime()));
 
         for (Event e : events) {

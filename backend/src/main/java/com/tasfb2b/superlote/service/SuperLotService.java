@@ -35,7 +35,6 @@ public class SuperLotService {
                         .toEpochMilli();
 
                 grupos.computeIfAbsent(key, k -> new Accumulator(
-                        0,
                         e.getOrigenContinente(),
                         e.getDestinoContinente(),
                         readyTime
@@ -51,7 +50,7 @@ public class SuperLotService {
             String[] partes = entry.getKey().split("-");
             Accumulator acc = entry.getValue();
 
-            boolean intercontinental = acc.origenCont != acc.destinoCont;
+            boolean intercontinental = !acc.origenCont.equals(acc.destinoCont);
 
             // READY TIME REAL (mínimo del grupo)
             long readyTime = acc.minReadyTime;
@@ -98,7 +97,6 @@ public class SuperLotService {
                         .toEpochMilli();
 
                 grupos.computeIfAbsent(key, k -> new Accumulator(
-                        0,
                         e.getOrigenContinente(),
                         e.getDestinoContinente(),
                         readyTime
@@ -113,7 +111,7 @@ public class SuperLotService {
             String[] partes = entry.getKey().split("-");
             Accumulator acc = entry.getValue();
 
-            boolean intercontinental = acc.origenCont != acc.destinoCont;
+            boolean intercontinental = !acc.origenCont.equals(acc.destinoCont);
 
             long sla = intercontinental ? 48L * 3600_000 : 24L * 3600_000;
 
@@ -135,14 +133,15 @@ public class SuperLotService {
     private static class Accumulator {
 
         int totalMaletas;
-        int origenCont;
-        int destinoCont;
+        /** Nombre del continente (Continente.name()), inmune a reordenamiento del enum. */
+        String origenCont;
+        String destinoCont;
         long minReadyTime;
 
-        Accumulator(int totalMaletas, int origenCont, int destinoCont, long readyTime) {
-            this.totalMaletas = totalMaletas;
-            this.origenCont = origenCont;
-            this.destinoCont = destinoCont;
+        Accumulator(String origenContName, String destinoContName, long readyTime) {
+            this.totalMaletas = 0;
+            this.origenCont   = origenContName;
+            this.destinoCont  = destinoContName;
             this.minReadyTime = readyTime;
         }
 
