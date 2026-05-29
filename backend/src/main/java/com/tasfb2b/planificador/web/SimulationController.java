@@ -62,8 +62,8 @@ public class SimulationController {
         }
 
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
-        session.setCollapseMode(false);
-
+        session.setAlgorithm(algorithm);
+        
         service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
 
         Map<String, String> response = new HashMap<>();
@@ -95,6 +95,7 @@ public class SimulationController {
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setCollapseMode(true);
         session.setStressFactor(clampedStress);
+        session.setAlgorithm(algorithm);
 
         service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
 
@@ -169,6 +170,9 @@ public class SimulationController {
                 .slaFinal(session.getSlaFinal())
                 .isCollapseMode(session.isCollapseMode())
                 .rescuedFlights(session.getRescuedFlights())
+                .stressFactor(session.getStressFactor())
+                .startEpoch(session.getStartEpoch())
+                .algorithm(session.getAlgorithm())
                 .comparisonResults(progressHolder.getComparisonResults())
                 .errorMessage(session.getErrorMessage())
                 .reports(reportsList);

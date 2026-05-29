@@ -189,13 +189,7 @@ public class SimulationService {
                         LocalDate fechaDia = fechaInicio.plusDays(day);
                         List<SuperLot> lotsDelDia = new ArrayList<>(pendientes);
                         lotsDelDia.addAll(superLotService.agruparEnviosPorFecha(fechaDia));
-                        
-                        // En lugar de planificar todo de golpe, lo haremos por ventanas.
-                        // Solo pasamos a pendientes lo no atendido al final del dia.
-                        
-                        // ── 7. Ciclos de SA minutos para el frontend (Planificación Programada) ───
-                        // Cada ciclo representa SA_MINUTES de tiempo simulado.
-                        // El frontend recibe snapshots cada ciclo: posición interpolada de aviones.
+
                         long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes);
                         Solution ultimaSolucionDelDia = new Solution(); // Acumulador
                         ultimaSolucionDelDia.setRoutes(new ArrayList<>());
