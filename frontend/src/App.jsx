@@ -20,8 +20,6 @@ import CollapseSimConfig from "./components/scenarios/CollapseSimConfig";
 import { useControlTowerController } from "./hooks/useControlTowerController";
 import "./App.css";
 
-// Patron Container-Presenter: App solo compone UI y delega estado/reglas de negocio al hook.
-// Esto reduce acoplamiento, facilita testing y mantiene componentes visuales enfocados.
 const App = () => {
   const navigate = useNavigate();
   const {
@@ -59,6 +57,9 @@ const App = () => {
     selectedFromAirport,
     selectedToAirport,
     sessionId,
+    isFluidMode,
+    setIsFluidMode,
+    setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,
     setSimState,
@@ -68,6 +69,7 @@ const App = () => {
     startDayToDaySimulation,
     startCollapseSimulation,
     exportSimulationExcel,
+    exportSimulationReportMd,
     resetSimulation,
     summary,
     tabs,
@@ -108,6 +110,40 @@ const App = () => {
       >
         🧪 Experimentación Numérica
       </button>
+
+      {/* ── Toggle de Modo Fluido ─────────────────────────────── */}
+      <button
+        onClick={() => setIsFluidMode(!isFluidMode)}
+        title="Alternar entre modo rápido (original) y modo fluido (60 FPS - detallado)"
+        style={{
+          position: 'fixed', top: 12, right: 260, zIndex: 9999,
+          background: isFluidMode ? 'linear-gradient(90deg, #10b981, #059669)' : 'linear-gradient(90deg, #6b7280, #4b5563)',
+          color: 'white', border: 'none', borderRadius: 8,
+          padding: '7px 14px', cursor: 'pointer',
+          fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
+          boxShadow: isFluidMode ? '0 4px 15px rgba(16, 185, 129, 0.4)' : '0 4px 15px rgba(107, 114, 128, 0.4)',
+        }}
+      >
+        {isFluidMode ? "✨ Modo Fluido (60 FPS) ON" : "⚡ Modo Rápido (Pruebas) ON"}
+      </button>
+
+      {/* ── Botón Global de Exportación (solo cuando termina la simulación) ── */}
+      {(simState === "completed" || liveStatus?.status === "DONE") && (
+        <button
+          onClick={() => exportSimulationReportMd(sessionId, `Reporte_General`)}
+          title="Exportar los resultados finales a Markdown (.md)"
+          style={{
+            position: 'fixed', top: 12, right: 460, zIndex: 9999,
+            background: 'linear-gradient(90deg, #db2777, #be185d)',
+            color: 'white', border: 'none', borderRadius: 8,
+            padding: '7px 14px', cursor: 'pointer',
+            fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
+            boxShadow: '0 4px 15px rgba(219, 39, 119, 0.4)',
+          }}
+        >
+          📝 Descargar Reporte (.md)
+        </button>
+      )}
 
       <ScenarioHeader
         tabs={tabs}
@@ -183,6 +219,7 @@ const App = () => {
             simState={simState}
             sessionId={sessionId}
             onExportExcel={exportSimulationExcel}
+            onExportMd={exportSimulationReportMd}
             onReset={resetSimulation}
           />
           <CollapseSimConfig

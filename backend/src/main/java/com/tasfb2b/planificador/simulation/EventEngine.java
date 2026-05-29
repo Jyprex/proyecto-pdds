@@ -85,6 +85,20 @@ public class EventEngine {
                         lastFlight,   // vuelo cuyo destino es el almacén que se libera
                         load
                 ));
+
+                long localReleaseTime = computeLocalReleaseTime(
+                        arrivalTime,
+                        lastFlight.getDestino().getGmtOffset()
+                );
+                if (localReleaseTime < pickupTime) {
+                    events.add(new Event(
+                            localReleaseTime,
+                            EventType.STORAGE_RELEASE,
+                            r.getLot(),
+                            lastFlight,
+                            load
+                    ));
+                }
             }
             // ─────────────────────────────────────────────────────────────────
         }
@@ -92,5 +106,12 @@ public class EventEngine {
         events.sort(Comparator.comparingLong(Event::getTime));
 
         return events;
+    }
+
+    private long computeLocalReleaseTime(long arrivalEpochMs, int gmtOffsetHours) {
+        long offsetMs = gmtOffsetHours * 60L * 60 * 1000;
+        long localArrival = arrivalEpochMs + offsetMs;
+        long localRelease = localArrival + 24L * 60 * 60 * 1000;
+        return localRelease - offsetMs;
     }
 }

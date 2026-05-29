@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "./api";
-import { createStompClient } from './ws'
+import { createStompClient } from "./ws";
 import {
   AIRPORT_NODES,
   AIRPORT_ROWS,
@@ -42,6 +42,7 @@ export const useControlTowerController = () => {
   const [simSpeed, setSimSpeed] = useState(1);
 
   const [sessionId, setSessionId] = useState(null);
+  const [isFluidMode, setIsFluidMode] = useState(false);
 
   /** Métricas vivas recibidas del backend via WebSocket (STOMP) */
   const [liveStatus, setLiveStatus] = useState(null);
@@ -113,7 +114,8 @@ export const useControlTowerController = () => {
       setSimState("running");
       setLiveStatus(null);
 
-      const res = await apiFetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}`, {
+      const playbackMin = isFluidMode ? 60 : 1;
+      const res = await apiFetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&playbackMinutes=${playbackMin}`, {
         method: "POST",
       });
 
@@ -125,7 +127,7 @@ export const useControlTowerController = () => {
       console.error("[Tasf.B2B] Error al iniciar simulación:", err);
       setSimState("idle");
     }
-  }, [selectedAlgorithm]);
+  }, [selectedAlgorithm, isFluidMode]);
 
   /**
    * Inicia simulación Día a Día con fecha de inicio y número de días específicos.
@@ -137,7 +139,8 @@ export const useControlTowerController = () => {
       setSimState("running");
       setLiveStatus(null);
 
-      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}`;
+      const playbackMin = isFluidMode ? 60 : 1;
+      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${playbackMin}`;
       const res = await apiFetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
@@ -149,7 +152,7 @@ export const useControlTowerController = () => {
       console.error("[Tasf.B2B] Error al iniciar simulación día a día:", err);
       setSimState("idle");
     }
-  }, [selectedAlgorithm]);
+  }, [selectedAlgorithm, isFluidMode]);
 
   /**
    * Descarga el Excel de resultados de la simulación completada.
@@ -178,18 +181,60 @@ export const useControlTowerController = () => {
   }, []);
 
   /**
+   * Descarga un reporte en formato Markdown de la simulación.
+   */
+  const exportSimulationReportMd = useCallback(async (sid, name = "Escenario") => {
+    if (!sid) return;
+    try {
+      const res = await fetch(`/api/v1/simulation/status/${sid}`);
+      if (!res.ok) throw new Error(`Error al obtener status: ${res.status}`);
+      const finalStatus = await res.json();
+      
+      let md = `# Resultados: ${name}\n\n`;
+      md += `**ID Sesión:** ${sid}\n`;
+      md += `**Duración Simulada:** ${finalStatus.totalDays} días\n`;
+      md += `**SLA Final:** ${(finalStatus.slaFinal ?? 0).toFixed(2)}%\n`;
+      md += `**Total Maletas Atendidas:** ${finalStatus.totalAttended} / ${(finalStatus.totalMissed ?? 0) + (finalStatus.totalAttended ?? 0)}\n`;
+      md += `**Demanda Perdida:** ${finalStatus.totalMissed}\n\n`;
+      md += `## Reporte Diario\n\n`;
+      md += `| Día | Atendidas | Demanda | SLA % | Colapsado |\n`;
+      md += `| --- | --------- | ------- | ----- | --------- |\n`;
+      
+      if (finalStatus.reports) {
+        for (const d of finalStatus.reports) {
+          md += `| ${d.dayIndex + 1} | ${d.malatetasAtendidas} | ${d.totalMaletas} | ${(d.slaPercent ?? 0).toFixed(2)}% | ${d.colapsed ? 'Sí' : 'No'} |\n`;
+        }
+      }
+      
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `ResultadosDeEscenario_${name.replace(/\s+/g, '')}_${sid.substring(0, 8)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[Tasf.B2B] Error al exportar MD:", err);
+    }
+  }, []);
+
+  /**
    * Inicia simulación de colapso con fecha de inicio opcional.
    * @param {number} dias - Días a simular (default 5)
    * @param {string} startDate - Fecha inicio YYYY-MM-DD (opcional)
    */
-  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null) => {
+  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5) => {
     try {
       setSimState("running");
       setLiveStatus(null);
 
-      const dateParam = startDate ? `&startDate=${startDate}` : "";
+      const playbackMin = isFluidMode ? 60 : 1;
+      const dateParam   = startDate    ? `&startDate=${startDate}`       : "";
+      const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
       const res = await apiFetch(
-        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}`,
+        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}&playbackMinutes=${playbackMin}`,
         { method: "POST" }
       );
 
@@ -197,12 +242,12 @@ export const useControlTowerController = () => {
 
       const data = await res.json();
       setSessionId(data.sessionId);
-      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()}`);
+      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()} | estrés ×${stressFactor}`);
     } catch (err) {
       console.error("[Tasf.B2B] Error al iniciar simulación de colapso:", err);
       setSimState("idle");
     }
-  }, [selectedAlgorithm]);
+  }, [selectedAlgorithm, isFluidMode]);
 
 
   /**
@@ -318,7 +363,7 @@ export const useControlTowerController = () => {
     }
   }, [sessionId])
 
-  // Interpolar clock para animacion suave
+  // Interpolar clock para animacion suave a 60 FPS
   useEffect(() => {
     let rafId
     let isActive = true
@@ -341,7 +386,7 @@ export const useControlTowerController = () => {
     }
   }, [])
 
-  const airportByCode = AIRPORT_BY_ICAO;
+  const airportByCode = AIRPORT_BY_ICAO
 
   /**
    * Métricas de aeropuerto: si hay datos live del backend (airportLoads),
@@ -375,24 +420,16 @@ export const useControlTowerController = () => {
 
   const currentEpochTime = simClockEpoch || liveStatus?.currentEpochTime || 0;
 
-  // Lógica de Ventana Móvil: Vuelos que están en el aire O despegan en el ciclo actual.
-  // Ahora el backend nos envía estrictamente vuelos en curso, por lo que simplemente
-  // los consideramos a todos activos para el mapa y las cards, pero lo mantenemos robusto
-  // por si acaso llegan futuros vuelos en el batch.
+  // Lógica de Ventana Móvil: Vuelos en curso o que despegan inminentemente.
   const activeShipments = useMemo(() => {
-    if (!liveStatus?.activeRoutes || !currentEpochTime) return [];
-    
-    // Mostraremos vuelos que han despegado y aún no han aterrizado
-    // O que están por despegar inminentemente (ventana pequeña para UI)
-    const viewWindow = 2 * 3600 * 1000; // 2 horas de inminencia
-    return liveStatus.activeRoutes.filter(r =>
-      r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow
-    ).sort((a, b) => a.departureTime - b.departureTime);
-  }, [liveStatus?.activeRoutes, currentEpochTime]);
-
+    if (!liveStatus?.activeRoutes || !currentEpochTime) return []
+    const viewWindow = 2 * 3600 * 1000
+    return liveStatus.activeRoutes
+      .filter((r) => r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow)
+      .sort((a, b) => a.departureTime - b.departureTime)
+  }, [liveStatus?.activeRoutes, currentEpochTime])
   /**
-   * Aviones en el mapa: si hay rutas activas del backend, se usan.
-   * Si no, la lista está vacía (sin aviones volando en el mapa).
+   * Aviones en el mapa con filtro hop-a-hop
    */
   const computeLocalProgress = (route, simNow) => {
     const dep = route?.departureTime ?? 0
@@ -407,12 +444,12 @@ export const useControlTowerController = () => {
   const activeAircraft = useMemo(() => {
     const routes = activeShipments.length > 0
       ? activeShipments
-      : (liveStatus?.activeRoutes ?? []);
-    if (routes.length === 0) return [];
+      : (liveStatus?.activeRoutes ?? [])
+    if (routes.length === 0) return []
 
     return routes
       .map((r) => {
-        const progress = computeLocalProgress(r, currentEpochTime);
+        const progress = computeLocalProgress(r, currentEpochTime)
         return {
           id: r.id,
           from: r.from,
@@ -420,28 +457,34 @@ export const useControlTowerController = () => {
           progress,
           status: r.status ?? "normal",
           departureTime: r.departureTime,
-        };
+        }
       })
       .filter((r) => r.progress >= 0 && r.progress < 1)
-      .slice(0, MAX_MAP_ROUTES);
-  }, [activeShipments, liveStatus?.activeRoutes, currentEpochTime]);
+      .slice(0, MAX_MAP_ROUTES)
+  }, [activeShipments, liveStatus?.activeRoutes, currentEpochTime])
 
   const selectedAircraft = useMemo(
     () => activeAircraft.find((p) => p.id === selectedAircraftId) ?? null,
     [activeAircraft, selectedAircraftId],
-  );
+  )
 
-  // selectedFromAirport/selectedToAirport se calculan en App (ruta seleccionada en el mapa)
+  // selectedFromAirport/selectedToAirport derivadas del vuelo seleccionado
+  const selectedFromAirport = selectedAircraft
+    ? (AIRPORT_BY_ICAO[selectedAircraft.from] ?? null)
+    : null;
+  const selectedToAirport = selectedAircraft
+    ? (AIRPORT_BY_ICAO[selectedAircraft.to] ?? null)
+    : null;
 
   const selectedAirport = selectedAirportCode
     ? (AIRPORT_BY_ICAO[selectedAirportCode] ?? null)
-    : null;
+    : null
 
   const selectedAirportMetrics = selectedAirport
     ? (activeMetrics[selectedAirport.icao] ?? null)
-    : null;
+    : null
 
-  const selectedAirportLevel = selectedAirportMetrics?.level ?? "green";
+  const selectedAirportLevel = selectedAirportMetrics?.level ?? "green"
 
   // ── KPI cards y Telemetría: reales si hay liveStatus, fallback limpio si no ──
 
@@ -682,8 +725,13 @@ export const useControlTowerController = () => {
     selectedAirportCode,
     selectedAirport,
     selectedAirportLevel,
+    selectedAirportMetrics,
     selectedAlgorithm,
+    selectedFromAirport,
+    selectedToAirport,
     sessionId,
+    isFluidMode,
+    setIsFluidMode,
     setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,
@@ -693,6 +741,7 @@ export const useControlTowerController = () => {
     startDayToDaySimulation,
     startCollapseSimulation,
     exportSimulationExcel,
+    exportSimulationReportMd,
     resetSimulation,
     summary,
     tabs: SCENARIO_TABS,

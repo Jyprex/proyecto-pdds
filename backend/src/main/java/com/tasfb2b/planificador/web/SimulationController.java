@@ -50,7 +50,8 @@ public class SimulationController {
     public ResponseEntity<Map<String, String>> startSimulation(
             @PathVariable(required = false) Integer dias,
             @RequestParam(required = false, defaultValue = "HGA") String algorithm,
-            @RequestParam(required = false) String startDate) {
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         String sessionId = UUID.randomUUID().toString();
@@ -63,7 +64,7 @@ public class SimulationController {
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setCollapseMode(false);
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -78,9 +79,12 @@ public class SimulationController {
     public ResponseEntity<Map<String, String>> startCollapseSimulation(
             @PathVariable(required = false) Integer dias,
             @RequestParam(required = false, defaultValue = "HGA") String algorithm,
-            @RequestParam(required = false) String startDate) {
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false, defaultValue = "5") int stressFactor,
+            @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
+        int clampedStress = Math.max(1, Math.min(10, stressFactor)); // clamp 1–10
         String sessionId = UUID.randomUUID().toString();
 
         java.time.LocalDate fechaInicio = null;
@@ -90,12 +94,14 @@ public class SimulationController {
 
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setCollapseMode(true);
+        session.setStressFactor(clampedStress);
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
         response.put("totalDays", String.valueOf(totalDays));
+        response.put("stressFactor", String.valueOf(clampedStress));
         response.put("message", "Simulación de colapso iniciada.");
 
         return ResponseEntity.accepted().body(response);

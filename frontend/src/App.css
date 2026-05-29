@@ -1445,7 +1445,7 @@
   padding: 9px 6px;
   font-size: 0.67rem;
   font-weight: 700;
-  color: #5a7a95;
+  color: #4a6a85;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   letter-spacing: 0.02em;
@@ -1486,14 +1486,14 @@
   font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.06em;
-  color: #3a5a78;
+  color: #4a7aa0;
   text-transform: uppercase;
 }
 
 .ct-config-hint {
   margin: 0 0 10px;
   font-size: 0.68rem;
-  color: #5a7a95;
+  color: #7a9ab8;
   line-height: 1.4;
 }
 
@@ -1890,7 +1890,7 @@
 }
 
 .ct-progress-detail__item span {
-  color: #5a7a95;
+  color: #94a3b8;
 }
 
 .ct-progress-detail__item strong {

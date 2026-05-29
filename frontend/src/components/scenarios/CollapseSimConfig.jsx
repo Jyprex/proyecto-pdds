@@ -1,23 +1,5 @@
 import { useState, useMemo } from 'react'
 
-// ── Datos de bitácora (estáticos — demostración del escenario) ────────────────
-const COLLAPSE_LOG = [
-  { time: '18:42', node: 'SKBO', type: 'almacén', detail: 'Almacén Bogotá alcanzó 100% (800/800 maletas)' },
-  { time: '19:15', node: 'SPJC', type: 'almacén', detail: 'Almacén Lima alcanzó 100% (650/650 maletas)' },
-  { time: '20:03', node: 'LFPG→VIDP', type: 'vuelo', detail: 'Vuelo CDG→DEL no puede descargar: destino saturado' },
-  { time: '21:30', node: 'MMMX', type: 'almacén', detail: 'Almacén C. de México alcanzó 100% (720/720 maletas)' },
-  { time: '22:48', node: 'LEMD', type: 'almacén', detail: 'Almacén Madrid alcanzó 98% (588/600 maletas)' },
-  { time: '01:12+1', node: 'ZBAA', type: 'almacén', detail: 'Almacén Pekín alcanzó 100% (500/500 maletas)' },
-  { time: '03:42+1', node: 'SISTEMA', type: 'colapso', detail: '⚠ PUNTO DE COLAPSO: 14/17 almacenes saturados, 6 vuelos bloqueados' },
-]
-
-const SLA_VIOLATIONS = [
-  { id: 'ENV-10450', origin: 'CDG', dest: 'HND', hours: 52, sla: 48, over: '+4h' },
-  { id: 'ENV-10461', origin: 'LIM', dest: 'MAD', hours: 51, sla: 48, over: '+3h' },
-  { id: 'ENV-10478', origin: 'BOG', dest: 'DEL', hours: 56, sla: 48, over: '+8h' },
-  { id: 'ENV-10490', origin: 'MEX', dest: 'PEK', hours: 49, sla: 48, over: '+1h' },
-  { id: 'ENV-10502', origin: 'IAD', dest: 'FCO', hours: 26, sla: 24, over: '+2h (mismo cont.)' },
-]
 
 // Fecha mínima = hoy, máxima = 31 dic 2026
 
@@ -40,7 +22,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
   const handleStart = async () => {
     if (!onStart) return
     setIsStarting(true)
-    await onStart(5, startDate)
+    await onStart(5, startDate, stressFactor)
     setIsStarting(false)
     setActiveSection('progreso')
   }
@@ -50,8 +32,6 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
   const sections = [
     { key: 'config',   label: '⚙️ Config',    id: 'collapse-tab-config'   },
     { key: 'info',     label: '📖 Escenario', id: 'collapse-tab-info'     },
-    { key: 'bitacora', label: '📋 Bitácora',  id: 'collapse-tab-bitacora' },
-    { key: 'sla',      label: '🚨 SLA',       id: 'collapse-tab-sla'      },
     { key: 'progreso', label: '📊 Progreso',  id: 'collapse-tab-progreso' },
   ]
 
@@ -175,7 +155,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
             {/* ── Slider de estrés ───────────────────────────────────────── */}
             <div className="ct-config-section">
               <p className="ct-config-section__title">📈 FACTOR DE ESTRÉS OPERATIVO</p>
-              <p className="ct-config-hint">Nivel de interrupción inyectada en la red. Afecta la bitácora de demostración.</p>
+              <p className="ct-config-hint">Nivel de interrupción real inyectada al backend. Determina el % de rutas canceladas en cada día simulado.</p>
 
               <div style={{ background: 'rgba(15,23,42,0.5)', borderRadius: 10, padding: '12px 14px', marginTop: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -229,7 +209,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
               <div style={{ color: '#9ca3af', lineHeight: 1.7 }}>
                 <p style={{ margin: 0 }}>▸ <strong style={{color:'#e2e8f0'}}>Entrada:</strong> Fecha {startDate}, factor ×{stressFactor}, algoritmo {(selectedAlgorithm||'alns').toUpperCase()}, 5 días</p>
                 <p style={{ margin: 0 }}>▸ <strong style={{color:'#e2e8f0'}}>Salida:</strong> Rutas rescatadas, E_cap, colapso computacional (Ta≥Sa), SLA violado</p>
-                <p style={{ margin: 0 }}>▸ <strong style={{color:'#ef4444'}}>Disrupciones:</strong> −50% cap en BOG/MAD/DEL · 15% de rutas canceladas</p>
+                <p style={{ margin: 0 }}>▸ <strong style={{color:'#ef4444'}}>Disrupciones:</strong> −50% cap en BOG/MAD/DEL · {Math.round(stressFactor * 3)}% de rutas canceladas</p>
               </div>
             </div>
 
@@ -301,50 +281,6 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
         )}
 
         {/* ══════════════════════════════════════════════════════════════════ */}
-        {/* TAB: BITÁCORA                                                      */}
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {activeSection === 'bitacora' && (
-          <div className="ct-config-section">
-            <p className="ct-config-section__title">📋 BITÁCORA DE COLAPSO</p>
-            <p className="ct-config-hint">Registro del nodo y hora exacta de cada saturación.</p>
-            <div className="ct-collapse-log">
-              {COLLAPSE_LOG.map((entry, i) => (
-                <div key={i} className={`ct-collapse-log__entry ct-collapse-log__entry--${entry.type}`}>
-                  <span className="ct-collapse-log__time">{entry.time}</span>
-                  <span className="ct-collapse-log__node">{entry.node}</span>
-                  <p className="ct-collapse-log__detail">{entry.detail}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {/* TAB: SLA                                                           */}
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {activeSection === 'sla' && (
-          <div className="ct-config-section">
-            <p className="ct-config-section__title">🚨 MALETAS QUE SUPERARON SLA</p>
-            <p className="ct-config-hint">Maletas que excedieron 24h (mismo continente) o 48h (intercontinental).</p>
-            <div className="ct-sla-violations">
-              {SLA_VIOLATIONS.map((v) => (
-                <div key={v.id} className="ct-sla-violation">
-                  <div className="ct-sla-violation__header">
-                    <strong>{v.id}</strong>
-                    <span className="ct-sla-violation__badge" style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>
-                      {v.over}
-                    </span>
-                  </div>
-                  <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>
-                    {v.origin} → {v.dest} · {v.hours}h real / {v.sla}h SLA
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════ */}
         {/* TAB: PROGRESO — conectado al liveStatus real                       */}
         {/* ══════════════════════════════════════════════════════════════════ */}
         {activeSection === 'progreso' && (
@@ -352,7 +288,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
             <p className="ct-config-section__title">📊 PROGRESO DEL COLAPSO</p>
 
             {!liveStatus || liveStatus.percent === 0 ? (
-              <div style={{ textAlign: 'center', padding: '24px 0', color: '#6b7280', fontSize: 12 }}>
+              <div style={{ textAlign: 'center', padding: '24px 0', color: '#d1d5db', fontSize: 12 }}>
                 Inicia la simulación en la pestaña ⚙️ Config para ver el progreso en tiempo real.
               </div>
             ) : (
@@ -360,7 +296,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
                 {/* Barra de progreso real */}
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                    <span style={{ color: '#9ca3af' }}>Días completados</span>
+                    <span style={{ color: '#d1d5db' }}>Días completados</span>
                     <span style={{ color: '#fca5a5', fontWeight: 700 }}>
                       {liveStatus.currentDay ?? 0} / {liveStatus.totalDays ?? 5}
                     </span>
