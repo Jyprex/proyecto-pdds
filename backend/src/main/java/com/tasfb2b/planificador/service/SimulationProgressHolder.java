@@ -89,6 +89,9 @@ public class SimulationProgressHolder {
         /** Mensaje de error si status = FAILED. */
         private String errorMessage;
 
+        /** Algoritmo utilizado (HGA, ALNS) */
+        private String algorithm = "HGA";
+        
         /** Epoch ms del primer día simulado — para el Excel export. */
         private Long startEpoch;
     }

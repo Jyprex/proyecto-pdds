@@ -64,7 +64,7 @@ public class SimulationService {
         private static final int CYCLES_PER_DAY = 1440 / SA_MINUTES;
 
         private static final LocalDate DEFAULT_START_DATE = LocalDate.of(2026, 1, 1);
-        private static final long HGA_WINDOW_MS = 45_000L;
+        private static final long HGA_WINDOW_MS = 8_000L;
 
         public record WsEnvelope<T>(long seq, T data) {}
 
@@ -191,7 +191,7 @@ public class SimulationService {
                                                                 && !routeToCancel.getFlights().isEmpty()) {
                                                         Long vueloId = routeToCancel.getFlights().get(0).getId();
                                                         try {
-                                                                Solution replanned = alnsPlanner.replanificar(vueloId, 6_500L);
+                                                                Solution replanned = alnsPlanner.replanificar(vueloId, 250L);
                                                                 if (replanned != null && !replanned.getRoutes().isEmpty()) {
                                                                         routeToCancel.setStatus("rescued");
                                                                         rescued++;
