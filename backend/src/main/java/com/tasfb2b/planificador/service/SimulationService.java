@@ -183,6 +183,7 @@ public class SimulationService {
                 List<SimulationDayReport> history = new ArrayList<>();
                 long currentTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
                 List<SuperLot> pendientes = new ArrayList<>();
+                List<Route> inTransitRoutes = new ArrayList<>();
 
                 for (int day = 0; day < dias; day++) {
 
@@ -268,6 +269,15 @@ public class SimulationService {
                                 SimulationState state = simulator.run(sol.getRoutes(), airportMap, currentSimTime, currentTime);
                                 
                                 ultimaSolucionDelDia.getRoutes().addAll(sol.getRoutes());
+                                
+                                // Añadir a en tránsito SOLO las rutas que tengan capacidad asignada (>0)
+                                // para no animar vuelos fantasmas bloqueados.
+                                inTransitRoutes.addAll(sol.getRoutes().stream()
+                                        .filter(r -> r.getCapacidadAsignada() > 0)
+                                        .collect(Collectors.toList()));
+                                
+                                // Limpiar rutas que ya terminaron de volar hace más de un ciclo
+                                inTransitRoutes.removeIf(r -> r.getArrivalTime() <= currentSimTime - (SA_MINUTES * 60_000L));
 
                                 // Event log sintético (solo en ciclos clave)
                                 if (cycle == 0) {
@@ -295,7 +305,11 @@ public class SimulationService {
                                 // Si llegamos al final del día, los pasamos a `pendientes` para el día siguiente.
                                 List<SuperLot> remanentes = sol.getRoutes().stream()
                                     .filter(r -> r.excedeCapacidad() || r.isNoAtendido())
-                                    .map(r -> elevateToMaxPriority(r.getLot(), currentSimTime)) // No elevar al siguiente día todavía. Solo darle prioridad.
+                                    .map(r -> {
+                                        SuperLot nextLot = elevateToMaxPriority(r.getLot(), currentSimTime);
+                                        nextLot.setTotalMaletas(r.getDemandaNoAtendida());
+                                        return nextLot;
+                                    })
                                     .collect(Collectors.toList());
                                     
                                 if (cycle < CYCLES_PER_DAY - 1) {
@@ -310,7 +324,7 @@ public class SimulationService {
                                 double slaPercent = 100; // placeholder until day ends
                                 updateProgress(session, day + 1, dias, currentPercent,
                                                simulatedTimeStr, slaPercent, state, airportMap,
-                                               ultimaSolucionDelDia, currentSimTime, currentTime);
+                                               inTransitRoutes, currentSimTime, currentTime);
 
                                 try {
                                         Thread.sleep(sleepPerCycleMs);
@@ -380,7 +394,7 @@ public class SimulationService {
                         double slaPercent,
                         SimulationState state,
                         Map<String, Aeropuerto> airportMap,
-                        Solution sol,
+                        List<Route> activeRoutesList,
                         long currentSimTime,
                         long baseTime) {
 
@@ -403,44 +417,80 @@ public class SimulationService {
                 session.setTotalBagsWaiting(totalBagsWaiting);
 
                 // Rutas activas: descompuestas en segmentos hop-a-hop para animar cada tramo
-                List<Map<String, Object>> activeRoutes = new ArrayList<>();
-                for (Route r : sol.getRoutes()) {
+                // Rutas activas: agrupadas por VUELO FÍSICO para no colapsar el frontend
+                // La llave del mapa será "vueloId-depEpoch" para asegurar unicidad exacta por despegue
+                Map<String, Map<String, Object>> vuelosFisicos = new HashMap<>();
+
+                for (Route r : activeRoutesList) {
                         List<Vuelo> flights = r.getFlights();
-                        if (flights.isEmpty()) continue;
+                        if (flights == null || flights.isEmpty()) continue;
 
                         String baseStatus  = r.isTarde() ? "critical" : (r.isNoAtendido() ? "blocked" : "normal");
                         String routeStatus = "normal".equals(r.getStatus()) ? baseStatus : r.getStatus();
 
-                        double capacityPercent = 0.0;
-                        if (r.getCapacidadAsignada() > 0) {
-                                capacityPercent = (r.getCapacidadAsignada() * 100.0)
-                                                / Math.max(1, r.getDemandaTotal());
-                        }
+                        long routeTime = r.getLot().getReadyTime();
 
                         for (int i = 0; i < flights.size(); i++) {
                                 Vuelo v = flights.get(i);
                                 String fromIcao = r.getHops().get(i);
                                 String toIcao   = r.getHops().get(i + 1);
 
-                                long depEpoch = v.getDepartureEpoch(baseTime);
-                                long arrEpoch = v.getArrivalEpoch(baseTime);
+                                long depEpoch = v.calcularSiguienteSalida(routeTime);
+                                long arrEpoch = depEpoch + v.getDuracionMs();
+                                routeTime = arrEpoch;
 
-                                if (currentSimTime < depEpoch || currentSimTime >= arrEpoch) {
+                                if (currentSimTime < depEpoch) {
+                                        continue;
+                                }
+                                // Se permite 1 ciclo extra tras aterrizar para que el frontend pueda animar a progress 1.0
+                                if (currentSimTime >= arrEpoch + (SA_MINUTES * 60_000L)) {
                                         continue;
                                 }
 
-                                Map<String, Object> segMap = new HashMap<>();
-                                segMap.put("id",             r.getLot().getId() * 100L + i);
-                                segMap.put("from",           fromIcao);
-                                segMap.put("to",             toIcao);
-                                segMap.put("progress",       computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
-                                segMap.put("status",         routeStatus);
-                                segMap.put("departureTime",  depEpoch);
-                                segMap.put("arrivalTime",    arrEpoch);
-                                segMap.put("capacityPercent",capacityPercent);
-                                activeRoutes.add(segMap);
+                                String mapKey = v.getId() + "-" + depEpoch;
+
+                                if (!vuelosFisicos.containsKey(mapKey)) {
+                                        Map<String, Object> segMap = new HashMap<>();
+                                        segMap.put("id", "vuelo-" + mapKey);
+                                        segMap.put("from",           fromIcao);
+                                        segMap.put("to",             toIcao);
+                                        segMap.put("progress",       computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
+                                        segMap.put("status",         routeStatus);
+                                        segMap.put("departureTime",  depEpoch);
+                                        segMap.put("arrivalTime",    arrEpoch);
+                                        
+                                        segMap.put("ocupacionReal", r.getCapacidadAsignada());
+                                        segMap.put("capacidadMax", v.getCapacidadTotal());
+                                        vuelosFisicos.put(mapKey, segMap);
+                                } else {
+                                        Map<String, Object> existing = vuelosFisicos.get(mapKey);
+                                        int ocupacionActual = (int) existing.get("ocupacionReal");
+                                        existing.put("ocupacionReal", ocupacionActual + r.getCapacidadAsignada());
+                                        
+                                        // Priorizamos mostrar estados de alerta si algún paquete lo requiere
+                                        String existingStatus = (String) existing.get("status");
+                                        if ("critical".equals(routeStatus) || "rescued".equals(routeStatus)) {
+                                                existing.put("status", routeStatus);
+                                        } else if ("cancelled".equals(routeStatus) && !"rescued".equals(existingStatus)) {
+                                                existing.put("status", routeStatus);
+                                        }
+                                }
                         }
                 }
+
+                // Generar lista final y calcular % de ocupación del avión físico
+                List<Map<String, Object>> activeRoutes = new ArrayList<>();
+                for (Map<String, Object> avion : vuelosFisicos.values()) {
+                        int ocupacion = (int) avion.get("ocupacionReal");
+                        int max = (int) avion.get("capacidadMax");
+                        double capacityPercent = (ocupacion * 100.0) / Math.max(1, max);
+                        avion.put("capacityPercent", Math.min(100.0, capacityPercent)); // Tope en 100% visual
+                        
+                        avion.remove("ocupacionReal");
+                        avion.remove("capacidadMax");
+                        activeRoutes.add(avion);
+                }
+
                 session.setActiveRoutes(activeRoutes);
                 
                 // Broadcastear estado por WebSocket

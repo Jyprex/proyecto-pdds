@@ -53,52 +53,27 @@ public class EventEngine {
                 sequenceTime = arrTime;
             }
 
-            // ── BAGGAGE_PICKUP ────────────────────────────────────────────────
-            // Solo se genera si la ruta tiene maletas asignadas (no rutas vacías).
-            // El cliente recoge en un instante aleatorio dentro de la ventana SLA:
-            //   mínimo = arrivalTime del último vuelo (maletas ya en almacén)
-            //   máximo = deadline del lote (límite contractual Tasf.B2B)
-            // Semilla fija = lot.id → mismo resultado en cada ejecución (reproducibilidad
-            // académica para experimentación numérica).
+            // ── PERMANENCIA (24h) ──────────────────────────────────────────────
+            // Regla de Permanencia: El paquete se queda ocupando espacio
+            // en el almacén de destino por exactamente 24 horas tras su llegada,
+            // momento en el cual se libera y ya no figura en el almacén.
             if (load > 0 && r.getArrivalTime() > 0) {
 
                 long arrivalTime = r.getArrivalTime();
-                long deadline    = r.getLot().getDeadline();
-                long ventana     = deadline - arrivalTime;
-
-                long pickupTime;
-                if (ventana > 0) {
-                    // Distribución uniforme acotada al SLA, reproducible por lote
-                    Random rnd = new Random(r.getLot().getId());
-                    pickupTime = arrivalTime + (long)(rnd.nextDouble() * ventana);
-                } else {
-                    // Si arrivalTime >= deadline (llegó tarde), se libera en el deadline
-                    pickupTime = deadline;
-                }
-
                 Vuelo lastFlight = flights.get(flights.size() - 1);
-
-                events.add(new Event(
-                        pickupTime,
-                        EventType.BAGGAGE_PICKUP,
-                        r.getLot(),
-                        lastFlight,   // vuelo cuyo destino es el almacén que se libera
-                        load
-                ));
 
                 long localReleaseTime = computeLocalReleaseTime(
                         arrivalTime,
                         lastFlight.getDestino().getGmtOffset()
                 );
-                if (localReleaseTime < pickupTime) {
-                    events.add(new Event(
-                            localReleaseTime,
-                            EventType.STORAGE_RELEASE,
-                            r.getLot(),
-                            lastFlight,
-                            load
-                    ));
-                }
+
+                events.add(new Event(
+                        localReleaseTime,
+                        EventType.STORAGE_RELEASE,
+                        r.getLot(),
+                        lastFlight,
+                        load
+                ));
             }
             // ─────────────────────────────────────────────────────────────────
         }

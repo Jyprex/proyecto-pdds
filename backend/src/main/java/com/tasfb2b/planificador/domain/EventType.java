@@ -10,5 +10,11 @@ public enum EventType {
      * ventana [arrivalTime, deadline] del SLA contractual de Tasf.B2B.
      * Este evento reduce la carga del aeropuerto destino, evitando el colapso.
      */
-    BAGGAGE_PICKUP
+    BAGGAGE_PICKUP,
+    /**
+     * Salida del almacén por permanencia de 24h en hora local del aeropuerto.
+     */
+    STORAGE_RELEASE,
+    FLIGHT_CANCELLED,
+    REPLAN_TRIGGER
 }

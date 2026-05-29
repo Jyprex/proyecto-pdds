@@ -37,7 +37,7 @@ public class NumericExperimentController {
 
     /**
      * Inicia el experimento global (1 corrida de 5 niveles).
-     * Body: { "algorithm": "ALNS" | "HGA" }
+     * Body: { "algorithm": "ALNS" }
      */
     @PostMapping("/start")
     public ResponseEntity<?> startExperiment(@RequestBody Map<String, String> payload) {
@@ -74,7 +74,7 @@ public class NumericExperimentController {
 
     /**
      * Inicia la suite de 10 iteraciones y devuelve un exportSessionId para tracking.
-     * Body: { "algorithm": "ALNS" | "HGA" }
+     * Body: { "algorithm": "ALNS" }
      */
     @PostMapping("/export/start")
     public ResponseEntity<?> startExport(@RequestBody Map<String, String> payload) {

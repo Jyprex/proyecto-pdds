@@ -33,6 +33,11 @@ public class FitnessEvaluator {
 
         for (Route r : routes) {
 
+            // SLA duro: cualquier ruta tardía invalida la solución
+            if (r.isTarde()) {
+                return -Double.MAX_VALUE;
+            }
+
             // Premio por lote con al menos una maleta asignada
             if (r.isAtendido()) {
                 score += 10;

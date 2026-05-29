@@ -89,8 +89,8 @@ public class SimulationProgressHolder {
         /** Mensaje de error si status = FAILED. */
         private String errorMessage;
 
-        /** Algoritmo utilizado (HGA, ALNS) */
-        private String algorithm = "HGA";
+        /** Algoritmo utilizado (ALNS) */
+        private String algorithm = "ALNS";
         
         /** Epoch ms del primer día simulado — para el Excel export. */
         private Long startEpoch;
@@ -99,7 +99,7 @@ public class SimulationProgressHolder {
     private final ConcurrentHashMap<String, SimulationSessionState> sessions =
             new ConcurrentHashMap<>();
 
-    /** Diccionario global para persistir métricas por algoritmo (HGA, ALNS) */
+    /** Diccionario global para persistir métricas por algoritmo (ALNS) */
     private final ConcurrentHashMap<String, Map<String, Object>> comparisonResults =
             new ConcurrentHashMap<>();
 

@@ -212,7 +212,7 @@ public class ALNSPlannerService {
 
     private List<Route> buildInitialSolution(List<SuperLot> lots, Map<String, Aeropuerto> airportMap) {
         return lots.stream()
-                .sorted(Comparator.comparingLong(SuperLot::getSla))
+                .sorted(Comparator.comparingLong(SuperLot::getDeadline))
                 .map(lot -> routeBuilder.build(lot, airportMap, new HashMap<>(), new HashMap<>()))
                 .collect(Collectors.toList());
     }
@@ -227,7 +227,9 @@ public class ALNSPlannerService {
             for (Vuelo v : r.getFlights()) cap.putIfAbsent(v.getId(), v.getCapacidadTotal());
         }
 
-        routes.sort(Comparator.comparingInt(r -> -r.getLot().getPriority()));
+        // EDF (Earliest Deadline First) para maximizar tiempo de colapso
+        routes.sort(Comparator.comparingLong((Route r) -> r.getLot().getDeadline())
+                .thenComparingInt(r -> -r.getLot().getPriority()));
 
         for (Route r : routes) {
             if (r.getFlights().isEmpty()) continue;

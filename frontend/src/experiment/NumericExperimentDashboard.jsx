@@ -316,7 +316,7 @@ const NumericExperimentDashboard = () => {
                                     opacity: isRunning ? 0.5 : 1,
                                 }}
                             >
-                                {algo === 'ALNS' ? '⚡ ALNS' : '🧬 HGA'}
+                                {algo === 'ALNS' ? '⚡ ALNS' : algo}
                             </button>
                         ))}
                     </div>

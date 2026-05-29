@@ -11,6 +11,7 @@ import com.tasfb2b.planificador.service.SimulationExcelService;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import com.tasfb2b.planificador.service.SimulationProgressHolder;
 import com.tasfb2b.planificador.service.SimulationService;
+import com.tasfb2b.planificador.service.FlightCancellationService;
 import com.tasfb2b.envio.service.EnvioService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -45,11 +46,12 @@ public class SimulationController {
     private final SimulationProgressHolder   progressHolder;
     private final SimulationExcelService     excelService;
     private final EnvioService               envioService;
+    private final FlightCancellationService  flightCancellationService;
 
     @PostMapping("/run/{dias}")
     public ResponseEntity<Map<String, String>> startSimulation(
             @PathVariable(required = false) Integer dias,
-            @RequestParam(required = false, defaultValue = "HGA") String algorithm,
+            @RequestParam(required = false, defaultValue = "ALNS") String algorithm,
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
 
@@ -78,7 +80,7 @@ public class SimulationController {
     @PostMapping("/run-collapse/{dias}")
     public ResponseEntity<Map<String, String>> startCollapseSimulation(
             @PathVariable(required = false) Integer dias,
-            @RequestParam(required = false, defaultValue = "HGA") String algorithm,
+            @RequestParam(required = false, defaultValue = "ALNS") String algorithm,
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false, defaultValue = "5") int stressFactor,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
@@ -106,6 +108,21 @@ public class SimulationController {
         response.put("message", "Simulación de colapso iniciada.");
 
         return ResponseEntity.accepted().body(response);
+    }
+
+    // ── CANCELAR VUELO (MANUAL) ─────────────────────────────────────────────
+    @PostMapping("/cancel-flight/{sessionId}/{vueloId}")
+    public ResponseEntity<Map<String, String>> cancelFlight(
+            @PathVariable String sessionId,
+            @PathVariable Long vueloId) {
+            
+        flightCancellationService.cancelarVuelo(vueloId, sessionId);
+        
+        Map<String, String> response = new HashMap<>();
+        response.put("message", "Vuelo " + vueloId + " cancelado y replanificación disparada.");
+        response.put("status", "SUCCESS");
+        
+        return ResponseEntity.ok(response);
     }
 
     // ── GET /status/{sessionId} ─────────────────────────────────────────────

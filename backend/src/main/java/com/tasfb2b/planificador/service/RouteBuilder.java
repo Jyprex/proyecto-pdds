@@ -41,7 +41,7 @@ public class RouteBuilder {
                     .demandaTotal(lot.getTotalMaletas())
                     .capacidadAsignada(0)
                     .arrivalTime(Long.MAX_VALUE)
-                    .deadline(lot.getSla())
+                    .deadline(lot.getDeadline())
                     .build();
         }
 
@@ -88,7 +88,7 @@ public class RouteBuilder {
                 .flights(flights)
                 .demandaTotal(lot.getTotalMaletas())
                 .capacidadAsignada(asignado)
-                .deadline(lot.getSla())
+                .deadline(lot.getDeadline())
                 .build();
 
         route.calcularArrivalTime();
@@ -134,10 +134,10 @@ public class RouteBuilder {
                 .flights(flights)
                 .demandaTotal(lot.getTotalMaletas())
                 .capacidadAsignada(Math.min(lot.getTotalMaletas(), capacidadBackup))
-                .deadline(lot.getSla())
+                .deadline(lot.getDeadline())
                 .build();
 
         backup.calcularArrivalTime();
         return backup;
     }
-}
+}

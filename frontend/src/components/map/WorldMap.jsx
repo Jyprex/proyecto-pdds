@@ -26,9 +26,18 @@ function useSmoothProgress(activeAircraft, smoothingMs = 800) {
   const currentRef = useRef({});
   const rafRef     = useRef(null);
   const lastRef    = useRef(null);
+  const lastUpdateRef = useRef(Date.now());
+  const dynamicSmoothingRef = useRef(smoothingMs);
 
   // Actualizar targets cuando llegan nuevos datos del backend
   useEffect(() => {
+    const now = Date.now();
+    const timeSinceLast = now - lastUpdateRef.current;
+    if (timeSinceLast > 100 && timeSinceLast < 30000) {
+      dynamicSmoothingRef.current = timeSinceLast;
+    }
+    lastUpdateRef.current = now;
+
     activeAircraft.forEach((plane) => {
       const id = plane.id;
       targetRef.current[id] = plane.progress ?? 0;
@@ -61,8 +70,8 @@ function useSmoothProgress(activeAircraft, smoothingMs = 800) {
           return;
         }
 
-        // Avance proporcional al delta: alcanza el target en ~smoothingMs
-        const step = diff * Math.min(1, delta / smoothingMs);
+        // Avance proporcional al delta: alcanza el target en ~dynamicSmoothingRef
+        const step = diff * Math.min(1, delta / dynamicSmoothingRef.current);
         currentRef.current[id] = current + step;
         changed = true;
       });
@@ -168,7 +177,7 @@ const WorldMap = ({
 
             // Usar progress suavizado (interpolado por rAF) en lugar del discreto
             const progress   = smoothedProgress[plane.id] ?? plane.progress ?? 0;
-            if (progress <= 0 || progress >= 1) return null;
+            if (progress <= 0 || (progress >= 1 && targetRef.current[plane.id] >= 1 && Math.abs(progress - 1) < 0.001)) return null;
 
             const position   = interpolateCoordinates(from, to, progress);
             const isBlocked  = plane.status === "blocked";

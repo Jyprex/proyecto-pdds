@@ -67,6 +67,14 @@ const ControlDock = ({
       >
         Envío
       </button>
+      <button
+        type="button"
+        className={panelVisibility.cancellation ? "active" : ""}
+        aria-pressed={panelVisibility.cancellation}
+        onClick={() => onTogglePanel("cancellation")}
+      >
+        Cancelación
+      </button>
     </div>
 
     <button

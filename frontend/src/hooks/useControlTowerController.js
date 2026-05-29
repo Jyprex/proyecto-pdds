@@ -16,6 +16,7 @@ const PANEL_VISIBILITY_DEFAULT = {
   transitInventory: false,
   comparison: false,
   shipmentDetail: false,
+  cancellation: false,
 };
 
 const KPI_COLLAPSED_STORAGE_KEY = "ct-kpi-collapsed";
@@ -128,6 +129,22 @@ export const useControlTowerController = () => {
       setSimState("idle");
     }
   }, [selectedAlgorithm, isFluidMode]);
+
+  const cancelFlight = useCallback(async (flightId) => {
+    if (!sessionId || !flightId) return;
+    try {
+      const res = await apiFetch(`/api/v1/simulation/cancel-flight/${sessionId}/${flightId}`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        console.info(`[Tasf.B2B] Vuelo ${flightId} cancelado exitosamente.`);
+      } else {
+        console.error(`[Tasf.B2B] Error al cancelar vuelo: ${res.status}`);
+      }
+    } catch (err) {
+      console.error("[Tasf.B2B] Error cancelando vuelo:", err);
+    }
+  }, [sessionId]);
 
   /**
    * Inicia simulación Día a Día con fecha de inicio y número de días específicos.
@@ -791,6 +808,7 @@ export const useControlTowerController = () => {
     toggleScenarioConfig,
     setSimState,
     showAirportDetail,
+    cancelFlight,
   };
 };
 

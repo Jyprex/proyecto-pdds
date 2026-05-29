@@ -11,6 +11,7 @@ import TopAirportsPanel from "./components/floating/TopAirportsPanel";
 import TransitInventoryPanel from "./components/floating/TransitInventoryPanel";
 import AlgorithmComparisonPanel from "./components/floating/AlgorithmComparisonPanel";
 import ShipmentDetailPanel from "./components/floating/ShipmentDetailPanel";
+import FlightCancellationPanel from "./components/floating/FlightCancellationPanel";
 import KpiStrip from "./components/kpi/KpiStrip";
 import KpiControls from "./components/kpi/KpiControls";
 import SimulationControls from "./components/kpi/SimulationControls";
@@ -77,6 +78,7 @@ const App = () => {
     toggleKpiStrip,
     togglePanel,
     toggleScenarioConfig,
+    cancelFlight,
   } = useControlTowerController();
 
   // Estados para controlar el Zoom y Pan del mapa
@@ -247,6 +249,11 @@ const App = () => {
               isVisible={panelVisibility.transitInventory}
               transitByContinent={summary.transitByContinent}
               onHide={() => togglePanel("transitInventory")}
+            />
+            <FlightCancellationPanel
+              isVisible={panelVisibility.cancellation}
+              onHide={() => togglePanel("cancellation")}
+              onCancelFlight={cancelFlight}
             />
             {eventLog && eventLog.length > 0 && (
               <aside className="ct-panel ct-panel--event-log" style={{ maxHeight: '200px', overflowY: 'auto', background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', marginTop: '8px' }}>
