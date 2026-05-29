@@ -293,7 +293,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
           <div className="ct-config-section">
             <p className="ct-config-section__title">📊 PROGRESO DEL COLAPSO</p>
 
-            {!liveStatus || liveStatus.percent === 0 ? (
+            {!liveStatus ? (
               <div style={{ textAlign: 'center', padding: '24px 0', color: '#d1d5db', fontSize: 12 }}>
                 Inicia la simulación en la pestaña ⚙️ Config para ver el progreso en tiempo real.
               </div>

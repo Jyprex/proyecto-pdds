@@ -179,21 +179,61 @@ export const useControlTowerController = () => {
       if (!res.ok) throw new Error(`Error al obtener status: ${res.status}`);
       const finalStatus = await res.json();
       
-      let md = `# Resultados: ${name}\n\n`;
-      md += `**ID Sesión:** ${sid}\n`;
-      md += `**Duración Simulada:** ${finalStatus.totalDays} días\n`;
-      md += `**SLA Final:** ${(finalStatus.slaFinal ?? 0).toFixed(2)}%\n`;
-      md += `**Total Maletas Atendidas:** ${finalStatus.totalAttended} / ${(finalStatus.totalMissed ?? 0) + (finalStatus.totalAttended ?? 0)}\n`;
-      md += `**Demanda Perdida:** ${finalStatus.totalMissed}\n\n`;
-      md += `## Reporte Diario\n\n`;
-      md += `| Día | Atendidas | Demanda | SLA % | Colapsado |\n`;
-      md += `| --- | --------- | ------- | ----- | --------- |\n`;
-      
-      if (finalStatus.reports) {
-        for (const d of finalStatus.reports) {
-          md += `| ${d.dayIndex + 1} | ${d.malatetasAtendidas} | ${d.totalMaletas} | ${(d.slaPercent ?? 0).toFixed(2)}% | ${d.colapsed ? 'Sí' : 'No'} |\n`;
-        }
+      let md = `# Reporte Detallado de Simulación: ${name.replace(/_/g, ' ')}\n\n`;
+      md += `> Documento generado automáticamente por el Sistema de Control Logístico TASF-B2B.\n\n`;
+      md += `## 📋 Información de la Sesión\n`;
+      md += `- **ID de Sesión:** \`${sid}\`\n`;
+      md += `- **Fecha de Generación:** ${new Date().toLocaleString()}\n`;
+      md += `- **Duración Simulada:** ${finalStatus.totalDays} días\n`;
+      if (finalStatus.startEpoch) {
+        md += `- **Fecha Simulada (Inicio):** ${new Date(finalStatus.startEpoch).toLocaleDateString()}\n`;
       }
+      let modeText = '✅ Operación Normal';
+      if (finalStatus.isCollapseMode) modeText = '🚨 Colapso Inducido';
+      else if (name === 'Operacion_Dia_a_Dia') modeText = '📅 Operación Día a Día';
+      else if (name === 'Simulacion_Periodo') modeText = '📊 Simulación de Periodo';
+      md += `- **Modo de Escenario:** ${modeText}\n`;
+      if (finalStatus.isCollapseMode && finalStatus.stressFactor) {
+        md += `- **Factor de Estrés Aplicado:** ×${finalStatus.stressFactor} (${(finalStatus.stressFactor * 3)}% rutas canceladas)\n`;
+      }
+      md += `- **Algoritmo Utilizado:** ${(finalStatus.algorithm || selectedAlgorithm).toUpperCase()}\n\n`;
+
+      md += `## 📊 Resumen Global de KPIs\n`;
+      md += `| Métrica | Valor |\n`;
+      md += `| --- | --- |\n`;
+      md += `| **SLA Global (Acumulado)** | ${(finalStatus.slaFinal ?? 0).toFixed(2)}% |\n`;
+      md += `| **Maletas Atendidas** | ${finalStatus.totalAttended} |\n`;
+      md += `| **Maletas Perdidas** | ${finalStatus.totalMissed} |\n`;
+      md += `| **Total de Envíos (Demanda)** | ${(finalStatus.totalMissed ?? 0) + (finalStatus.totalAttended ?? 0)} |\n`;
+      if (finalStatus.isCollapseMode) {
+        md += `| **Vuelos Rescatados** | ${finalStatus.rescuedFlights ?? 0} |\n`;
+      }
+      md += `\n`;
+
+      md += `## 📅 Desglose de Rendimiento Diario\n\n`;
+      md += `| Día | Maletas Procesadas | Demanda del Día | SLA Diario | Saturación Max | Colapso Técnico |\n`;
+      md += `| :---: | :---: | :---: | :---: | :---: | :---: |\n`;
+      
+      if (finalStatus.reports && finalStatus.reports.length > 0) {
+        for (const d of finalStatus.reports) {
+          const colapsedIcon = d.colapsed ? '⚠️ Sí' : '✔️ No';
+          md += `| Día ${d.dayIndex + 1} | ${d.malatetasAtendidas} | ${d.totalMaletas} | ${(d.slaPercent ?? 0).toFixed(2)}% | ${d.airportSaturation ?? 0} | ${colapsedIcon} |\n`;
+        }
+      } else {
+        md += `| - | No hay datos disponibles para mostrar | - | - | - | - |\n`;
+      }
+      md += `\n`;
+
+      if (finalStatus.eventLog && finalStatus.eventLog.length > 0) {
+        md += `## 📝 Bitácora de Eventos (Event Log)\n\n`;
+        md += '```text\n';
+        for (const event of finalStatus.eventLog) {
+          md += `${event}\n`;
+        }
+        md += '```\n\n';
+      }
+
+      md += `---\n*Reporte generado de forma confidencial. Propiedad exclusiva de TASF.*`;
       
       const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
       const url  = URL.createObjectURL(blob);

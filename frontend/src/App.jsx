@@ -129,7 +129,12 @@ const App = () => {
       {/* ── Botón Global de Exportación (solo cuando termina la simulación) ── */}
       {(simState === "completed" || liveStatus?.status === "DONE") && (
         <button
-          onClick={() => exportSimulationReportMd(sessionId, `Reporte_General`)}
+          onClick={() => {
+            const name = activeTab === 'vivo' ? 'Operacion_Dia_a_Dia' :
+                         activeTab === 'periodo' ? 'Simulacion_Periodo' :
+                                                   'Simulacion_Colapso';
+            exportSimulationReportMd(sessionId, name);
+          }}
           title="Exportar los resultados finales a Markdown (.md)"
           style={{
             position: 'fixed', top: 12, right: 460, zIndex: 9999,
