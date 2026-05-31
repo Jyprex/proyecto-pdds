@@ -22,6 +22,14 @@ const PANEL_VISIBILITY_DEFAULT = {
 const KPI_COLLAPSED_STORAGE_KEY = "ct-kpi-collapsed";
 // Antes: polling; ahora el estado live viene por WebSocket.
 const MAX_MAP_ROUTES = 140;
+const STATUS_PRIORITY = {
+  critical: 3,
+  blocked: 3,
+  rescued: 2,
+  cancelled: 2,
+  high: 1,
+  normal: 0,
+};
 
 const readStoredKpiCollapsed = () => {
   if (typeof window === "undefined") return false;
@@ -53,7 +61,6 @@ export const useControlTowerController = () => {
     serverEpoch: 0,
     receivedAt: 0,
   });
-  const [simClockEpoch, setSimClockEpoch] = useState(0);
 
   const isCollapseScenario = activeTab === "colapso";
   const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
@@ -324,9 +331,24 @@ export const useControlTowerController = () => {
           const envelope = JSON.parse(msg.body)
           const data = envelope?.data ?? {}
           if (data.currentEpochTime) {
+            const now = Date.now();
+            const prevServerEpoch = simClockRef.current.serverEpoch || data.currentEpochTime;
+            const prevReceivedAt = simClockRef.current.receivedAt || now;
+            
+            const elapsedReal = now - prevReceivedAt;
+            const elapsedSim = data.currentEpochTime - prevServerEpoch;
+            
+            let ratio = simClockRef.current.ratio || 0;
+            if (elapsedReal > 50 && elapsedReal < 10000 && elapsedSim > 0) {
+               ratio = elapsedSim / elapsedReal;
+            } else if (!ratio) {
+               ratio = 1800000 / 250;
+            }
+
             simClockRef.current = {
               serverEpoch: data.currentEpochTime,
-              receivedAt: Date.now(),
+              receivedAt: now,
+              ratio: ratio
             }
           }
           setLiveStatus((prev) => ({
@@ -420,29 +442,6 @@ export const useControlTowerController = () => {
     }
   }, [sessionId])
 
-  // Interpolar clock para animacion suave a 60 FPS
-  useEffect(() => {
-    let rafId
-    let isActive = true
-
-    const tick = () => {
-      if (!isActive) return
-      const { serverEpoch, receivedAt } = simClockRef.current
-      if (serverEpoch && receivedAt) {
-        const elapsed = Date.now() - receivedAt
-        const simNow = serverEpoch + elapsed
-        setSimClockEpoch(simNow)
-      }
-      rafId = requestAnimationFrame(tick)
-    }
-
-    rafId = requestAnimationFrame(tick)
-    return () => {
-      isActive = false
-      if (rafId) cancelAnimationFrame(rafId)
-    }
-  }, [])
-
   const airportByCode = AIRPORT_BY_ICAO
 
   /**
@@ -475,7 +474,8 @@ export const useControlTowerController = () => {
       }));
   }, [liveStatus, isCollapseScenario]);
 
-  const currentEpochTime = simClockEpoch || liveStatus?.currentEpochTime || 0;
+  // Se extrae directamente del snapshot (se actualiza a 2Hz, 0 carga para el CPU)
+  const currentEpochTime = liveStatus?.currentEpochTime || 0;
 
   // Lógica de Ventana Móvil: Vuelos en curso o que despegan inminentemente.
   const activeShipments = useMemo(() => {
@@ -485,45 +485,86 @@ export const useControlTowerController = () => {
       .filter((r) => r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow)
       .sort((a, b) => a.departureTime - b.departureTime)
   }, [liveStatus?.activeRoutes, currentEpochTime])
-  /**
-   * Aviones en el mapa con filtro hop-a-hop
-   */
-  const computeLocalProgress = (route, simNow) => {
-    const dep = route?.departureTime ?? 0
-    const arr = route?.arrivalTime ?? 0
-    if (!dep || !arr || arr <= dep) return route?.progress ?? 0
-    const p = (simNow - dep) / (arr - dep)
-    if (p < 0) return 0
-    if (p > 1) return 1
-    return p
-  }
 
-  const activeAircraft = useMemo(() => {
+  const activeAircraftAll = useMemo(() => {
     const routes = activeShipments.length > 0
       ? activeShipments
       : (liveStatus?.activeRoutes ?? [])
     if (routes.length === 0) return []
 
-    return routes
-      .map((r) => {
-        const progress = computeLocalProgress(r, currentEpochTime)
-        return {
-          id: r.id,
-          from: r.from,
-          to: r.to,
-          progress,
-          status: r.status ?? "normal",
-          departureTime: r.departureTime,
-        }
+    const byId = new Map()
+    routes.forEach((r) => {
+      const next = {
+        id: r.id,
+        from: r.from,
+        to: r.to,
+        status: r.status ?? "normal",
+        departureTime: r.departureTime,
+        arrivalTime: r.arrivalTime,
+        capacityPercent: r.capacityPercent ?? 0,
+        progress: r.progress,
+      }
+      const prev = byId.get(next.id)
+      if (!prev) {
+        byId.set(next.id, next)
+        return
+      }
+      const nextPriority = STATUS_PRIORITY[next.status] ?? 0
+      const prevPriority = STATUS_PRIORITY[prev.status] ?? 0
+      if (nextPriority > prevPriority) {
+        byId.set(next.id, next)
+        return
+      }
+      if (nextPriority === prevPriority && next.capacityPercent > prev.capacityPercent) {
+        byId.set(next.id, next)
+      }
+    })
+
+    return Array.from(byId.values())
+  }, [activeShipments, liveStatus?.activeRoutes])
+
+  const activeAircraft = useMemo(() => {
+    if (activeAircraftAll.length <= MAX_MAP_ROUTES) return activeAircraftAll
+
+    const now = currentEpochTime
+    const selected = selectedAircraftId
+      ? activeAircraftAll.find((p) => p.id === selectedAircraftId)
+      : null
+
+    const budget = Math.max(0, MAX_MAP_ROUTES - (selected ? 1 : 0))
+    const ranked = activeAircraftAll
+      .map((p) => ({
+        ...p,
+        _priority: STATUS_PRIORITY[p.status] ?? 0,
+        _inAir: now ? (p.departureTime <= now && now < p.arrivalTime) : true,
+        _capacity: p.capacityPercent ?? 0,
+      }))
+      .sort((a, b) => {
+        if (a._inAir !== b._inAir) return a._inAir ? -1 : 1
+        if (a._priority !== b._priority) return b._priority - a._priority
+        if (a._capacity !== b._capacity) return b._capacity - a._capacity
+        return a.departureTime - b.departureTime
       })
-      .filter((r) => r.progress >= 0 && r.progress < 1)
-      .slice(0, MAX_MAP_ROUTES)
-  }, [activeShipments, liveStatus?.activeRoutes, currentEpochTime])
+      .slice(0, budget)
+      .map(({ _priority, _inAir, _capacity, ...rest }) => rest)
+
+    if (selected && !ranked.some((p) => p.id === selected.id)) {
+      ranked.push(selected)
+    }
+
+    return ranked
+  }, [activeAircraftAll, currentEpochTime, selectedAircraftId])
 
   const selectedAircraft = useMemo(
-    () => activeAircraft.find((p) => p.id === selectedAircraftId) ?? null,
-    [activeAircraft, selectedAircraftId],
+    () => activeAircraftAll.find((p) => p.id === selectedAircraftId) ?? null,
+    [activeAircraftAll, selectedAircraftId],
   )
+
+  useEffect(() => {
+    if (selectedAircraftId && !selectedAircraft) {
+      setSelectedAircraftId(null)
+    }
+  }, [selectedAircraftId, selectedAircraft])
 
   // selectedFromAirport/selectedToAirport derivadas del vuelo seleccionado
   const selectedFromAirport = selectedAircraft

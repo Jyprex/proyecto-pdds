@@ -322,24 +322,13 @@
 .ct-route-line {
   stroke: #7ee7ff;
   stroke-width: 0.52%;
-  stroke-dasharray: 1.7% 1.1%;
   stroke-linecap: round;
-  filter:
-    drop-shadow(0 0 4px rgba(58, 172, 255, 0.95))
-    drop-shadow(0 0 10px rgba(57, 227, 255, 0.8));
-  animation: routeMove 1.5s linear infinite;
 }
 
 .ct-route-node {
   fill: #d9f6ff;
   stroke: #6ee6ff;
   stroke-width: 0.18%;
-}
-
-@keyframes routeMove {
-  to {
-    stroke-dashoffset: -2.6%;
-  }
 }
 
 .ct-aircraft {
@@ -351,8 +340,6 @@
   padding: 0;
   cursor: pointer;
   transform: translate(-50%, -50%);
-  filter: drop-shadow(0 0 8px rgba(3, 12, 22, 0.85));
-  animation: aircraftPulse 1.8s ease-in-out infinite;
   z-index: 3;
   pointer-events: auto;
 }
@@ -2533,7 +2520,6 @@
   stroke-width: 2.2;
   stroke: #10b981;
   opacity: 1;
-  filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.8));
 }
 
 /* ── Ruta del vuelo seleccionado ────────────────────────────────────────── */
@@ -2542,12 +2528,7 @@
   fill: none;
   stroke: #00e5ff;
   stroke-width: 2;
-  stroke-dasharray: 6 4;
   stroke-linecap: round;
-  filter:
-    drop-shadow(0 0 6px rgba(0, 229, 255, 0.8))
-    drop-shadow(0 0 12px rgba(0, 229, 255, 0.5));
-  animation: routeMove 1.2s linear infinite;
 }
 
 /* ── Marcadores de aeropuerto ───────────────────────────────────────────── */
@@ -2569,25 +2550,21 @@
 /* Semáforo: verde */
 .ct-airport-marker--green {
   color: #10b981;
-  filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.7));
 }
 
 /* Semáforo: ámbar */
 .ct-airport-marker--amber {
   color: #f59e0b;
-  filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.7));
 }
 
 /* Semáforo: rojo */
 .ct-airport-marker--red {
   color: #ef4444;
-  filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.7));
 }
 
 /* Saturado — escenario colapso */
 .ct-airport-marker--saturated {
   color: #b91c1c;
-  filter: drop-shadow(0 0 12px rgba(185, 28, 28, 0.9));
   animation: saturatedPulse 0.8s ease-in-out infinite;
 }
 
@@ -2643,28 +2620,22 @@
 
 .ct-aircraft-pin--normal {
   color: #10b981;
-  filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.8));
 }
 
 .ct-aircraft-pin--high {
   color: #f59e0b;
-  filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.8));
 }
 
 .ct-aircraft-pin--critical {
   color: #ef4444;
-  filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.8));
-  animation: aircraftPulse 1.5s ease-in-out infinite;
 }
 
 .ct-aircraft-pin--blocked {
   color: #b91c1c;
-  filter: drop-shadow(0 0 10px rgba(185, 28, 28, 0.9));
-  animation: aircraftShake 0.4s ease-in-out infinite;
 }
 
 .ct-aircraft-pin--selected {
-  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 1));
+  /* No filter, pure performance */
 }
 
 /* ── Grid overlay sobre el SVG (eje de referencia visual) ───────────────── */

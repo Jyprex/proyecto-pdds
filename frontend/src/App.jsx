@@ -81,7 +81,6 @@ const App = () => {
     cancelFlight,
   } = useControlTowerController();
 
-  // Estados para controlar el Zoom y Pan del mapa
   const [mapZoom, setMapZoom] = useState(1);
   const [mapCenter, setMapCenter] = useState([0, 20]);
 
@@ -96,7 +95,6 @@ const App = () => {
     <div
       className={`control-tower ${isCollapseScenario ? "control-tower--collapse" : ""}`}
     >
-      {/* ── Botón de Experimentación Numérica ─────────────────────────────── */}
       <button
         id="btn-experiment-nav"
         onClick={() => navigate('/experiment')}
@@ -113,7 +111,6 @@ const App = () => {
         🧪 Experimentación Numérica
       </button>
 
-      {/* ── Toggle de Modo Fluido ─────────────────────────────── */}
       <button
         onClick={() => setIsFluidMode(!isFluidMode)}
         title="Alternar entre modo rápido (original) y modo fluido (60 FPS - detallado)"
@@ -129,7 +126,6 @@ const App = () => {
         {isFluidMode ? "✨ Modo Fluido (60 FPS) ON" : "⚡ Modo Rápido (Pruebas) ON"}
       </button>
 
-      {/* ── Botón Global de Exportación (solo cuando termina la simulación) ── */}
       {(simState === "completed" || liveStatus?.status === "DONE") && (
         <button
           onClick={() => {
@@ -201,6 +197,7 @@ const App = () => {
               setMapZoom(position.zoom);
               setMapCenter(position.coordinates);
             }}
+            currentEpochTime={currentEpochTime}
           />
 
           <DayToDayConfig

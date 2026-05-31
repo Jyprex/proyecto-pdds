@@ -275,6 +275,11 @@ public class SimulationService {
                                 inTransitRoutes.addAll(sol.getRoutes().stream()
                                         .filter(r -> r.getCapacidadAsignada() > 0)
                                         .collect(Collectors.toList()));
+                                inTransitRoutes = inTransitRoutes.stream()
+                                        .collect(Collectors.toMap(r -> r.getLot().getId(), r -> r, (a, b) -> b))
+                                        .values()
+                                        .stream()
+                                        .collect(Collectors.toList());
                                 
                                 // Limpiar rutas que ya terminaron de volar hace más de un ciclo
                                 inTransitRoutes.removeIf(r -> r.getArrivalTime() <= currentSimTime - (SA_MINUTES * 60_000L));
@@ -442,8 +447,8 @@ public class SimulationService {
                                 if (currentSimTime < depEpoch) {
                                         continue;
                                 }
-                                // Se permite 1 ciclo extra tras aterrizar para que el frontend pueda animar a progress 1.0
-                                if (currentSimTime >= arrEpoch + (SA_MINUTES * 60_000L)) {
+                                // No mantener segmentos tras aterrizar para evitar solapamiento visual.
+                                if (currentSimTime >= arrEpoch) {
                                         continue;
                                 }
 
