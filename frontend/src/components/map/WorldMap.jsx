@@ -119,7 +119,9 @@ const FlightLayer = React.memo(({ activeAircraft, airportByIcao, selectedAircraf
 
         const dx = to.coordinates[0] - from.coordinates[0];
         const dy = to.coordinates[1] - from.coordinates[1];
-        const angle = Math.atan2(-dy, dx) * (180 / Math.PI) + 90;
+        // Fix: El path del avión ya apunta a la derecha (0 grados). 
+        // atan2(-dy, dx) nos da el ángulo SVG correcto sin necesidad de offset.
+        const angle = Math.atan2(-dy, dx) * (180 / Math.PI);
 
         return (
           <Marker key={`plane-${plane.id}`} coordinates={position}>
@@ -134,6 +136,9 @@ const FlightLayer = React.memo(({ activeAircraft, airportByIcao, selectedAircraf
               onKeyDown={(e) => e.key === "Enter" && onAircraftSelect(plane.id)}
               style={{ cursor: "pointer", color: isCancelled ? '#ef4444' : isRescued ? '#10b981' : undefined }}
             >
+              {/* Hitbox aumentada para interacción */}
+              <circle r={15} fill="transparent" />
+              
               <g transform={`rotate(${angle}) scale(0.6)`}>
                 {isCancelled ? (
                   <text textAnchor="middle" dominantBaseline="central" fontSize="20" transform={`rotate(${-angle})`}>💥</text>
@@ -187,15 +192,6 @@ const WorldMap = ({
         <ZoomableGroup zoom={zoom} center={center} onMoveEnd={onMoveEnd} maxZoom={8}>
           
           <MapBackground isCollapseScenario={isCollapseScenario} />
-
-          {selectedFromAirport && selectedToAirport && (
-            <Line
-              from={selectedFromAirport.coordinates}
-              to={selectedToAirport.coordinates}
-              className="ct-map-route-line"
-              strokeLinecap="round"
-            />
-          )}
 
           <FlightLayer
             activeAircraft={activeAircraft}

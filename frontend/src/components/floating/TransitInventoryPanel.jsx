@@ -1,4 +1,6 @@
-function TransitInventoryPanel({ isVisible, transitByContinent, onHide }) {
+import React from 'react';
+
+const TransitInventoryPanel = React.memo(({ isVisible, transitByContinent, onHide }) => {
   if (!isVisible) {
     return null
   }
@@ -28,6 +30,6 @@ function TransitInventoryPanel({ isVisible, transitByContinent, onHide }) {
       </div>
     </aside>
   )
-}
+});
 
 export default TransitInventoryPanel

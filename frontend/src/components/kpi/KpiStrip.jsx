@@ -1,4 +1,6 @@
-function KpiStrip({ isCollapsed, kpiCards }) {
+import React from 'react';
+
+const KpiStrip = React.memo(({ isCollapsed, kpiCards }) => {
   return (
     <section
       className={`ct-kpi-strip ${isCollapsed ? 'ct-kpi-strip--collapsed' : ''}`}
@@ -22,6 +24,6 @@ function KpiStrip({ isCollapsed, kpiCards }) {
       )}
     </section>
   )
-}
+});
 
 export default KpiStrip

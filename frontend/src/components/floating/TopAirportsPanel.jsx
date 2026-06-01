@@ -1,4 +1,6 @@
-function TopAirportsPanel({ isVisible, airportRows, onHide }) {
+import React from 'react';
+
+const TopAirportsPanel = React.memo(({ isVisible, airportRows, onHide }) => {
   if (!isVisible) {
     return null
   }
@@ -24,7 +26,7 @@ function TopAirportsPanel({ isVisible, airportRows, onHide }) {
         </thead>
         <tbody>
           {airportRows.map((airport) => (
-            <tr key={airport.city}>
+            <tr key={airport.icao || airport.city}>
               <td>{airport.city}</td>
               <td>{airport.capacity}</td>
             </tr>
@@ -33,6 +35,6 @@ function TopAirportsPanel({ isVisible, airportRows, onHide }) {
       </table>
     </aside>
   )
-}
+});
 
 export default TopAirportsPanel

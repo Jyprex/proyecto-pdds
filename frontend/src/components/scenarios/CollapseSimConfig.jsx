@@ -178,6 +178,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
             </div>
 
             {/* ── Algoritmo ─────────────────────────────────────────────── */}
+            {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
             <div className="ct-config-section">
               <p className="ct-config-section__title">⚙️ ALGORITMO DE RESPUESTA</p>
               <div style={{ background: 'rgba(15,23,42,0.5)', borderRadius: 10, padding: '10px 12px', marginTop: 6 }}>
@@ -199,6 +200,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
                 ))}
               </div>
             </div>
+            */}
 
             {/* ── Resumen de lo que pasará ──────────────────────────────── */}
             <div style={{

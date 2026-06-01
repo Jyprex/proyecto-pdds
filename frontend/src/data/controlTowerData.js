@@ -23,6 +23,10 @@ export const SCENARIO_TABS = [
   { key: "vivo", label: "Operación Día a Día" },
   { key: "periodo", label: "Simulación Periodo" },
   { key: "colapso", label: "Simulación Colapso" },
+  /* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
+  { key: "analisis", label: "Análisis Numérico" },
+  { key: "comparacion", label: "Benchmark ALNS/HGA" },
+  */
 ];
 
 // ── Top aeropuertos por ocupación — escenario normal ─────────────────────────

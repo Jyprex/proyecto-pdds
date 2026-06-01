@@ -95,6 +95,7 @@ const App = () => {
     <div
       className={`control-tower ${isCollapseScenario ? "control-tower--collapse" : ""}`}
     >
+      {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
       <button
         id="btn-experiment-nav"
         onClick={() => navigate('/experiment')}
@@ -125,6 +126,7 @@ const App = () => {
       >
         {isFluidMode ? "✨ Modo Fluido (60 FPS) ON" : "⚡ Modo Rápido (Pruebas) ON"}
       </button>
+      */}
 
       {(simState === "completed" || liveStatus?.status === "DONE") && (
         <button
@@ -284,12 +286,14 @@ const App = () => {
                 airportRows={activeAirportRows}
                 onHide={() => togglePanel("occupancy")}
               />
+              {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
               <AlgorithmComparisonPanel
                 isVisible={panelVisibility.comparison}
                 onHide={() => togglePanel("comparison")}
                 sessionId={sessionId}
                 comparisonData={comparisonData}
               />
+              */}
               <ShipmentDetailPanel
                 isVisible={panelVisibility.shipmentDetail}
                 onHide={() => togglePanel("shipmentDetail")}

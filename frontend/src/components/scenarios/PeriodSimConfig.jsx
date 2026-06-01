@@ -185,6 +185,7 @@ function PeriodSimConfig({
             </div>
 
             {/* Selector de algoritmo */}
+            {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
             <div className="ct-config-section">
               <p className="ct-config-section__title">⚡ ALGORITMO</p>
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -212,6 +213,7 @@ function PeriodSimConfig({
                 ))}
               </div>
             </div>
+            */}
 
             {/* Botón iniciar */}
             <div style={{ paddingBottom: 8 }}>

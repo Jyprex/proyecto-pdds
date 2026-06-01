@@ -113,7 +113,6 @@ public class SimulationWsPublisher {
                     .average()
                     .orElse(0);
         }
-
         return SimulationKpiSnapshotDTO.builder()
                 .sessionId(session.getSessionId())
                 .status(session.getStatus().name())

@@ -76,9 +76,11 @@ function DayToDayConfig({
         <div className="ct-config-section" style={{ marginBottom: 0 }}>
           {!isRunning && !isCompleted ? (
           <>
+            {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
             <p style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
               Algoritmo: <strong style={{ color: "#818cf8" }}>{selectedAlgorithm?.toUpperCase()}</strong>
             </p>
+            */}
 
             {/* Selector de fecha */}
             <div style={{
@@ -321,6 +323,7 @@ function DayToDayConfig({
         {/* ── SECCIÓN CONFIG ───────────────────────────────────────────────── */}
         {activeSection === "config" && (
           <div className="ct-config-section">
+            {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
             <p className="ct-config-section__title">ALGORITMO PLANIFICADOR</p>
             <div className="ct-algorithm-selector">
               {[
@@ -341,6 +344,7 @@ function DayToDayConfig({
                 </label>
               ))}
             </div>
+            */}
 
             <p className="ct-config-section__title" style={{ marginTop: 16 }}>🚦 SEMÁFORO DE MALETAS</p>
             <div className="ct-sla-legend">

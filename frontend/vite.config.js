@@ -15,14 +15,14 @@ export default defineConfig({
       // Redirige /api/v1/... → http://localhost:8080/api/v1/...
       // Esto evita CORS en desarrollo sin modificar el backend
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8081',
         changeOrigin: true,
         secure: false,
       },
 
       // WebSocket/SockJS endpoint
       '/ws': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8081',
         changeOrigin: true,
         secure: false,
         ws: true,
