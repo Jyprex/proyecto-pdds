@@ -497,6 +497,10 @@ public class SimulationService {
                 }
 
                 session.setActiveRoutes(activeRoutes);
+                // Broadcastear estado por WebSocket
+                WsEnvelope<SimulationProgressHolder.SimulationSessionState> env = new WsEnvelope<>(System.currentTimeMillis(), session);
+                messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/kpi", env);
+                messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/snapshot", env);
         }
 
         private long computeSleepPerCycleMs(int totalDays, int playbackMinutes) {
