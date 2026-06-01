@@ -16,6 +16,13 @@ public interface EnvioRepository extends CrudRepository<Envio, Long> {
 
     boolean existsByFechaBetween(java.time.LocalDate inicio, java.time.LocalDate fin);
 
+    /** Verifica si existe al menos un envío para una fecha específica. */
+    boolean existsByFecha(java.time.LocalDate fecha);
+
+    /** Elimina todos los envíos anteriores a una fecha — libera heap H2. */
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByFechaBefore(java.time.LocalDate fecha);
+
     @Query("""
     SELECT
         e.origen.icaoCode       AS origenIcao,

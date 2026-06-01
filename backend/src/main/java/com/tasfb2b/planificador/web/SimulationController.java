@@ -8,6 +8,7 @@ package com.tasfb2b.planificador.web;
  */
 
 import com.tasfb2b.planificador.service.SimulationExcelService;
+import com.tasfb2b.planificador.domain.CollapseEndCondition;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import com.tasfb2b.planificador.service.SimulationProgressHolder;
 import com.tasfb2b.planificador.service.SimulationService;
@@ -82,11 +83,12 @@ public class SimulationController {
             @PathVariable(required = false) Integer dias,
             @RequestParam(required = false, defaultValue = "ALNS") String algorithm,
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false, defaultValue = "5") int stressFactor,
+            @RequestParam(required = false, defaultValue = "5.0") double stressFactor,
+            @RequestParam(required = false, defaultValue = "NONE") String endCondition,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
-        int clampedStress = Math.max(1, Math.min(10, stressFactor)); // clamp 1–10
+        double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); // clamp 1–10
         String sessionId = UUID.randomUUID().toString();
 
         java.time.LocalDate fechaInicio = null;
@@ -94,10 +96,19 @@ public class SimulationController {
             try { fechaInicio = java.time.LocalDate.parse(startDate); } catch (Exception ignored) {}
         }
 
+        CollapseEndCondition cond;
+        try {
+            cond = CollapseEndCondition.valueOf(endCondition.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("[run-collapse] endCondition '{}' inválida; usando NONE", endCondition);
+            cond = CollapseEndCondition.NONE;
+        }
+
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setCollapseMode(true);
         session.setStressFactor(clampedStress);
         session.setAlgorithm(algorithm);
+        session.setEndCondition(cond);
 
         service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
 
@@ -105,6 +116,7 @@ public class SimulationController {
         response.put("sessionId", sessionId);
         response.put("totalDays", String.valueOf(totalDays));
         response.put("stressFactor", String.valueOf(clampedStress));
+        response.put("endCondition", cond.name());
         response.put("message", "Simulación de colapso iniciada.");
 
         return ResponseEntity.accepted().body(response);
@@ -190,6 +202,9 @@ public class SimulationController {
                 .stressFactor(session.getStressFactor())
                 .startEpoch(session.getStartEpoch())
                 .algorithm(session.getAlgorithm())
+                .endCondition(session.getEndCondition() != null ? session.getEndCondition().name() : "NONE")
+                .collapseDayIndex(session.getCollapseDayIndex())
+                .collapseReason(session.getCollapseReason())
                 .comparisonResults(progressHolder.getComparisonResults())
                 .errorMessage(session.getErrorMessage())
                 .reports(reportsList);

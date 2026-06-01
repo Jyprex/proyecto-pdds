@@ -2,12 +2,16 @@ package com.tasfb2b.planificador.domain;
 
 import com.tasfb2b.superlote.domain.SuperLot;
 import com.tasfb2b.vuelo.domain.Vuelo;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import java.util.List;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class Route {
 
     private SuperLot lot;
@@ -110,5 +114,19 @@ public class Route {
 
     public int getDemandaNoAtendida() {
         return Math.max(0, demandaTotal - capacidadAsignada);
+    }
+
+    /**
+     * Limpia la ruta para evitar estado sucio al ser reciclada en el RoutePool.
+     */
+    public void clear() {
+        this.lot = null;
+        this.hops = null;
+        this.flights = null;
+        this.demandaTotal = 0;
+        this.capacidadAsignada = 0;
+        this.arrivalTime = 0;
+        this.deadline = 0;
+        this.status = "normal";
     }
 }

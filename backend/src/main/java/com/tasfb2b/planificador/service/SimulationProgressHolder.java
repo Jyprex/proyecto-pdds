@@ -1,5 +1,6 @@
 package com.tasfb2b.planificador.service;
 
+import com.tasfb2b.planificador.domain.CollapseEndCondition;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import lombok.Data;
 import org.springframework.stereotype.Component;
@@ -81,7 +82,19 @@ public class SimulationProgressHolder {
         private boolean isCollapseMode;
         private int rescuedFlights;
         /** Factor de estrés operativo (1–10). Determina el % de rutas canceladas: stress × 3%. */
-        private int stressFactor = 5;
+        private double stressFactor = 5.0;
+
+        /** Condición de terminación explícita del modo colapso. Default: NONE. */
+        private CollapseEndCondition endCondition = CollapseEndCondition.NONE;
+
+        /** Contador de días consecutivos con SLA por debajo del umbral. */
+        private int slaStreak = 0;
+
+        /** Día (1-based) en que se cumplió la condición de terminación, null si no terminó por condición. */
+        private Integer collapseDayIndex;
+
+        /** Razón humana de la terminación por condición. */
+        private String collapseReason;
 
         /** Diccionario general de resultados por algortimo */
         private Map<String, Map<String, Object>> comparisonResults;
@@ -91,6 +104,9 @@ public class SimulationProgressHolder {
 
         /** Algoritmo utilizado (ALNS) */
         private String algorithm = "ALNS";
+
+        /** Longitud promedio de ruta (vuelos por ruta), calculada incrementalmente. */
+        private double avgRouteLength = 0.0;
         
         /** Epoch ms del primer día simulado — para el Excel export. */
         private Long startEpoch;

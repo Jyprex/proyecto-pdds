@@ -52,6 +52,23 @@ public class SimulationState {
     /** Mapa de aeropuertos, necesario para reevaluar saturación en DEPARTURE. */
     private Map<String, Aeropuerto> airportMap;
 
+    // ── COLA DE ESPERA (CARRY-OVER) ────────────────────────
+    /**
+     * Registro de una maleta en espera por capacidad de almacén.
+     * @param lotId     ID del SuperLot al que pertenece
+     * @param cantidad  número de maletas pendientes
+     * @param enqueueTime epoch ms cuando se encoló (para prioridad FIFO)
+     */
+    public record PendingBag(int lotId, int cantidad, long enqueueTime) {}
+
+    /** Cola FIFO de maletas que no pudieron entrar al almacén por capacidad. */
+    @Getter
+    private final Map<String, ArrayDeque<PendingBag>> colaEspera = new HashMap<>();
+
+    /** Total global de maletas en cola de espera (para métricas). */
+    @Getter
+    private int maletasEnCola = 0;
+
     public SimulationState(List<Aeropuerto> airports,
                            List<Vuelo> vuelos,
                            long startTime) {
@@ -99,6 +116,9 @@ public class SimulationState {
 
                 // Re-evaluar saturación global tras el egreso
                 recalcularSaturacion(airports);
+
+                // Drenar cola de espera si se liberó espacio
+                drainCola(icaoOrigen, airports);
             }
 
             case FLIGHT_ARRIVAL -> {
@@ -106,15 +126,55 @@ public class SimulationState {
                 int actualLoad = maletasEmbarcadas.getOrDefault(v.getId() + "-" + event.getLot().getId(), event.getLoad());
 
                 String icao = v.getDestino().getIcaoCode();
+                Aeropuerto ap = airports.get(icao);
                 int current = cargaAeropuerto.getOrDefault(icao, 0);
-                cargaAeropuerto.put(icao, current + actualLoad);
+
+                // ── COLA DE ESPERA: Si el almacén está lleno, encolar excedente ──
+                if (ap != null && current + actualLoad > ap.getStorageCapacity()) {
+                    int espacioLibre = Math.max(0, ap.getStorageCapacity() - current);
+                    int excedente = actualLoad - espacioLibre;
+
+                    // Ingresar lo que quepa
+                    if (espacioLibre > 0) {
+                        cargaAeropuerto.put(icao, current + espacioLibre);
+                    }
+
+                    // Encolar lo que no quepa
+                    if (excedente > 0) {
+                        colaEspera.computeIfAbsent(icao, k -> new ArrayDeque<>())
+                                .add(new PendingBag(event.getLot().getId(), excedente, event.getTime()));
+                        maletasEnCola += excedente;
+                    }
+                } else {
+                    cargaAeropuerto.put(icao, current + actualLoad);
+                }
 
                 // Re-evaluar saturación global tras el ingreso
                 recalcularSaturacion(airports);
             }
 
             case LOT_ARRIVAL -> {
-                // solo informativo
+                String icao = event.getLot().getOrigenIcao();
+                Aeropuerto ap = airports.get(icao);
+                int actualLoad = event.getLoad();
+                int current = cargaAeropuerto.getOrDefault(icao, 0);
+
+                if (ap != null && current + actualLoad > ap.getStorageCapacity()) {
+                    int espacioLibre = Math.max(0, ap.getStorageCapacity() - current);
+                    int excedente = actualLoad - espacioLibre;
+                    
+                    if (espacioLibre > 0) {
+                        cargaAeropuerto.put(icao, current + espacioLibre);
+                    }
+                    if (excedente > 0) {
+                        colaEspera.computeIfAbsent(icao, k -> new ArrayDeque<>())
+                                .add(new PendingBag(event.getLot().getId(), excedente, event.getTime()));
+                        maletasEnCola += excedente;
+                    }
+                } else {
+                    cargaAeropuerto.put(icao, current + actualLoad);
+                }
+                recalcularSaturacion(airports);
             }
 
             case BAGGAGE_PICKUP -> {
@@ -127,6 +187,7 @@ public class SimulationState {
                 cargaAeropuerto.put(icaoDestino, nuevaCarga);
                 maletasEntregadas += actualLoad;
                 recalcularSaturacion(airports);
+                drainCola(icaoDestino, airports);
             }
             case STORAGE_RELEASE -> {
                 Vuelo v = event.getVuelo();
@@ -138,6 +199,7 @@ public class SimulationState {
                 cargaAeropuerto.put(icaoDestino, nuevaCarga);
                 maletasEntregadas += actualLoad;
                 recalcularSaturacion(airports);
+                drainCola(icaoDestino, airports);
             }
             case FLIGHT_CANCELLED -> {
                 vuelosCancelados.add(event.getVuelo().getId());
@@ -168,9 +230,47 @@ public class SimulationState {
         }
 
         this.saturacionAeropuerto = totalExceso;
-        if (totalExceso > 0) {
-            this.colapso = true;
+        // Colapso es REVERSIBLE: se activa si hay exceso, se desactiva si no
+        this.colapso = totalExceso > 0;
+    }
+
+    /**
+     * Drena la cola de espera de un aeropuerto, moviendo maletas encoladas
+     * al almacén mientras haya espacio disponible. Llamar después de cada
+     * evento que libere espacio (DEPARTURE, STORAGE_RELEASE, BAGGAGE_PICKUP).
+     */
+    private void drainCola(String icao, Map<String, Aeropuerto> airports) {
+        ArrayDeque<PendingBag> cola = colaEspera.get(icao);
+        if (cola == null || cola.isEmpty()) return;
+
+        Aeropuerto ap = airports.get(icao);
+        if (ap == null) return;
+
+        int cargaActual = cargaAeropuerto.getOrDefault(icao, 0);
+        int espacioLibre = ap.getStorageCapacity() - cargaActual;
+
+        while (!cola.isEmpty() && espacioLibre > 0) {
+            PendingBag pb = cola.peek();
+            if (pb.cantidad() <= espacioLibre) {
+                cola.poll();
+                cargaAeropuerto.put(icao, cargaAeropuerto.getOrDefault(icao, 0) + pb.cantidad());
+                espacioLibre -= pb.cantidad();
+                maletasEnCola -= pb.cantidad();
+            } else {
+                // Mover parcial: llenar el espacio y dejar el resto en cola
+                cola.poll();
+                cargaAeropuerto.put(icao, ap.getStorageCapacity());
+                int restante = pb.cantidad() - espacioLibre;
+                cola.addFirst(new PendingBag(pb.lotId(), restante, pb.enqueueTime()));
+                maletasEnCola -= espacioLibre;
+                espacioLibre = 0;
+            }
         }
+
+        // Limpiar entrada del mapa si la cola quedó vacía
+        if (cola.isEmpty()) colaEspera.remove(icao);
+
+        recalcularSaturacion(airports);
     }
 
     public boolean isColapsado() {

@@ -24,6 +24,15 @@ public class EventEngine {
 
             int load = r.getCapacidadAsignada();
 
+            // ── LLEGADA DEL LOTE AL ORIGEN ──
+            events.add(new Event(
+                    r.getLot().getReadyTime(),
+                    EventType.LOT_ARRIVAL,
+                    r.getLot(),
+                    flights.get(0), // vuelo de referencia para ICAO destino, origen
+                    load
+            ));
+
             // Aseguramos secuencialidad: el próximo vuelo no puede salir antes de que aterrice el anterior o de que el lote esté listo.
             long sequenceTime = r.getLot().getReadyTime();
 

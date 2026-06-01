@@ -129,6 +129,62 @@ public class SuperLotService {
         return superLots;
     }
 
+    // Contador global para IDs de MegaLots
+    private final java.util.concurrent.atomic.AtomicInteger megaLotIdCounter = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
+
+    /**
+     * Fusiona lotes remanentes (carry-over) que tienen el mismo origen, destino e intercontinentalidad.
+     * Consolida las maletas sumando su demanda, tomando el readyTime más antiguo y el deadline más restrictivo.
+     * Esto reduce N drásticamente bajo colapso extremo.
+     */
+    public List<SuperLot> mergeLots(List<SuperLot> lots) {
+        if (lots == null || lots.isEmpty()) return new ArrayList<>();
+
+        // Clave: origen-destino-intercontinental
+        Map<String, List<SuperLot>> grupos = new HashMap<>();
+        for (SuperLot lot : lots) {
+            String key = lot.getOrigenIcao() + "-" + lot.getDestinoIcao() + "-" + lot.isIntercontinental();
+            grupos.computeIfAbsent(key, k -> new ArrayList<>()).add(lot);
+        }
+
+        List<SuperLot> result = new ArrayList<>();
+        for (List<SuperLot> grupo : grupos.values()) {
+            if (grupo.size() == 1) {
+                result.add(grupo.get(0));
+                continue;
+            }
+
+            SuperLot first = grupo.get(0);
+            int totalMaletas = 0;
+            long minReadyTime = Long.MAX_VALUE;
+            long minDeadline = Long.MAX_VALUE;
+            int maxPriority = 0;
+
+            for (SuperLot lot : grupo) {
+                totalMaletas += lot.getTotalMaletas();
+                if (lot.getReadyTime() < minReadyTime) minReadyTime = lot.getReadyTime();
+                if (lot.getDeadline() < minDeadline) minDeadline = lot.getDeadline();
+                if (lot.getPriority() > maxPriority) maxPriority = lot.getPriority();
+            }
+
+            // Evitar SLA negativo si deadline ya pasó, aseguramos que al menos sea 0
+            long newSla = Math.max(0L, minDeadline - minReadyTime);
+
+            SuperLot mergedLot = new SuperLot(
+                    megaLotIdCounter.getAndIncrement(),
+                    first.getOrigenIcao(),
+                    first.getDestinoIcao(),
+                    totalMaletas,
+                    minReadyTime,
+                    newSla,
+                    first.isIntercontinental(),
+                    maxPriority
+            );
+            result.add(mergedLot);
+        }
+        return result;
+    }
+
     // ─────────────────────────────
     // ACCUMULATOR INTERNO
     // ─────────────────────────────

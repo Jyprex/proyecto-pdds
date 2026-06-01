@@ -35,13 +35,15 @@ public class GreedyRepairOp implements RepairOperator {
 
         // Insertar primero los más urgentes (menor SLA = deadline más próximo).
         // Pasamos capacidadDisponible real: Dijkstra sabrá qué vuelos están llenos.
-        removed.stream()
-                .sorted(Comparator.comparingLong(SuperLot::getSla))
-                .forEach(lot -> {
-                    Route r = routeBuilder.build(lot, airportMap,
-                            new HashMap<>(), capacidadDisponible);
-                    result.add(r);
-                });
+        // Paralelizar la construcción de rutas para los lotes removidos
+        List<Route> repairedRoutes = removed.parallelStream()
+                .map(lot -> routeBuilder.build(lot, airportMap, new HashMap<>(), capacidadDisponible))
+                .toList();
+
+        // Ordenar las rutas reparadas por SLA y añadirlas
+        repairedRoutes.stream()
+                .sorted(Comparator.comparingLong((Route r) -> r.getLot().getSla()))
+                .forEach(result::add);
 
         return result;
     }

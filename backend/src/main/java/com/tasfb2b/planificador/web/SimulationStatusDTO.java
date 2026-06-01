@@ -83,9 +83,18 @@ public class SimulationStatusDTO {
     /** Métricas de colapso */
     private Boolean isCollapseMode;
     private Integer rescuedFlights;
-    private Integer stressFactor;
+    private Double stressFactor;
     private Long startEpoch;
     private String algorithm;
+
+    /** Condición de terminación del colapso (NONE | SLA_BELOW_THRESHOLD | ALL_AIRPORTS_CRITICAL). */
+    private String endCondition;
+
+    /** Día (1-based) en que se cumplió la condición de terminación, null si no terminó por condición. */
+    private Integer collapseDayIndex;
+
+    /** Razón humana de la terminación por condición. */
+    private String collapseReason;
 
     /** Diccionario de resultados comparativos por algoritmo */
     private Map<String, Map<String, Object>> comparisonResults;

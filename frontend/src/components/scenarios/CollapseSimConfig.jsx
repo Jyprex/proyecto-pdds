@@ -3,13 +3,13 @@ import { useState, useMemo } from 'react'
 
 // Fecha mínima = hoy, máxima = 31 dic 2026
 
-function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChange, onStart, liveStatus }) {
+function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChange, onStart, liveStatus, onReset }) {
   const [activeSection, setActiveSection] = useState('config')
-  const [isStarting, setIsStarting]       = useState(false)
-  const [startDate, setStartDate]         = useState('2026-04-09')
-  const [stressFactor, setStressFactor]   = useState(5)
+  const [isStarting, setIsStarting] = useState(false)
+  const [startDate, setStartDate] = useState('2026-04-09')
+  const [stressFactor, setStressFactor] = useState(5)
 
-  const isRunning   = liveStatus?.status === 'RUNNING'
+  const isRunning = liveStatus?.status === 'RUNNING'
   const isCompleted = liveStatus?.status === 'DONE'
 
   const stressLabel = useMemo(() => {
@@ -20,19 +20,27 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
   }, [stressFactor])
 
   const handleStart = async () => {
-    if (!onStart) return
-    setIsStarting(true)
-    await onStart(5, startDate, stressFactor)
-    setIsStarting(false)
-    setActiveSection('progreso')
-  }
+
+    if (isCompleted) {
+      if (onReset) {
+        onReset(); // Llama a la función del hook que limpia el estado global
+      }
+      setActiveSection('config'); // Regresa visualmente a la pestaña de parámetros (⚙️ Config)
+      return;
+    }
+    if (!onStart) return;
+    setIsStarting(true);
+    await onStart(5, startDate, stressFactor);
+    setIsStarting(false);
+    setActiveSection('progreso');
+  };
 
   if (!isOpen) return null
 
   const sections = [
-    { key: 'config',   label: '⚙️ Config',    id: 'collapse-tab-config'   },
-    { key: 'info',     label: '📖 Escenario', id: 'collapse-tab-info'     },
-    { key: 'progreso', label: '📊 Progreso',  id: 'collapse-tab-progreso' },
+    { key: 'config', label: '⚙️ Config', id: 'collapse-tab-config' },
+    { key: 'info', label: '📖 Escenario', id: 'collapse-tab-info' },
+    { key: 'progreso', label: '📊 Progreso', id: 'collapse-tab-progreso' },
   ]
 
   return (
@@ -209,9 +217,9 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
             }}>
               <p style={{ margin: '0 0 6px 0', color: '#fca5a5', fontWeight: 700, fontSize: 12 }}>📤 Qué pondrás · 📥 Qué saldrá</p>
               <div style={{ color: '#9ca3af', lineHeight: 1.7 }}>
-                <p style={{ margin: 0 }}>▸ <strong style={{color:'#e2e8f0'}}>Entrada:</strong> Fecha {startDate}, factor ×{stressFactor}, algoritmo {(selectedAlgorithm||'alns').toUpperCase()}, 5 días</p>
-                <p style={{ margin: 0 }}>▸ <strong style={{color:'#e2e8f0'}}>Salida:</strong> Rutas rescatadas, E_cap, colapso computacional (Ta≥Sa), SLA violado</p>
-                <p style={{ margin: 0 }}>▸ <strong style={{color:'#ef4444'}}>Disrupciones:</strong> −50% cap en BOG/MAD/DEL · {Math.round(stressFactor * 3)}% de rutas canceladas</p>
+                <p style={{ margin: 0 }}>▸ <strong style={{ color: '#e2e8f0' }}>Entrada:</strong> Fecha {startDate}, factor ×{stressFactor}, algoritmo {(selectedAlgorithm || 'alns').toUpperCase()}, 5 días</p>
+                <p style={{ margin: 0 }}>▸ <strong style={{ color: '#e2e8f0' }}>Salida:</strong> Rutas rescatadas, E_cap, colapso computacional (Ta≥Sa), SLA violado</p>
+                <p style={{ margin: 0 }}>▸ <strong style={{ color: '#ef4444' }}>Disrupciones:</strong> −50% cap en BOG/MAD/DEL · {Math.round(stressFactor * 3)}% de rutas canceladas</p>
               </div>
             </div>
 
@@ -238,7 +246,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
               </button>
               {isCompleted && (
                 <p style={{ textAlign: 'center', fontSize: 10, color: '#9ca3af', marginTop: 6 }}>
-                  Vuelos rescatados: <strong style={{color:'#818cf8'}}>{liveStatus?.rescuedFlights ?? 0}</strong>
+                  Vuelos rescatados: <strong style={{ color: '#818cf8' }}>{liveStatus?.rescuedFlights ?? 0}</strong>
                 </p>
               )}
             </div>

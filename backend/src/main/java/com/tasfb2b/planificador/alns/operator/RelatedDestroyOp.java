@@ -4,9 +4,10 @@ import com.tasfb2b.planificador.domain.Route;
 import com.tasfb2b.superlote.domain.SuperLot;
 
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * Operador de destrucción: elige un lote pivote y elimina los q lotes más
@@ -34,13 +35,19 @@ public class RelatedDestroyOp implements DestroyOperator {
         });
 
         int toRemove = Math.min(q, sorted.size());
-        List<SuperLot> removed = new ArrayList<>();
+        List<SuperLot> removed = new ArrayList<>(toRemove);
 
+        // Recolectar IDs de lotes a remover en un HashSet para lookup O(1)
+        Set<Integer> lotIdsToRemove = new HashSet<>(toRemove * 2);
         for (int i = 0; i < toRemove; i++) {
             Route r = sorted.get(i);
             removed.add(r.getLot());
-            routes.remove(r);
+            lotIdsToRemove.add(r.getLot().getId());
         }
+
+        // Single-pass removal — O(N) en lugar de O(N²)
+        routes.removeIf(r -> lotIdsToRemove.contains(r.getLot().getId()));
+
         return removed;
     }
 

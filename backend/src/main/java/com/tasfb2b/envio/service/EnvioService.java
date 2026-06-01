@@ -94,24 +94,38 @@ public class EnvioService {
     }
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public synchronized void cargarPorFecha(LocalDate inicio, LocalDate fin, String dataPath) {
-        if (envioRepo.existsByFechaBetween(inicio, fin)) {
-            return; // Ya está cargado en H2, evitamos SQL Error 23505 (Unique Constraint)
+        // Delegamos a carga diaria para no subir todo a RAM de golpe
+        for (LocalDate d = inicio; !d.isAfter(fin); d = d.plusDays(1)) {
+            cargarPorDia(d, dataPath);
+        }
+    }
+
+    /**
+     * Carga envíos de un SOLO día a H2 — Patrón Ventana Deslizante.
+     * Si ya están cargados, no-op (idempotente).
+     * Diseñado para ser llamado desde el loop diario de SimulationService,
+     * cargando solo el día necesario justo antes de procesarlo.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public synchronized void cargarPorDia(LocalDate dia, String dataPath) {
+        if (envioRepo.existsByFecha(dia)) {
+            return; // Ya cargado, evitar duplicados
         }
 
+        String diaStr = dia.format(DateTimeFormatter.BASIC_ISO_DATE);
         java.nio.file.Path folder = java.nio.file.Path.of(dataPath);
-        String startStr = inicio.format(DateTimeFormatter.BASIC_ISO_DATE);
-        String endStr = fin.format(DateTimeFormatter.BASIC_ISO_DATE);
 
-        try (java.nio.file.DirectoryStream<java.nio.file.Path> stream = java.nio.file.Files.newDirectoryStream(folder, "_envios_*.txt")) {
+        try (java.nio.file.DirectoryStream<java.nio.file.Path> stream =
+                     java.nio.file.Files.newDirectoryStream(folder, "_envios_*.txt")) {
             for (java.nio.file.Path archivo : stream) {
-                List<String> lineasFecha = new java.util.ArrayList<>();
+                List<String> lineasFecha = new ArrayList<>();
                 try (java.io.BufferedReader br = java.nio.file.Files.newBufferedReader(archivo)) {
                     String linea;
                     while ((linea = br.readLine()) != null) {
                         int guion = linea.indexOf('-');
                         if (guion < 0 || linea.length() <= guion + 8) continue;
                         String f = linea.substring(guion + 1, guion + 9);
-                        if (f.compareTo(startStr) >= 0 && f.compareTo(endStr) <= 0) {
+                        if (f.equals(diaStr)) {
                             lineasFecha.add(linea);
                         }
                     }
@@ -121,8 +135,21 @@ public class EnvioService {
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException("Error en carga bajo demanda", e);
+            throw new RuntimeException("Error en carga diaria para " + dia, e);
         }
+
+        log.info("[Memoria] Cargados envíos del día {} a H2", dia);
+    }
+
+    /**
+     * Purga envíos anteriores a una fecha de H2 para liberar heap.
+     * Llamar desde SimulationService al terminar cada día: purgar días ya procesados
+     * que no necesitan reconsulta (ventana deslizante de 3 días de retención).
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void purgarAntesDe(LocalDate fecha) {
+        envioRepo.deleteByFechaBefore(fecha);
+        log.info("[Memoria] Purgados envíos anteriores a {}", fecha);
     }
 
     /**

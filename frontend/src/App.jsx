@@ -132,8 +132,8 @@ const App = () => {
         <button
           onClick={() => {
             const name = activeTab === 'vivo' ? 'Operacion_Dia_a_Dia' :
-                         activeTab === 'periodo' ? 'Simulacion_Periodo' :
-                                                   'Simulacion_Colapso';
+              activeTab === 'periodo' ? 'Simulacion_Periodo' :
+                'Simulacion_Colapso';
             exportSimulationReportMd(sessionId, name);
           }}
           title="Exportar los resultados finales a Markdown (.md)"
@@ -235,6 +235,7 @@ const App = () => {
             onAlgorithmChange={setSelectedAlgorithm}
             onStart={startCollapseSimulation}
             liveStatus={liveStatus}
+            onReset={resetSimulation}
           />
 
           <div className="ct-floating-rail ct-floating-rail--left">

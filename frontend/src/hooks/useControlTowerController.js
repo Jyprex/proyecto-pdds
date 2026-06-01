@@ -54,15 +54,15 @@ export const useControlTowerController = () => {
   const [isFluidMode, setIsFluidMode] = useState(false);
 
   /** Fase 1: Atomización del Estado para optimización de rendimiento */
-  const [meta, setMeta] = useState({ 
-    status: "idle", percent: 0, currentDay: 0, totalDays: 0, 
+  const [meta, setMeta] = useState({
+    status: "idle", percent: 0, currentDay: 0, totalDays: 0,
     isCollapseMode: false, errorMessage: null, algorithm: "alns",
     startEpoch: null, totalAttended: 0, totalMissed: 0, slaFinal: 0,
     reports: []
   });
-  const [kpis, setKpis] = useState({ 
-    slaPercent: 0, globalOccupancy: 0, criticalNodes: 0, 
-    totalBagsWaiting: 0, rescuedFlights: 0, comparisonResults: null 
+  const [kpis, setKpis] = useState({
+    slaPercent: 0, globalOccupancy: 0, criticalNodes: 0,
+    totalBagsWaiting: 0, rescuedFlights: 0, comparisonResults: null
   });
   const [airportLoads, setAirportLoads] = useState({});
   const [aircraft, setAircraft] = useState([]);
@@ -220,9 +220,9 @@ export const useControlTowerController = () => {
       );
       if (!res.ok) throw new Error(`Error al exportar: ${res.status}`);
       const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
       a.download = `Simulacion_${algorithm}_${sid.substring(0, 8)}.xlsx`;
       document.body.appendChild(a);
       a.click();
@@ -242,7 +242,7 @@ export const useControlTowerController = () => {
       const res = await fetch(`/api/v1/simulation/status/${sid}`);
       if (!res.ok) throw new Error(`Error al obtener status: ${res.status}`);
       const finalStatus = await res.json();
-      
+
       let md = `# Reporte Detallado de Simulación: ${name.replace(/_/g, ' ')}\n\n`;
       md += `> Documento generado automáticamente por el Sistema de Control Logístico TASF-B2B.\n\n`;
       md += `## 📋 Información de la Sesión\n`;
@@ -277,7 +277,7 @@ export const useControlTowerController = () => {
       md += `## 📅 Desglose de Rendimiento Diario\n\n`;
       md += `| Día | Maletas Procesadas | Demanda del Día | SLA Diario | Saturación Max | Colapso Técnico |\n`;
       md += `| :---: | :---: | :---: | :---: | :---: | :---: |\n`;
-      
+
       if (finalStatus.reports && finalStatus.reports.length > 0) {
         for (const d of finalStatus.reports) {
           const colapsedIcon = d.colapsed ? '⚠️ Sí' : '✔️ No';
@@ -298,11 +298,11 @@ export const useControlTowerController = () => {
       }
 
       md += `---\n*Reporte generado de forma confidencial. Propiedad exclusiva de TASF.*`;
-      
+
       const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
       a.download = `ResultadosDeEscenario_${name.replace(/\s+/g, '')}_${sid.substring(0, 8)}.md`;
       document.body.appendChild(a);
       a.click();
@@ -324,8 +324,11 @@ export const useControlTowerController = () => {
       setAircraft([]);
       setLogs([]);
 
+      setMeta(prev => ({ ...prev, status: "RUNNING", percent: 0, currentDay: 0, errorMessage: null }));
+      setKpis({ slaPercent: 0, globalOccupancy: 0, criticalNodes: 0, totalBagsWaiting: 0, rescuedFlights: 0 });
+      setAirportLoads({});
       const playbackMin = isFluidMode ? 60 : 1;
-      const dateParam   = startDate    ? `&startDate=${startDate}`       : "";
+      const dateParam = startDate ? `&startDate=${startDate}` : "";
       const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
       const res = await apiFetch(
         `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}&playbackMinutes=${playbackMin}`,
@@ -362,15 +365,15 @@ export const useControlTowerController = () => {
             const now = Date.now();
             const prevServerEpoch = simClockRef.current.serverEpoch || data.currentEpochTime;
             const prevReceivedAt = simClockRef.current.receivedAt || now;
-            
+
             const elapsedReal = now - prevReceivedAt;
             const elapsedSim = data.currentEpochTime - prevServerEpoch;
-            
+
             let ratio = simClockRef.current.ratio || 0;
             if (elapsedReal > 50 && elapsedReal < 10000 && elapsedSim > 0) {
-               ratio = elapsedSim / elapsedReal;
+              ratio = elapsedSim / elapsedReal;
             } else if (!ratio) {
-               ratio = 1800000 / 250;
+              ratio = 1800000 / 250;
             }
 
             simClockRef.current = {
@@ -511,8 +514,8 @@ export const useControlTowerController = () => {
     }
     // 1. Obtener el ranking completo O(M log M)
     const sortedAll = Object.entries(airportLoads)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 8);
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 8);
 
     // 2. Mapear a la estructura requerida por el componente
     return sortedAll.map(([icao, pct]) => ({
@@ -575,7 +578,7 @@ export const useControlTowerController = () => {
   // ── Optimización A: Ranking de Aviones (Nivel 1: Estático) ───────────────
   const rankedAircraftBase = useMemo(() => {
     if (activeAircraftAll.length === 0) return [];
-    
+
     // Pre-ordenar por criterios que NO dependen del reloj: prioridad, capacidad y tiempo
     return [...activeAircraftAll].sort((a, b) => {
       const pA = STATUS_PRIORITY[a.status] ?? 0;
@@ -592,7 +595,7 @@ export const useControlTowerController = () => {
     if (rankedAircraftBase.length <= MAX_MAP_ROUTES && !selectedAircraftId) return rankedAircraftBase;
 
     const now = currentEpochTime;
-    
+
     // En lugar de sort(), particionamos la lista pre-ordenada en O(N)
     const inAir = [];
     const onGround = [];
@@ -657,8 +660,8 @@ export const useControlTowerController = () => {
     if (routes.length === 0) return { america: 0, europe: 0, asia: 0 };
 
     // Clasificar maletas en tránsito por continente segun ICAO del destino
-    const americaIcao = ["K","C","M","S","T"]; // prefijos OACI de América
-    const asiaIcao   = ["Z","R","V","W","O","U","P"]; // Asia/Ocea
+    const americaIcao = ["K", "C", "M", "S", "T"]; // prefijos OACI de América
+    const asiaIcao = ["Z", "R", "V", "W", "O", "U", "P"]; // Asia/Ocea
     let america = 0, europe = 0, asia = 0;
 
     routes.forEach(r => {
@@ -671,11 +674,11 @@ export const useControlTowerController = () => {
     // Escalar por totalBagsWaiting para dar magnitud (estimado)
     const scale = Math.max(1, kpis.totalBagsWaiting ?? routes.length);
     const total = routes.length;
-    
+
     return {
       america: Math.round((america / total) * scale),
-      europe:  Math.round((europe  / total) * scale),
-      asia:    Math.round((asia    / total) * scale),
+      europe: Math.round((europe / total) * scale),
+      asia: Math.round((asia / total) * scale),
     };
   }, [aircraft, kpis.totalBagsWaiting]);
 
@@ -764,7 +767,7 @@ export const useControlTowerController = () => {
           value: `${globalOccupancyCalculated.toFixed(1)}%`,
           subtitle: "Promedio red · datos reales",
           status: globalOccupancyCalculated >= 90 ? "red"
-                : globalOccupancyCalculated >= 70 ? "amber" : "green",
+            : globalOccupancyCalculated >= 70 ? "amber" : "green",
         },
         {
           key: "sla",
@@ -772,7 +775,7 @@ export const useControlTowerController = () => {
           value: `${kpis.slaPercent?.toFixed(1) ?? 0}%`,
           subtitle: "Maletas atendidas / demanda total",
           status: kpis.slaPercent >= 90 ? "green"
-                : kpis.slaPercent >= 70 ? "amber" : "red",
+            : kpis.slaPercent >= 70 ? "amber" : "red",
         },
         {
           key: "critical",
@@ -780,7 +783,7 @@ export const useControlTowerController = () => {
           value: kpis.criticalNodes ?? 0,
           subtitle: "Almacenes con ocupación > 90%",
           status: kpis.criticalNodes > 5 ? "red"
-                : kpis.criticalNodes > 2 ? "amber" : "green",
+            : kpis.criticalNodes > 2 ? "amber" : "green",
         },
         {
           key: "progress",
@@ -788,7 +791,7 @@ export const useControlTowerController = () => {
           value: `${dayLabel} · ${progressPercent}%`,
           subtitle: meta.status === "DONE" ? "✓ Completado" : "En ejecución...",
           status: meta.status === "FAILED" ? "red"
-                : meta.status === "DONE" ? "green" : "amber",
+            : meta.status === "DONE" ? "green" : "amber",
           progress: progressPercent,
         },
       ];

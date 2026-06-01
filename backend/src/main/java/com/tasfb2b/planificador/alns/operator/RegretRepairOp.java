@@ -18,6 +18,9 @@ import java.util.Map;
  * disponible y la segunda mejor (con readyTime perturbado +30 min).
  * Inserta primero el lote con mayor regret (el más difícil de reubicar luego),
  * lo que genera soluciones más robustas que el greedy puro.
+ *
+ * <p>Optimizado: pre-computa todas las rutas una vez al inicio (cache) y
+ * reutiliza la ruta cacheada para inserción, reduciendo ~50% las llamadas Dijkstra.
  */
 public class RegretRepairOp implements RepairOperator {
 
@@ -38,41 +41,45 @@ public class RegretRepairOp implements RepairOperator {
         List<Route> result = new ArrayList<>(partialRoutes);
         List<SuperLot> pending = new ArrayList<>(removed);
 
+        // ── CACHE: Pre-computar todas las mejores rutas en un solo pase en paralelo ──
+        Map<Integer, Route> routeCache = pending.parallelStream()
+                .collect(java.util.stream.Collectors.toConcurrentMap(
+                        SuperLot::getId,
+                        lot -> routeBuilder.build(lot, airportMap, new HashMap<>(), capacidadDisponible)
+                ));
+
         while (!pending.isEmpty()) {
 
-            // Calcular regret de cada lote pendiente
+            // Calcular regret de cada lote pendiente usando la ruta cacheada
             SuperLot bestLot   = null;
             double   maxRegret = Double.NEGATIVE_INFINITY;
 
             for (SuperLot lot : pending) {
-                double regret = calcularRegret(lot, airportMap, capacidadDisponible);
+                Route mejorRuta = routeCache.get(lot.getId());
+                double regret = calcularRegretConCache(lot, mejorRuta, airportMap, capacidadDisponible);
                 if (regret > maxRegret) {
                     maxRegret = regret;
                     bestLot   = lot;
                 }
             }
 
-            // Insertar el lote con mayor regret pasando capacidad real
-            Route r = routeBuilder.build(bestLot, airportMap,
-                    new HashMap<>(), capacidadDisponible);
-            result.add(r);
+            // Insertar usando la ruta ya cacheada (evita recalcular Dijkstra)
+            Route cachedRoute = routeCache.get(bestLot.getId());
+            result.add(cachedRoute);
             pending.remove(bestLot);
+            routeCache.remove(bestLot.getId());
         }
 
         return result;
     }
 
     /**
-     * Regret-2: costo(mejor_ruta) - costo(segunda_mejor_ruta).
-     * La segunda mejor se obtiene perturbando el readyTime para forzar
-     * a Dijkstra a encontrar un camino diferente con distinto timing.
-     * Un regret alto → este lote es difícil de reubicar → insertarlo primero.
+     * Regret-2 con cache: usa la ruta ya calculada como "mejor" y solo
+     * computa la perturbada. Ahorra 1 llamada Dijkstra por lote.
      */
-    private double calcularRegret(SuperLot lot, Map<String, Aeropuerto> airportMap,
-                                  Map<Long, Integer> capacidadDisponible) {
-
-        Route mejorRuta = routeBuilder.build(lot, airportMap,
-                new HashMap<>(), capacidadDisponible);
+    private double calcularRegretConCache(SuperLot lot, Route mejorRuta,
+                                          Map<String, Aeropuerto> airportMap,
+                                          Map<Long, Integer> capacidadDisponible) {
 
         // Perturbar readyTime para obtener segunda alternativa
         SuperLot lotPerturbado = new SuperLot(

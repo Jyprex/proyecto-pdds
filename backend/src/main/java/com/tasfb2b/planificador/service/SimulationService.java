@@ -9,6 +9,7 @@ package com.tasfb2b.planificador.service;
 
 import com.tasfb2b.aeropuerto.domain.Aeropuerto;
 import com.tasfb2b.aeropuerto.repository.AeropuertoRepository;
+import com.tasfb2b.planificador.domain.CollapseEndCondition;
 import com.tasfb2b.planificador.domain.Route;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import com.tasfb2b.planificador.domain.Solution;
@@ -20,6 +21,7 @@ import com.tasfb2b.envio.service.EnvioService;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Async;
@@ -28,6 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
@@ -60,6 +64,13 @@ public class SimulationService {
         private final EnvioService envioService;
         private final SimpMessagingTemplate messagingTemplate;
 
+        /** Pool dedicado para replans ALNS paralelos del modo colapso (ver PLAN_PERF_COLAPSO.md). */
+        @Qualifier("replanExecutor")
+        private final Executor replanExecutor;
+
+        /** Ventana de ALNS para cada replan en modo colapso (ms). Bajo por design: best-effort. */
+        private static final long REPLAN_WINDOW_MS = 500L;
+
         @Value("${tasf.data.path}")
         private String dataPath;
 
@@ -70,6 +81,14 @@ public class SimulationService {
          */
         @Value("${tasf.sim.playback.targetMinutes:60}")
         private int playbackTargetMinutes;
+
+        /** Umbral de SLA (0-100) para la condición SLA_BELOW_THRESHOLD del modo colapso. */
+        @Value("${tasf.sim.collapse.slaThreshold:30.0}")
+        private double collapseSlaThreshold;
+
+        /** Días consecutivos bajo el umbral para terminar en modo colapso con SLA_BELOW_THRESHOLD. */
+        @Value("${tasf.sim.collapse.consecutiveDays:2}")
+        private int collapseConsecutiveDays;
 
         /** Fecha base por defecto: inicio del dataset académico TASF.B2B.
          *  Se usa como fallback cuando el caller no especifica startDate.
@@ -115,9 +134,8 @@ public class SimulationService {
                 } LocalDate fechaInicio = (startDate != null) ? startDate : DEFAULT_START_DATE;
 
                 try {
-                        LocalDate fin = fechaInicio.plusDays(dias - 1);
-                        envioService.cargarPorFecha(fechaInicio, fin, dataPath);
-
+                        // ── SLIDING WINDOW: NO cargamos todo de golpe ──
+                        // La carga se hace día a día dentro de runFullSimulation
                         long startEpochMs = fechaInicio.atStartOfDay()
                                 .toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
                         session.setStartEpoch(startEpochMs);
@@ -134,13 +152,9 @@ public class SimulationService {
                         session.setTotalMissed(totalMissed);
                         session.setSlaFinal(slaFinal);
 
-                        // Calcular longitud promedio de ruta real (vuelos por ruta)
-                        double avgRouteLength = reports.stream()
-                                .flatMap(r -> r.getRoutes().stream())
-                                .filter(r -> !r.getFlights().isEmpty())
-                                .mapToInt(r -> r.getFlights().size())
-                                .average()
-                                .orElse(0.0);
+                        // avgRouteLength se calcula incrementalmente en runFullSimulation
+                        // ya que los reports se compactan (routes = null) para liberar heap
+                        double avgRouteLength = session.getAvgRouteLength();
 
                         Map<String, Object> metrics = new HashMap<>();
                         metrics.put("deliveredOnTime",  totalAttended);
@@ -152,6 +166,8 @@ public class SimulationService {
                         metrics.put("rescuedFlights",    session.getRescuedFlights());
 
                         progressHolder.saveAlgorithmResult("ALNS", metrics);
+                        session.setSlaPercent(slaFinal); // Sincronizar para el frontend
+
                         progressHolder.markDone(sessionId);
                         
                         // Enviar mensaje final de completado
@@ -161,6 +177,7 @@ public class SimulationService {
                         );
 
                 } catch (Exception ex) {
+                        log.error("Simulation failed", ex);
                         progressHolder.markFailed(sessionId, ex.getMessage());
                         // Enviar mensaje final de error
                         messagingTemplate.convertAndSend(
@@ -185,9 +202,22 @@ public class SimulationService {
                 List<SuperLot> pendientes = new ArrayList<>();
                 List<Route> inTransitRoutes = new ArrayList<>();
 
+                // Acumuladores para avgRouteLength (calculado incrementalmente)
+                long totalFlightLegs = 0;
+                long totalRoutesWithFlights = 0;
+
                 for (int day = 0; day < dias; day++) {
 
                         LocalDate fechaDia = fechaInicio.plusDays(day);
+
+                        // ── SLIDING WINDOW: Cargar solo este día ──
+                        envioService.cargarPorDia(fechaDia, dataPath);
+
+                        // Purgar datos de hace 3+ días para liberar heap
+                        if (day >= 3) {
+                                envioService.purgarAntesDe(fechaInicio.plusDays(day - 2));
+                        }
+
                         List<SuperLot> lotsDelDia = new ArrayList<>(pendientes);
                         lotsDelDia.addAll(superLotService.agruparEnviosPorFecha(fechaDia));
 
@@ -217,58 +247,24 @@ public class SimulationService {
                                 // Ejecutar ALNS solo sobre los lotes de esta ventana
                                 Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS);
 
-                                if (sol.esColapsada()) {
-                                        session.setStatus(SimulationProgressHolder.Status.FAILED);
-                                        session.setErrorMessage("Colapso: SLA incumplido en la planificación.");
-                                        progressHolder.markFailed(session.getSessionId(), session.getErrorMessage());
-                                        return history;
-                                }
+                                // Colapso es INFORMATIVO a partir de PLAN_COLAPSO_INFORMATIVO.md:
+                                // la simulación ya NO aborta por SLA breach del plan.
+                                // La terminación se decide al fin de cada día vía
+                                // checkEndCondition() según session.getEndCondition().
 
                                 if (session.isCollapseMode()) {
-                                        List<Route> routes = sol.getRoutes();
-                                        if (!routes.isEmpty()) {
-                                                double cancelFraction = session.getStressFactor() * 0.03; // ×1→3%, ×10→30%
-                                                int cancelCount = (int) Math.max(1, routes.size() * cancelFraction);
-                                                log.info("[Colapso] Estrés ×{} → cancelando {} rutas ({} %)",
-                                                        session.getStressFactor(), cancelCount,
-                                                        Math.round(cancelFraction * 100));
-                                                List<Route> rutasModificables = new ArrayList<>(routes);
-                                                Collections.shuffle(rutasModificables);
-
-                                                int rescued = 0;
-                                                for (int i = 0; i < cancelCount; i++) {
-                                                        Route routeToCancel = rutasModificables.get(i);
-                                                        routeToCancel.setStatus("cancelled");
-                                                        if ("alns".equalsIgnoreCase(algorithm)
-                                                                        && !routeToCancel.getFlights().isEmpty()) {
-                                                                Long vueloId = routeToCancel.getFlights().get(0).getId();
-                                                                try {
-                                                                        Solution replanned = alnsPlanner.replanificar(vueloId, 6_500L);
-                                                                        if (replanned != null && !replanned.getRoutes().isEmpty()) {
-                                                                                routeToCancel.setStatus("rescued");
-                                                                                rescued++;
-                                                                        } else {
-                                                                                routeToCancel.setCapacidadAsignada(0);
-                                                                        }
-                                                                } catch (Exception e) {
-                                                                        log.warn("Fallo en replanificación ALNS para vuelo {}: {}", vueloId, e.getMessage());
-                                                                        routeToCancel.setCapacidadAsignada(0);
-                                                                }
-                                                        } else {
-                                                                routeToCancel.setCapacidadAsignada(0);
-                                                        }
-                                                }
-                                                if (rescued > 0) {
-                                                        session.setRescuedFlights(session.getRescuedFlights() + rescued);
-                                                }
+                                        int rescued = applyCollapseInjections(
+                                                        session, sol.getRoutes(), algorithm);
+                                        if (rescued > 0) {
+                                                session.setRescuedFlights(
+                                                                session.getRescuedFlights() + rescued);
                                         }
                                 }
 
                                 // Simulación de eventos — la simulación avanza estado globalmente, los eventos deben anclarse correctamente.
-                                // Usamos el engine de eventos para avanzar el state.
-                                SimulationState state = simulator.run(sol.getRoutes(), airportMap, currentSimTime, currentTime);
-                                
                                 ultimaSolucionDelDia.getRoutes().addAll(sol.getRoutes());
+                                // Generar snapshot exacto de todas las rutas del día HASTA el tiempo actual simulado
+                                SimulationState state = simulator.runUntil(ultimaSolucionDelDia.getRoutes(), airportMap, currentTime, currentTime, currentSimTime);
                                 
                                 // Añadir a en tránsito SOLO las rutas que tengan capacidad asignada (>0)
                                 // para no animar vuelos fantasmas bloqueados.
@@ -317,6 +313,9 @@ public class SimulationService {
                                     })
                                     .collect(Collectors.toList());
                                     
+                                // FASE 2: Fusión de Lotes Arrastrados (Mega-Lots)
+                                remanentes = superLotService.mergeLots(remanentes);
+                                    
                                 if (cycle < CYCLES_PER_DAY - 1) {
                                     lotsDelDia.addAll(remanentes); // Reintentar en siguiente batch hoy
                                 } else {
@@ -348,6 +347,14 @@ public class SimulationService {
                         int malatetasAtendidas = ultimaSolucionDelDia.getRoutes().stream().mapToInt(Route::getCapacidadAsignada).sum();
                         double slaPercent      = totalMaletas == 0 ? 0 : (malatetasAtendidas * 100.0) / totalMaletas;
 
+                        // ── avgRouteLength incremental ──
+                        for (Route rt : ultimaSolucionDelDia.getRoutes()) {
+                                if (rt.getFlights() != null && !rt.getFlights().isEmpty()) {
+                                        totalFlightLegs += rt.getFlights().size();
+                                        totalRoutesWithFlights++;
+                                }
+                        }
+
                         SimulationDayReport report = new SimulationDayReport();
                         report.setDayIndex(day);
                         report.setStartTime(currentTime);
@@ -363,8 +370,44 @@ public class SimulationService {
                         report.setPendingLots(pendientes); // Pasa al siguiente dia
                         history.add(report);
 
+                        // ── COMPACT REPORT: Liberar rutas del día ya procesado ──
+                        // Mantenemos solo KPIs numéricos, eliminamos las listas pesadas.
+                        // Esto evita que 120 días × miles de rutas exploten la heap.
+                        report.setRoutes(List.of());
+                        // Liberar la solución del día para GC
+                        ultimaSolucionDelDia.setRoutes(null);
+
+                        // ── CONDICIÓN DE PARADA (MODO COLAPSO) ──────────────
+                        // Si el operador eligió una condición de terminación
+                        // y se cumple al fin de este día, marcamos el reporte y
+                        // salimos del bucle. status final = DONE, no FAILED.
+                        if (session.isCollapseMode()
+                                        && session.getEndCondition() != CollapseEndCondition.NONE) {
+                                CollapseCheckResult check = checkEndCondition(
+                                                session, report, endOfDayState, airportMap,
+                                                collapseSlaThreshold, collapseConsecutiveDays);
+                                if (check.terminated()) {
+                                        report.setColapsed(true);
+                                        report.setCollapseTime(report.getEndTime());
+                                        session.setCollapseDayIndex(day + 1);
+                                        session.setCollapseReason(check.reason());
+                                        session.getEventLog().add(String.format(
+                                                        "[Fin] Colapso efectivo: %s (día %d)",
+                                                        check.reason(), day + 1));
+                                        log.info("[Colapso] Terminación por {} en día {}: {}",
+                                                        session.getEndCondition(), day + 1, check.reason());
+                                        break;
+                                }
+                        }
+
                         currentTime += 24L * 60 * 60 * 1000;
                 }
+
+                // Guardar avgRouteLength calculado incrementalmente
+                session.setAvgRouteLength(
+                        totalRoutesWithFlights == 0 ? 0.0
+                                : (double) totalFlightLegs / totalRoutesWithFlights
+                );
 
                 return history;
         }
@@ -510,6 +553,165 @@ public class SimulationService {
                 long totalCycles = (long) totalDays * CYCLES_PER_DAY;
                 long ms = (long) minutes * 60_000L / totalCycles;
                 return Math.max(250L, ms);
+        }
+
+        // ── INYECCIÓN DE COLAPSO (PARALELA) ─────────────────────────────────
+        // Ver PLANES/PLAN_PERF_COLAPSO.md.
+
+        /**
+         * Aplica la inyección de cancelaciones propia del modo colapso:
+         * <ol>
+         *   <li>Calcula cancelCount según stressFactor (×1→3%, ×5→15%, ×10→30%).</li>
+         *   <li>Recolecta los {@code vueloId} únicos a cancelar (varias rutas pueden
+         *       compartir vuelo).</li>
+         *   <li>Lanza replans ALNS en paralelo con {@code replanExecutor}, ventana
+         *       {@link #REPLAN_WINDOW_MS}. Usa {@code ALNSPlannerService.doReplan}
+         *       (sin side-effect, paralela-segura).</li>
+         *   <li>Espera a que todos los replans terminen; las excepciones individuales
+         *       no abortan el ciclo.</li>
+         *   <li>Marca cada ruta como "rescued" si su vuelo fue replanificado con éxito,
+         *       o "cancelled" en caso contrario.</li>
+         * </ol>
+         *
+         * @return número de rutas rescatadas en este ciclo
+         */
+        int applyCollapseInjections(
+                        SimulationProgressHolder.SimulationSessionState session,
+                        List<Route> routes,
+                        String algorithm) {
+                if (routes == null || routes.isEmpty()) return 0;
+
+                double cancelFraction = session.getStressFactor() * 0.03; // ×1→3%, ×10→30%
+                int cancelCount = (int) Math.max(1, routes.size() * cancelFraction);
+                log.info("[Colapso] Estrés ×{} → cancelando {} rutas ({} %)",
+                                session.getStressFactor(), cancelCount,
+                                Math.round(cancelFraction * 100));
+
+                List<Route> rutasModificables = new ArrayList<>(routes);
+                Collections.shuffle(rutasModificables);
+
+                // Cache de replans por vueloId (varias rutas pueden compartir vuelo).
+                Set<Long> uniqueVueloIds = new LinkedHashSet<>();
+                for (int i = 0; i < cancelCount && i < rutasModificables.size(); i++) {
+                        Route r = rutasModificables.get(i);
+                        if (!r.getFlights().isEmpty()) {
+                                uniqueVueloIds.add(r.getFlights().get(0).getId());
+                        }
+                }
+
+                if (!"alns".equalsIgnoreCase(algorithm) || uniqueVueloIds.isEmpty()) {
+                        markCancelled(rutasModificables, cancelCount, Collections.emptySet());
+                        return 0;
+                }
+
+                // Ajustar ventana de tiempo dinámica para prevenir colapso de la CPU.
+                // Si hay muchos vuelos, le damos menos tiempo a cada ALNS para que la simulación no se congele.
+                long calculatedWindow = Math.max(100L, 10000L / uniqueVueloIds.size());
+                final long dynamicWindowMs = Math.min(calculatedWindow, REPLAN_WINDOW_MS);
+
+                // Lanzar replans en paralelo
+                Solution tempSol = new Solution();
+                tempSol.setRoutes(routes);
+
+                List<CompletableFuture<Set<Long>>> futures = new ArrayList<>(uniqueVueloIds.size());
+                for (Long vueloId : uniqueVueloIds) {
+                        CompletableFuture<Set<Long>> f = CompletableFuture
+                                        .supplyAsync(() -> alnsPlanner.doReplan(tempSol, vueloId, dynamicWindowMs),
+                                                        replanExecutor)
+                                        .handle((sol, ex) -> {
+                                                if (ex != null || sol == null || sol.getRoutes() == null
+                                                                || sol.getRoutes().isEmpty()) {
+                                                        if (ex != null) {
+                                                                log.warn("Fallo en replan ALNS para vuelo {}: {}",
+                                                                                vueloId, ex.getMessage());
+                                                        }
+                                                        return Collections.<Long>emptySet();
+                                                }
+                                                // Replan exitoso: marcamos el vueloId como rescatado.
+                                                return Set.of(vueloId);
+                                        });
+                        futures.add(f);
+                }
+
+                // Esperar todos y unir los vueloIds rescatados
+                Set<Long> rescuedVueloIds = new HashSet<>();
+                for (CompletableFuture<Set<Long>> f : futures) {
+                        rescuedVueloIds.addAll(f.join());
+                }
+
+                markCancelled(rutasModificables, cancelCount, rescuedVueloIds);
+
+                // Conteo de rutas efectivamente rescatadas (para métrica rescuedFlights).
+                int rescued = 0;
+                for (int i = 0; i < cancelCount && i < rutasModificables.size(); i++) {
+                        if ("rescued".equals(rutasModificables.get(i).getStatus())) {
+                                rescued++;
+                        }
+                }
+                return rescued;
+        }
+
+        /**
+         * Marca las primeras {@code cancelCount} rutas como "rescued" (si su vueloId
+         * está en {@code rescuedVueloIds}) o "cancelled" (en caso contrario).
+         */
+        private void markCancelled(List<Route> rutasModificables,
+                                  int cancelCount,
+                                  Set<Long> rescuedVueloIds) {
+                for (int i = 0; i < cancelCount && i < rutasModificables.size(); i++) {
+                        Route r = rutasModificables.get(i);
+                        if (!r.getFlights().isEmpty()
+                                        && rescuedVueloIds.contains(r.getFlights().get(0).getId())) {
+                                r.setStatus("rescued");
+                        } else {
+                                r.setStatus("cancelled");
+                                r.setCapacidadAsignada(0);
+                        }
+                }
+        }
+
+        // ── TERMINACIÓN POR CONDICIÓN (MODO COLAPSO) ───────────────────────
+        // Ver PLANES/PLAN_COLAPSO_INFORMATIVO.md.
+        record CollapseCheckResult(boolean terminated, String reason) {}
+
+        /**
+         * Evalúa la condición de terminación elegida al fin de un día simulado.
+         * Mutación permitida: actualiza session.slaStreak para SLA_BELOW_THRESHOLD.
+         * Static para permitir testing directo sin instanciar el service.
+         */
+        static CollapseCheckResult checkEndCondition(
+                        SimulationProgressHolder.SimulationSessionState session,
+                        SimulationDayReport report,
+                        SimulationState endOfDayState,
+                        Map<String, Aeropuerto> airportMap,
+                        double slaThreshold,
+                        int consecutiveDays) {
+
+                return switch (session.getEndCondition()) {
+                        case SLA_BELOW_THRESHOLD -> {
+                                int streak = report.getSlaPercent() < slaThreshold
+                                                ? session.getSlaStreak() + 1
+                                                : 0;
+                                session.setSlaStreak(streak);
+                                yield new CollapseCheckResult(
+                                                streak >= consecutiveDays,
+                                                String.format(
+                                                                "SLA < %.1f%% por %d días consecutivos (actual %.1f%%)",
+                                                                slaThreshold, consecutiveDays, report.getSlaPercent()));
+                        }
+                        case ALL_AIRPORTS_CRITICAL -> {
+                                final int total = airportMap.size();
+                                long critical = airportMap.keySet().stream()
+                                                .filter(icao -> endOfDayState
+                                                                .getOccupancyPercent(icao, airportMap) >= 90)
+                                                .count();
+                                yield new CollapseCheckResult(
+                                                critical >= total,
+                                                String.format("Todos los aeropuertos críticos (%d/%d)",
+                                                                critical, total));
+                        }
+                        case NONE -> new CollapseCheckResult(false, "NONE");
+                };
         }
 
         private double computeFlightProgress(long currentEpochTime, long dep, long arr) {

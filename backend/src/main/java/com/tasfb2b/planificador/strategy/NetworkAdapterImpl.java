@@ -38,6 +38,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
 
     // Volatile para asegurar visibilidad entre hilos sin bloquear findBestRoute
     private volatile Map<String, List<Vuelo>> graph;
+    private volatile Map<String, Map<String, List<Vuelo>>> shortestPathsCache;
 
     public NetworkAdapterImpl(VueloRepository repo) {
         this.repo = repo;
@@ -65,14 +66,55 @@ public class NetworkAdapterImpl implements NetworkAdapter {
                         ).add(v);
                     }
                     graph = Map.copyOf(tempGraph); // Grafo inmutable
+                    
+                    // Precalcular rutas O(1)
+                    precomputeAllPairsShortestPaths(vuelos);
                 }
             }
         }
         return graph;
     }
 
+    private void precomputeAllPairsShortestPaths(List<Vuelo> todosLosVuelos) {
+        Map<String, Aeropuerto> aeropuertos = new HashMap<>();
+        for (Vuelo v : todosLosVuelos) {
+            aeropuertos.putIfAbsent(v.getOrigen().getIcaoCode(), v.getOrigen());
+            aeropuertos.putIfAbsent(v.getDestino().getIcaoCode(), v.getDestino());
+        }
+
+        Map<String, Map<String, List<Vuelo>>> cache = new HashMap<>();
+        for (Aeropuerto origen : aeropuertos.values()) {
+            Map<String, List<Vuelo>> destMap = new HashMap<>();
+            for (Aeropuerto destino : aeropuertos.values()) {
+                if (origen.getIcaoCode().equals(destino.getIcaoCode())) continue;
+                // Calculamos asumiendo t=0, deadline infinito y sin restricciones
+                List<Vuelo> rutaOptima = calcularRuta(origen, destino, 0L, Long.MAX_VALUE, Collections.emptySet(), Collections.emptyMap());
+                if (!rutaOptima.isEmpty()) {
+                    destMap.put(destino.getIcaoCode(), rutaOptima);
+                }
+            }
+            cache.put(origen.getIcaoCode(), destMap);
+        }
+        this.shortestPathsCache = cache;
+    }
+
     @Override
     public List<Vuelo> findBestRoute(Aeropuerto origen, Aeropuerto destino, SuperLot lot) {
+        // Asegurar que el grafo y el caché estén inicializados
+        getGraph(); 
+        
+        // Uso de caché O(1) para rutas nominales
+        if (shortestPathsCache != null) {
+            Map<String, List<Vuelo>> rutasDesdeOrigen = shortestPathsCache.get(origen.getIcaoCode());
+            if (rutasDesdeOrigen != null) {
+                List<Vuelo> rutaCacheada = rutasDesdeOrigen.get(destino.getIcaoCode());
+                if (rutaCacheada != null && !rutaCacheada.isEmpty()) {
+                    return rutaCacheada;
+                }
+            }
+        }
+
+        // Fallback a Dijkstra en tiempo real
         return calcularRuta(origen, destino, lot.getReadyTime(), lot.getDeadline(),
                 Collections.emptySet(), Collections.emptyMap());
     }
@@ -98,6 +140,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
     public void invalidateGraph() {
         synchronized (this) {
             graph = null;
+            shortestPathsCache = null;
         }
     }
 

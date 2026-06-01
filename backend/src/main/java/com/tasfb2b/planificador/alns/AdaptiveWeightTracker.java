@@ -34,6 +34,15 @@ public class AdaptiveWeightTracker {
     /** Factor de decaimiento para la actualización de pesos. */
     private static final double DECAY = 0.1;
 
+    /** Umbral de saturación para activar modo estrés. */
+    private static final double SATURATION_THRESHOLD = 0.90;
+
+    /** Multiplicador para GreedyRepair bajo estrés extremo. */
+    private static final double GREEDY_BOOST = 3.0;
+
+    /** Multiplicador para RegretRepair bajo estrés extremo. */
+    private static final double REGRET_DAMPEN = 0.5;
+
     // ── Estado de operadores ──────────────────────────────────────
     private final List<DestroyOperator> destroyOps;
     private final List<RepairOperator>  repairOps;
@@ -48,6 +57,14 @@ public class AdaptiveWeightTracker {
 
     private int lastDestroyIdx = -1;
     private int lastRepairIdx  = -1;
+
+    /**
+     * Nivel de saturación actual de la red (0.0 – 1.0).
+     * Seteado externamente por ALNSPlannerService cada ciclo.
+     * Cuando supera SATURATION_THRESHOLD, el selector de operadores
+     * favorece GreedyRepair sobre RegretRepair para ahorrar CPU.
+     */
+    private double saturationLevel = 0.0;
 
     public AdaptiveWeightTracker(List<DestroyOperator> destroyOps,
                                  List<RepairOperator> repairOps) {
@@ -68,6 +85,14 @@ public class AdaptiveWeightTracker {
         return w;
     }
 
+    /**
+     * Establece el nivel de saturación actual de la red.
+     * @param level valor entre 0.0 (red vacía) y 1.0 (100% saturada)
+     */
+    public void setSaturationLevel(double level) {
+        this.saturationLevel = Math.max(0.0, Math.min(1.0, level));
+    }
+
     // ── Selección por ruleta ──────────────────────────────────────
 
     public DestroyOperator selectDestroy(Random rng) {
@@ -82,8 +107,32 @@ public class AdaptiveWeightTracker {
         nDestroy[idx]++;
     }
 
+    /**
+     * Selecciona operador de reparación por ruleta.
+     * Bajo saturación >90%, boostea GreedyRepair y dampea RegretRepair
+     * para ahorrar CPU (Greedy es ~2× más rápido).
+     */
     public RepairOperator selectRepair(Random rng) {
-        lastRepairIdx = rouletteWheel(wRepair, rng);
+        double[] adjustedWeights;
+
+        if (saturationLevel > SATURATION_THRESHOLD) {
+            // Modo estrés: ajustar pesos para favorecer operadores rápidos
+            adjustedWeights = new double[wRepair.length];
+            for (int i = 0; i < wRepair.length; i++) {
+                String opName = repairOps.get(i).name();
+                if (opName.contains("Greedy")) {
+                    adjustedWeights[i] = wRepair[i] * GREEDY_BOOST;
+                } else if (opName.contains("Regret")) {
+                    adjustedWeights[i] = wRepair[i] * REGRET_DAMPEN;
+                } else {
+                    adjustedWeights[i] = wRepair[i];
+                }
+            }
+        } else {
+            adjustedWeights = wRepair;
+        }
+
+        lastRepairIdx = rouletteWheel(adjustedWeights, rng);
         nRepair[lastRepairIdx]++;
         return repairOps.get(lastRepairIdx);
     }

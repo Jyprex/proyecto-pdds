@@ -39,10 +39,35 @@ public class SimulationRunner {
 
         for (Event e : events) {
             state.apply(e, airports);
+        }
 
-            if (state.isColapsado()) {
-                break;
-            }
+        return state;
+    }
+
+    public SimulationState runUntil(List<Route> routes,
+                                    Map<String, Aeropuerto> airports,
+                                    long startTime,
+                                    long dayStartEpochMs,
+                                    long endTime) {
+
+        List<Vuelo> vuelos = routes.stream()
+                .flatMap(r -> r.getFlights().stream())
+                .distinct()
+                .toList();
+
+        SimulationState state =
+                new SimulationState(
+                        new ArrayList<>(airports.values()),
+                        vuelos,
+                        startTime
+                );
+
+        List<Event> events = engine.buildEvents(routes, dayStartEpochMs);
+        events.sort((a, b) -> Long.compare(a.getTime(), b.getTime()));
+
+        for (Event e : events) {
+            if (e.getTime() > endTime) break;
+            state.apply(e, airports);
         }
 
         return state;
