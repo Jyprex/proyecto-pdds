@@ -11,7 +11,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class SimulationMapRouteDTO {
 
-    private Integer id;
+    private String id;
     private String from;
     private String to;
     private Double progress;

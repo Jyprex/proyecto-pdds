@@ -19,6 +19,7 @@ import com.tasfb2b.superlote.domain.SuperLot;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import com.tasfb2b.vuelo.repository.VueloRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -47,6 +48,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ALNSPlannerService {
 
     private final RouteBuilder          routeBuilder;
@@ -181,6 +183,15 @@ public class ALNSPlannerService {
         double temp           = Math.max(1.0, INITIAL_TEMP_FACTOR * Math.abs(currentFitness));
 
         int iter = 0;
+        int surrogatePasses = 0;
+        int acceptanceCount = 0;
+        int simulationCalls = 0;
+        
+        long totalDestroyNanos = 0;
+        long totalRepairNanos = 0;
+        long totalSimNanos = 0;
+        long totalEvalNanos = 0;
+
         boolean primeraIteracion = (vueloIdCancelado != null);
 
         // Saturación inicial del tracker
@@ -203,8 +214,10 @@ public class ALNSPlannerService {
             }
             RepairOperator rOp = tracker.selectRepair(rng);
 
-            // Destruir modifica candidatePartial (remueve rutas) y devuelve los lotes removidos.
+            // ── FASE 1: DESTROY ──
+            long tD0 = System.nanoTime();
             List<SuperLot> removed = dOp.destroy(candidatePartial, q, rng);
+            totalDestroyNanos += (System.nanoTime() - tD0);
             
             // Las rutas viejas removidas pueden ser recicladas
             List<Route> rutasViejas = new ArrayList<>(current);
@@ -212,12 +225,15 @@ public class ALNSPlannerService {
             
             Map<Long, Integer> capacidadDisponible = buildCapacidadDisponible(candidatePartial);
             
-            // Reparan: devuelve la lista completa (candidatePartial + nuevas rutas)
+            // ── FASE 2: REPAIR ──
+            long tR0 = System.nanoTime();
             List<Route> candidate = rOp.repair(candidatePartial, removed, airportMap, capacidadDisponible);
+            totalRepairNanos += (System.nanoTime() - tR0);
+            
             resolverConflictosCapacidad(candidate);
 
             // ── FASE 3: SURROGATE DELTA FITNESS ──
-            // Evaluamos solo el fitness de las rutas (O(1) por ruta) sin simular.
+            long tE0 = System.nanoTime();
             double candidateRouteFitness = fitnessEval.evaluateRoutes(candidate, start);
             double currentRouteFitness = fitnessEval.evaluateRoutes(current, start);
             
@@ -230,15 +246,25 @@ public class ALNSPlannerService {
             } else if (acceptarSA(approxDelta, temp, rng)) {
                 surrogateAccepted = true;
             }
+            totalEvalNanos += (System.nanoTime() - tE0);
 
             double reward = AdaptiveWeightTracker.REWARD_REJECT;
             boolean moveAccepted = false;
 
             if (surrogateAccepted) {
-                // Solo si pasó el filtro rápido, ejecutamos la simulación pesada O(N log N)
+                surrogatePasses++;
+                
+                // ── FASE 4: SIMULACIÓN ──
+                long tS0 = System.nanoTime();
                 SimulationState candidateState = simulator.run(candidate, airportMap, start, start);
+                simulationCalls++;
+                totalSimNanos += (System.nanoTime() - tS0);
+                
+                // ── FASE 5: EVALUACIÓN ESTADO ──
+                long tE1 = System.nanoTime();
                 double candidateStateFitness = fitnessEval.evaluateState(candidateState);
                 double candidateFitness = candidateRouteFitness + candidateStateFitness;
+                totalEvalNanos += (System.nanoTime() - tE1);
                 
                 double realDelta = candidateFitness - currentFitness;
 
@@ -248,12 +274,14 @@ public class ALNSPlannerService {
                     iterState      = candidateState;
                     reward         = AdaptiveWeightTracker.REWARD_IMPROVE;
                     moveAccepted   = true;
+                    acceptanceCount++;
                 } else if (acceptarSA(realDelta, temp, rng)) {
                     current        = candidate;
                     currentFitness = candidateFitness;
                     iterState      = candidateState;
                     reward         = AdaptiveWeightTracker.REWARD_ACCEPT;
                     moveAccepted   = true;
+                    acceptanceCount++;
                 }
 
                 if (candidateFitness > bestFitness) {
@@ -264,7 +292,7 @@ public class ALNSPlannerService {
             }
 
             if (!moveAccepted) {
-                // FASE 5: Reciclar las rutas nuevas creadas en esta iteración que no fueron aceptadas
+                // FASE Reciclar las rutas nuevas creadas en esta iteración que no fueron aceptadas
                 List<Route> rutasNuevasRechazadas = new ArrayList<>(candidate);
                 rutasNuevasRechazadas.removeAll(candidatePartial);
                 for (Route r : rutasNuevasRechazadas) {
@@ -282,6 +310,30 @@ public class ALNSPlannerService {
 
             iter++;
             if (iter % SEGMENT_SIZE == 0) tracker.normalizeWeights();
+        }
+        
+        // LOG DE PERFILADO INTERNO ALNS
+        if (iter > 0) {
+            double dMs = totalDestroyNanos / 1_000_000.0;
+            double rMs = totalRepairNanos / 1_000_000.0;
+            double sMs = totalSimNanos / 1_000_000.0;
+            double eMs = totalEvalNanos / 1_000_000.0;
+            
+            double surrPct = (surrogatePasses * 100.0) / iter;
+            double accPct  = (acceptanceCount * 100.0) / iter;
+            
+            double avgRepair = (iter > 0) ? (rMs / iter) : 0;
+            double avgSim    = (simulationCalls > 0) ? (sMs / simulationCalls) : 0;
+
+            log.info("[ALNS_PROFILER] Iter: {} | SurrogatePass: {} ({}%) | Acceptance: {} ({}%) | " +
+                     "Destroy: {}ms | Repair: {}ms | Simulation: {}ms | Eval: {}ms | SimCalls: {} | " +
+                     "AvgRepair: {}ms | AvgSim: {}ms",
+                     iter, surrogatePasses, String.format("%.1f", surrPct), 
+                     acceptanceCount, String.format("%.1f", accPct),
+                     String.format("%.2f", dMs), String.format("%.2f", rMs), 
+                     String.format("%.2f", sMs), String.format("%.2f", eMs), 
+                     simulationCalls, String.format("%.4f", avgRepair), 
+                     String.format("%.4f", avgSim));
         }
 
         return buildSolution(best, airportMap, start);

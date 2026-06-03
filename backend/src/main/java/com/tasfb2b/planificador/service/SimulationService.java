@@ -206,6 +206,16 @@ public class SimulationService {
                 long totalFlightLegs = 0;
                 long totalRoutesWithFlights = 0;
 
+                // ── ESTADO PERSISTENTE MULTI-DIA ──
+                Solution masterSolution = new Solution();
+                masterSolution.setRoutes(new ArrayList<>());
+
+                SimulationState globalState = new SimulationState(
+                        new ArrayList<>(airportMap.values()),
+                        new ArrayList<>(), // Se poblará vía registerFlights en advanceTo
+                        currentTime
+                );
+
                 for (int day = 0; day < dias; day++) {
 
                         LocalDate fechaDia = fechaInicio.plusDays(day);
@@ -222,9 +232,7 @@ public class SimulationService {
                         lotsDelDia.addAll(superLotService.agruparEnviosPorFecha(fechaDia));
 
                         long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes);
-                        Solution ultimaSolucionDelDia = new Solution(); // Acumulador
-                        ultimaSolucionDelDia.setRoutes(new ArrayList<>());
-                        
+
                         for (int cycle = 0; cycle < CYCLES_PER_DAY; cycle++) {
                                 // Tiempo simulado exacto al inicio de este ciclo
                                 long currentSimTime = currentTime + ((long) cycle * SA_MINUTES * 60_000L);
@@ -245,7 +253,9 @@ public class SimulationService {
                                 lotsDelDia.removeAll(lotesVentana);
 
                                 // Ejecutar ALNS solo sobre los lotes de esta ventana
+                                long tPlanner0 = System.nanoTime();
                                 Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS);
+                                long plannerNanos = System.nanoTime() - tPlanner0;
 
                                 // Colapso es INFORMATIVO a partir de PLAN_COLAPSO_INFORMATIVO.md:
                                 // la simulación ya NO aborta por SLA breach del plan.
@@ -261,11 +271,12 @@ public class SimulationService {
                                         }
                                 }
 
-                                // Simulación de eventos — la simulación avanza estado globalmente, los eventos deben anclarse correctamente.
-                                ultimaSolucionDelDia.getRoutes().addAll(sol.getRoutes());
-                                // Generar snapshot exacto de todas las rutas del día HASTA el tiempo actual simulado
-                                SimulationState state = simulator.runUntil(ultimaSolucionDelDia.getRoutes(), airportMap, currentTime, currentTime, currentSimTime);
-                                
+                                // Simulación de eventos incremental
+                                masterSolution.getRoutes().addAll(sol.getRoutes());
+
+                                // Avanzar estado global usando todas las rutas conocidas hasta ahora
+                                simulator.advanceTo(globalState, masterSolution.getRoutes(), airportMap, currentTime, nextSimTime);
+
                                 // Añadir a en tránsito SOLO las rutas que tengan capacidad asignada (>0)
                                 // para no animar vuelos fantasmas bloqueados.
                                 inTransitRoutes.addAll(sol.getRoutes().stream()
@@ -276,9 +287,9 @@ public class SimulationService {
                                         .values()
                                         .stream()
                                         .collect(Collectors.toList());
-                                
+
                                 // Limpiar rutas que ya terminaron de volar hace más de un ciclo
-                                inTransitRoutes.removeIf(r -> r.getArrivalTime() <= currentSimTime - (SA_MINUTES * 60_000L));
+                                inTransitRoutes.removeIf(r -> r.getArrivalTime() <= nextSimTime - (SA_MINUTES * 60_000L));
 
                                 // Event log sintético (solo en ciclos clave)
                                 if (cycle == 0) {
@@ -289,12 +300,12 @@ public class SimulationService {
                                         session.getEventLog().add(String.format(
                                                 "[12:00] Reporte de medio día."));
                                 }
-                                if (state.isColapsado() && cycle == (int)(CYCLES_PER_DAY * 0.75)) {
+                                if (globalState.isColapsado() && cycle == (int)(CYCLES_PER_DAY * 0.75)) {
                                         session.getEventLog().add(String.format(
                                                 "[18:00] ¡ALERTA! Posible colapso detectado en la red."));
                                 }
                                 if (cycle == (int)(CYCLES_PER_DAY * 5.0 / 6)) {
-                                        int entregadas = state.getMaletasEntregadas();
+                                        int entregadas = globalState.getMaletasEntregadas();
                                         if (entregadas > 0) {
                                                 session.getEventLog().add(String.format(
                                                         "[20:00] %d maletas entregadas a clientes — almacenes liberados.",
@@ -307,15 +318,15 @@ public class SimulationService {
                                 List<SuperLot> remanentes = sol.getRoutes().stream()
                                     .filter(r -> r.excedeCapacidad() || r.isNoAtendido())
                                     .map(r -> {
-                                        SuperLot nextLot = elevateToMaxPriority(r.getLot(), currentSimTime);
+                                        SuperLot nextLot = elevateToMaxPriority(r.getLot(), nextSimTime);
                                         nextLot.setTotalMaletas(r.getDemandaNoAtendida());
                                         return nextLot;
                                     })
                                     .collect(Collectors.toList());
-                                    
+
                                 // FASE 2: Fusión de Lotes Arrastrados (Mega-Lots)
                                 remanentes = superLotService.mergeLots(remanentes);
-                                    
+
                                 if (cycle < CYCLES_PER_DAY - 1) {
                                     lotsDelDia.addAll(remanentes); // Reintentar en siguiente batch hoy
                                 } else {
@@ -326,9 +337,32 @@ public class SimulationService {
                                 // Metrics for frontend update (Snapshot)
                                 // En este momento del ciclo reportaremos el progreso
                                 double slaPercent = 100; // placeholder until day ends
+
+                                long tUpdate0 = System.nanoTime();
                                 updateProgress(session, day + 1, dias, currentPercent,
-                                               simulatedTimeStr, slaPercent, state, airportMap,
-                                               inTransitRoutes, currentSimTime, currentTime);
+                                               simulatedTimeStr, slaPercent, globalState, airportMap,
+                                               inTransitRoutes, nextSimTime, currentTime);
+                                long tUpdate1 = System.nanoTime();
+
+                                // LOG DE PERFILADO ESTRUCTURADO
+                                double plannerMs = plannerNanos / 1_000_000.0;
+                                double buildMs   = globalState.getBuildEventsTimeNanos() / 1_000_000.0;
+                                double applyMs   = globalState.getApplyEventsTimeNanos() / 1_000_000.0;
+                                double updateMs  = (tUpdate1 - tUpdate0) / 1_000_000.0;
+
+                                log.info("[PROFILER] Session: {} | Day: {} | Cycle: {} | " +
+                                         "Planner: {}ms | BuildEvents: {}ms | RunUntil_Apply: {}ms | " +
+                                         "UpdateProgress: {}ms | Lots: {} | Routes: {} | " +
+                                         "Events_Total: {} | Events_Applied: {}",
+                                         session.getSessionId(), day + 1, cycle,
+                                         String.format("%.2f", plannerMs),
+                                         String.format("%.2f", buildMs),
+                                         String.format("%.2f", applyMs),
+                                         String.format("%.2f", updateMs),
+                                         lotesVentana.size(),
+                                         masterSolution.getRoutes().size(),
+                                         globalState.getTotalEventsCount(),
+                                         globalState.getAppliedEventsCount());
 
                                 try {
                                         Thread.sleep(sleepPerCycleMs);
@@ -337,18 +371,20 @@ public class SimulationService {
                                         return history; // abortar si el hilo fue interrumpido
                                 }
                         }
-                        
+
                         // --- AL FINAL DEL DIA CONSOLIDAR METRICAS ---
-                        // Re-simular o simplemente consolidar el día para el histórico:
-                        SimulationState endOfDayState = simulator.run(ultimaSolucionDelDia.getRoutes(), airportMap, currentTime, currentTime);
-                        
+                        final long dayStartTime = currentTime;
                         // Total demand of the day was the original loaded
-                        int totalMaletas       = ultimaSolucionDelDia.getRoutes().stream().mapToInt(r -> r.getLot().getTotalMaletas()).sum(); // Acumula todo lo visto
-                        int malatetasAtendidas = ultimaSolucionDelDia.getRoutes().stream().mapToInt(Route::getCapacidadAsignada).sum();
+                        int totalMaletas       = masterSolution.getRoutes().stream()
+                                .filter(r -> r.getLot().getReadyTime() >= dayStartTime && r.getLot().getReadyTime() < (dayStartTime + 24L * 60 * 60 * 1000))
+                                .mapToInt(r -> r.getLot().getTotalMaletas()).sum(); 
+                        int malatetasAtendidas = masterSolution.getRoutes().stream()
+                                .filter(r -> r.getLot().getReadyTime() >= dayStartTime && r.getLot().getReadyTime() < (dayStartTime + 24L * 60 * 60 * 1000))
+                                .mapToInt(Route::getCapacidadAsignada).sum();
                         double slaPercent      = totalMaletas == 0 ? 0 : (malatetasAtendidas * 100.0) / totalMaletas;
 
                         // ── avgRouteLength incremental ──
-                        for (Route rt : ultimaSolucionDelDia.getRoutes()) {
+                        for (Route rt : masterSolution.getRoutes()) {
                                 if (rt.getFlights() != null && !rt.getFlights().isEmpty()) {
                                         totalFlightLegs += rt.getFlights().size();
                                         totalRoutesWithFlights++;
@@ -359,23 +395,16 @@ public class SimulationService {
                         report.setDayIndex(day);
                         report.setStartTime(currentTime);
                         report.setEndTime(currentTime + 24L * 60 * 60 * 1000);
-                        report.setRoutes(ultimaSolucionDelDia.getRoutes());
-                        report.setColapsed(endOfDayState.isColapsado());
-                        report.setAirportSaturation(endOfDayState.getSaturacionAeropuerto());
-                        report.setCollapseTime(endOfDayState.isColapsado() ? endOfDayState.getCurrentTime() : -1L);
+                        report.setRoutes(List.of()); // Mantener reporte ligero
+                        report.setColapsed(globalState.isColapsado());
+                        report.setAirportSaturation(globalState.getSaturacionAeropuerto());
+                        report.setCollapseTime(globalState.isColapsado() ? globalState.getCurrentTime() : -1L);
                         report.setSlaPercent(slaPercent);
                         report.setTotalMaletas(totalMaletas);
                         report.setMalatetasAtendidas(malatetasAtendidas);
-                        report.setMaletasEntregadas(endOfDayState.getMaletasEntregadas());
+                        report.setMaletasEntregadas(globalState.getMaletasEntregadas());
                         report.setPendingLots(pendientes); // Pasa al siguiente dia
                         history.add(report);
-
-                        // ── COMPACT REPORT: Liberar rutas del día ya procesado ──
-                        // Mantenemos solo KPIs numéricos, eliminamos las listas pesadas.
-                        // Esto evita que 120 días × miles de rutas exploten la heap.
-                        report.setRoutes(List.of());
-                        // Liberar la solución del día para GC
-                        ultimaSolucionDelDia.setRoutes(null);
 
                         // ── CONDICIÓN DE PARADA (MODO COLAPSO) ──────────────
                         // Si el operador eligió una condición de terminación
@@ -384,7 +413,7 @@ public class SimulationService {
                         if (session.isCollapseMode()
                                         && session.getEndCondition() != CollapseEndCondition.NONE) {
                                 CollapseCheckResult check = checkEndCondition(
-                                                session, report, endOfDayState, airportMap,
+                                                session, report, globalState, airportMap,
                                                 collapseSlaThreshold, collapseConsecutiveDays);
                                 if (check.terminated()) {
                                         report.setColapsed(true);
@@ -402,7 +431,6 @@ public class SimulationService {
 
                         currentTime += 24L * 60 * 60 * 1000;
                 }
-
                 // Guardar avgRouteLength calculado incrementalmente
                 session.setAvgRouteLength(
                         totalRoutesWithFlights == 0 ? 0.0
@@ -540,10 +568,15 @@ public class SimulationService {
                 }
 
                 session.setActiveRoutes(activeRoutes);
-                // Broadcastear estado por WebSocket
-                WsEnvelope<SimulationProgressHolder.SimulationSessionState> env = new WsEnvelope<>(System.currentTimeMillis(), session);
-                messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/kpi", env);
-                messagingTemplate.convertAndSend("/topic/sim/" + session.getSessionId() + "/snapshot", env);
+                
+                // CAMBIO: En lugar de emitir por WebSocket directamente (que causa ráfagas desordenadas),
+                // "congelamos" el estado del mapa en un snapshot inmutable para que el publicador 
+                // independiente lo envíe a un ritmo constante y predecible.
+                session.setMapSnapshot(new SimulationProgressHolder.MapSnapshot(
+                        currentSimTime,
+                        simulatedTime,
+                        new ArrayList<>(activeRoutes) // Copia defensiva para inmutabilidad
+                ));
         }
 
         private long computeSleepPerCycleMs(int totalDays, int playbackMinutes) {

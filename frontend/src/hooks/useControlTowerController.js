@@ -39,6 +39,8 @@ const readStoredKpiCollapsed = () => {
 
 export const useControlTowerController = () => {
   const [activeTab, setActiveTab] = useState("vivo");
+  const isCollapseScenario = activeTab === "colapso";
+  const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
   const [panelVisibility, setPanelVisibility] = useState(PANEL_VISIBILITY_DEFAULT);
   const [isKpiCollapsed, setIsKpiCollapsed] = useState(readStoredKpiCollapsed);
   const [selectedAircraftId, setSelectedAircraftId] = useState(null);
@@ -52,6 +54,7 @@ export const useControlTowerController = () => {
 
   const [sessionId, setSessionId] = useState(null);
   const [isFluidMode, setIsFluidMode] = useState(false);
+  const [targetPlaybackMinutes, setTargetPlaybackMinutes] = useState(30);
 
   /** Fase 1: Atomización del Estado para optimización de rendimiento */
   const [meta, setMeta] = useState({
@@ -67,6 +70,9 @@ export const useControlTowerController = () => {
   const [airportLoads, setAirportLoads] = useState({});
   const [aircraft, setAircraft] = useState([]);
   const [clock, setClock] = useState({ simulatedTime: "--:--", currentEpochTime: 0 });
+  const [smoothSimTime, setSmoothSimTime] = useState(0);
+  const [realElapsedSecs, setRealElapsedSecs] = useState(0);
+  const realStartRef = useRef(null);
   const [logs, setLogs] = useState([]);
 
   /** Reconstrucción de liveStatus para compatibilidad con App.jsx y otros componentes */
@@ -78,18 +84,39 @@ export const useControlTowerController = () => {
       airportLoads,
       activeRoutes: aircraft,
       ...clock,
+      interpolatedTime: smoothSimTime,
       eventLog: logs,
     };
-  }, [meta, kpis, airportLoads, aircraft, clock, logs, sessionId]);
+  }, [meta, kpis, airportLoads, aircraft, clock, smoothSimTime, logs, sessionId]);
 
-  // ── Clock local para interpolar movimiento ───────────────────────────────
+  // ── Clock local para interpolar movimiento y tiempo ───────────────────────
   const simClockRef = useRef({
     serverEpoch: 0,
     receivedAt: 0,
+    lastSeq: -1,
+    ratio: (5 * 24 * 60) / 30 // ratio por defecto para 5 días en 30 minutos (240x)
   });
 
-  const isCollapseScenario = activeTab === "colapso";
-  const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
+  /** Loop de interpolación suave para el mapa y el reloj */
+  useEffect(() => {
+    let raf;
+    const update = () => {
+      const now = Date.now();
+      if (simClockRef.current.serverEpoch && simClockRef.current.receivedAt) {
+        const elapsedReal = now - simClockRef.current.receivedAt;
+        const currentSim = simClockRef.current.serverEpoch + (elapsedReal * simClockRef.current.ratio);
+        setSmoothSimTime(currentSim);
+      }
+      
+      if (realStartRef.current && (simState === "running" || meta.status === "RUNNING")) {
+        setRealElapsedSecs(Math.floor((now - realStartRef.current) / 1000));
+      }
+
+      raf = requestAnimationFrame(update);
+    };
+    raf = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(raf);
+  }, [simState, meta.status]);
 
   const togglePanel = useCallback((panelName = "") => {
     if (!panelName) return;
@@ -149,9 +176,10 @@ export const useControlTowerController = () => {
       setSimState("running");
       setAircraft([]);
       setLogs([]);
+      realStartRef.current = Date.now();
+      setRealElapsedSecs(0);
 
-      const playbackMin = isFluidMode ? 60 : 1;
-      const res = await apiFetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&playbackMinutes=${playbackMin}`, {
+      const res = await apiFetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&playbackMinutes=${targetPlaybackMinutes}`, {
         method: "POST",
       });
 
@@ -163,7 +191,7 @@ export const useControlTowerController = () => {
       console.error("[Tasf.B2B] Error al iniciar simulación:", err);
       setSimState("idle");
     }
-  }, [selectedAlgorithm, isFluidMode]);
+  }, [selectedAlgorithm, targetPlaybackMinutes]);
 
   const cancelFlight = useCallback(async (flightId) => {
     if (!sessionId || !flightId) return;
@@ -183,17 +211,16 @@ export const useControlTowerController = () => {
 
   /**
    * Inicia simulación Día a Día con fecha de inicio y número de días específicos.
-   * Este es el punto de entrada del escenario "Operación Día a Día".
-   * Pasa startDate al backend para el epoch parametrizable.
    */
   const startDayToDaySimulation = useCallback(async (startDate, dias = 5) => {
     try {
       setSimState("running");
       setAircraft([]);
       setLogs([]);
+      realStartRef.current = Date.now();
+      setRealElapsedSecs(0);
 
-      const playbackMin = isFluidMode ? 60 : 1;
-      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${playbackMin}`;
+      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}`;
       const res = await apiFetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
@@ -205,11 +232,10 @@ export const useControlTowerController = () => {
       console.error("[Tasf.B2B] Error al iniciar simulación día a día:", err);
       setSimState("idle");
     }
-  }, [selectedAlgorithm, isFluidMode]);
+  }, [selectedAlgorithm, targetPlaybackMinutes]);
 
   /**
    * Descarga el Excel de resultados de la simulación completada.
-   * Llama a POST /api/v1/simulation/export-excel/{sessionId}
    */
   const exportSimulationExcel = useCallback(async (sid, algorithm = "ALNS") => {
     if (!sid) return;
@@ -315,23 +341,23 @@ export const useControlTowerController = () => {
 
   /**
    * Inicia simulación de colapso con fecha de inicio opcional.
-   * @param {number} dias - Días a simular (default 5)
-   * @param {string} startDate - Fecha inicio YYYY-MM-DD (opcional)
    */
   const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5) => {
     try {
       setSimState("running");
       setAircraft([]);
       setLogs([]);
+      realStartRef.current = Date.now();
+      setRealElapsedSecs(0);
 
       setMeta(prev => ({ ...prev, status: "RUNNING", percent: 0, currentDay: 0, errorMessage: null }));
       setKpis({ slaPercent: 0, globalOccupancy: 0, criticalNodes: 0, totalBagsWaiting: 0, rescuedFlights: 0 });
       setAirportLoads({});
-      const playbackMin = isFluidMode ? 60 : 1;
+      
       const dateParam = startDate ? `&startDate=${startDate}` : "";
       const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
       const res = await apiFetch(
-        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}&playbackMinutes=${playbackMin}`,
+        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}&playbackMinutes=${targetPlaybackMinutes}`,
         { method: "POST" }
       );
 
@@ -344,15 +370,17 @@ export const useControlTowerController = () => {
       console.error("[Tasf.B2B] Error al iniciar simulación de colapso:", err);
       setSimState("idle");
     }
-  }, [selectedAlgorithm, isFluidMode]);
+  }, [selectedAlgorithm, targetPlaybackMinutes]);
 
 
   /**
    * Conexión WebSocket (STOMP) a /ws
-   * Recibe actualizaciones en tiempo real y finaliza con un fetch final a v1 para los reportes completos.
    */
   useEffect(() => {
     if (!sessionId) return
+
+    // Reiniciar secuencia para nueva sesión
+    simClockRef.current.lastSeq = -1;
 
     const client = createStompClient()
 
@@ -361,25 +389,30 @@ export const useControlTowerController = () => {
         try {
           const envelope = JSON.parse(msg.body)
           const data = envelope?.data ?? {}
+          const seq = envelope?.seq ?? 0
+
+          // Regla Estricta de Orden: Descartar si el seq es viejo
+          if (seq <= simClockRef.current.lastSeq) {
+            return;
+          }
+          simClockRef.current.lastSeq = seq;
+
           if (data.currentEpochTime) {
             const now = Date.now();
-            const prevServerEpoch = simClockRef.current.serverEpoch || data.currentEpochTime;
-            const prevReceivedAt = simClockRef.current.receivedAt || now;
+            
+            // FIX: Solo actualizar el punto de referencia si el tiempo del servidor ha AVANZADO.
+            // Esto evita que snapshots duplicados (con el mismo timestamp) reseteen la interpolación suave.
+            if (data.currentEpochTime > simClockRef.current.serverEpoch) {
+              const totalSimulatedMs = (meta.totalDays || 5) * 24 * 60 * 60 * 1000;
+              const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
+              const theoreticalRatio = totalSimulatedMs / targetPlaybackMs;
 
-            const elapsedReal = now - prevReceivedAt;
-            const elapsedSim = data.currentEpochTime - prevServerEpoch;
-
-            let ratio = simClockRef.current.ratio || 0;
-            if (elapsedReal > 50 && elapsedReal < 10000 && elapsedSim > 0) {
-              ratio = elapsedSim / elapsedReal;
-            } else if (!ratio) {
-              ratio = 1800000 / 250;
-            }
-
-            simClockRef.current = {
-              serverEpoch: data.currentEpochTime,
-              receivedAt: now,
-              ratio: ratio
+              simClockRef.current = {
+                ...simClockRef.current,
+                serverEpoch: data.currentEpochTime,
+                receivedAt: now,
+                ratio: theoreticalRatio
+              };
             }
           }
 
@@ -388,24 +421,31 @@ export const useControlTowerController = () => {
             currentEpochTime: data.currentEpochTime,
           })
 
-          /** Fix: Persistencia de estado para evitar "flashing" */
+          /** Fix: Persistencia de estado para evitar "flashing" (Append/Delta) */
           setAircraft(prev => {
+            const incoming = data.activeRoutes || [];
             const now = data.currentEpochTime;
-            const cleanupBuffer = 60000; // 1 min de margen antes de remover
             const nextMap = new Map();
 
-            // 1. Conservar vuelos existentes que aún no aterrizan
-            prev.forEach(f => {
-              if (f.arrivalTime + cleanupBuffer > now) {
-                nextMap.set(f.id, f);
-              }
+            // 1. Cargar estado previo (Delta base para persistencia)
+            prev.forEach(f => nextMap.set(f.id, f));
+
+            // 2. Mezclar con lo nuevo (Actualización incremental)
+            // Si el backend envía una lista parcial, los vuelos anteriores NO desaparecen.
+            incoming.forEach(f => {
+              if (f && f.id) nextMap.set(f.id, f);
             });
 
-            // 2. Actualizar o insertar vuelos del snapshot actual
-            const incoming = data.activeRoutes || [];
-            incoming.forEach(f => {
-              nextMap.set(f.id, f);
-            });
+            // 3. Limpieza diferida solo si el reloj es válido
+            // Mantenemos los vuelos un tiempo extra (90s buffer) para estabilidad visual.
+            if (now) {
+              const cleanupBuffer = 90000;
+              for (const [id, f] of nextMap.entries()) {
+                if (f.arrivalTime + cleanupBuffer < now) {
+                  nextMap.delete(id);
+                }
+              }
+            }
 
             return Array.from(nextMap.values());
           });
@@ -421,6 +461,10 @@ export const useControlTowerController = () => {
         try {
           const envelope = JSON.parse(msg.body)
           const data = envelope?.data ?? {}
+
+          if (data.startEpoch) {
+            setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
+          }
 
           setKpis({
             slaPercent: data.slaPercent,
@@ -439,6 +483,7 @@ export const useControlTowerController = () => {
             totalDays: data.totalDays,
             isCollapseMode: data.isCollapseMode,
             errorMessage: data.errorMessage,
+            startEpoch: data.startEpoch || prev.startEpoch
           }))
 
           if (data.status === 'DONE') {
@@ -488,7 +533,7 @@ export const useControlTowerController = () => {
     return () => {
       client.deactivate()
     }
-  }, [sessionId])
+  }, [sessionId, selectedAlgorithm, targetPlaybackMinutes])
 
   const airportByCode = AIRPORT_BY_ICAO
 
@@ -594,7 +639,7 @@ export const useControlTowerController = () => {
     if (rankedAircraftBase.length === 0) return [];
     if (rankedAircraftBase.length <= MAX_MAP_ROUTES && !selectedAircraftId) return rankedAircraftBase;
 
-    const now = currentEpochTime;
+    const now = smoothSimTime || currentEpochTime;
 
     // En lugar de sort(), particionamos la lista pre-ordenada en O(N)
     const inAir = [];
@@ -623,7 +668,7 @@ export const useControlTowerController = () => {
     }
 
     return finalSelection;
-  }, [rankedAircraftBase, currentEpochTime, selectedAircraftId]);
+  }, [rankedAircraftBase, currentEpochTime, smoothSimTime, selectedAircraftId]);
 
   const selectedAircraft = useMemo(
     () => activeAircraftAll.find((p) => p.id === selectedAircraftId) ?? null,
@@ -692,10 +737,29 @@ export const useControlTowerController = () => {
 
   const summary = useMemo(() => {
     if (sessionId && meta.status !== "idle") {
+      const pad = (n) => String(n).padStart(2, "0");
+      const fmtSim = (epoch, start) => {
+        if (!epoch || !start) return "--:--:--";
+        const diff = epoch - start;
+        const days = Math.floor(diff / (24 * 3600 * 1000)) + 1;
+        const hours = Math.floor((diff % (24 * 3600 * 1000)) / (3600 * 1000));
+        const minutes = Math.floor((diff % (3600 * 1000)) / (60 * 1000));
+        const seconds = Math.floor((diff % (60 * 1000)) / 1000);
+        return `Día ${days} - ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+      };
+
+      const fmtReal = (s) => {
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+      };
+
       return {
         scenarioLabel: "Simulación en vivo",
         operationStart: "Día 1",
-        systemClock: clock.simulatedTime ?? `Día ${meta.currentDay}`,
+        systemClock: fmtSim(smoothSimTime || currentEpochTime, meta.startEpoch),
+        realTimeElapsed: fmtReal(realElapsedSecs),
         globalCapacity: `${globalOccupancyCalculated.toFixed(1)}%`,
         networkLatency: "OK",
         flightsInCourse: {
@@ -732,6 +796,7 @@ export const useControlTowerController = () => {
       scenarioLabel: "Esperando simulación...",
       operationStart: "--:--",
       systemClock: "--:--",
+      realTimeElapsed: "00:00:00",
       globalCapacity: "0%",
       networkLatency: "--",
       flightsInCourse: { value: 0, delta: "--", status: "green" },
@@ -741,9 +806,9 @@ export const useControlTowerController = () => {
       progress: { label: "Listo", percent: 0, simulatedTime: "00:00:00", status: "amber" },
       transitByContinent: { america: 0, europe: 0, asia: 0 },
     };
-  }, [meta, kpis, clock, aircraft, sessionId]);
+  }, [meta, kpis, clock, aircraft, sessionId, smoothSimTime, currentEpochTime, realElapsedSecs, globalOccupancyCalculated, transitByContinent]);
 
-  const elapsedOperationTime = summary.progress.simulatedTime;
+  const elapsedOperationTime = summary.realTimeElapsed;
 
   const kpiCards = useMemo(() => {
     // Si hay datos live del backend, construir KPIs desde ellos
@@ -836,7 +901,7 @@ export const useControlTowerController = () => {
         progress: 0,
       },
     ];
-  }, [isCollapseScenario, meta, kpis, aircraft, sessionId]);
+  }, [isCollapseScenario, meta, kpis, aircraft, sessionId, globalOccupancyCalculated]);
 
   const comparisonData = useMemo(() => {
     if (kpis.comparisonResults) {
@@ -913,6 +978,8 @@ export const useControlTowerController = () => {
     sessionId,
     isFluidMode,
     setIsFluidMode,
+    targetPlaybackMinutes,
+    setTargetPlaybackMinutes,
     setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,

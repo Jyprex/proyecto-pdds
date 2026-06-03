@@ -22,6 +22,10 @@ public class SimulationState {
 
     private long currentTime;
 
+    public void setCurrentTime(long currentTime) {
+        this.currentTime = currentTime;
+    }
+
     /** Carga actual (maletas almacenadas) por aeropuerto ICAO. */
     private final Map<String, Integer> cargaAeropuerto = new HashMap<>();
 
@@ -48,6 +52,25 @@ public class SimulationState {
 
     /** Vuelos cancelados procesados en la simulación. */
     private final Set<Long> vuelosCancelados = new HashSet<>();
+
+    /** Cantidad de eventos totales generados para el periodo. */
+    private int totalEventsCount = 0;
+
+    /** Cantidad de eventos efectivamente aplicados (dentro del tiempo). */
+    private int appliedEventsCount = 0;
+
+    /** Tiempo consumido en construir eventos (ns). */
+    @lombok.Setter
+    private long buildEventsTimeNanos = 0;
+
+    /** Tiempo consumido en aplicar eventos (ns). */
+    @lombok.Setter
+    private long applyEventsTimeNanos = 0;
+
+    public void setEventCounts(int total, int applied) {
+        this.totalEventsCount = total;
+        this.appliedEventsCount = applied;
+    }
 
     /** Mapa de aeropuertos, necesario para reevaluar saturación en DEPARTURE. */
     private Map<String, Aeropuerto> airportMap;
@@ -83,6 +106,16 @@ public class SimulationState {
 
         vuelos.forEach(v ->
                 capacidadVuelo.put(v.getId(), v.getCapacidadTotal()));
+    }
+
+    /** Registra nuevos vuelos en el estado para trackear su capacidad. */
+    public void registerFlights(List<Vuelo> vuelos) {
+        if (vuelos == null) return;
+        vuelos.forEach(v -> {
+            if (!capacidadVuelo.containsKey(v.getId())) {
+                capacidadVuelo.put(v.getId(), v.getCapacidadTotal());
+            }
+        });
     }
 
     // ─────────────────────────────────────────────

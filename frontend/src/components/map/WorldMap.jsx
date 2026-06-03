@@ -64,37 +64,9 @@ const AirportMarkers = React.memo(({ airports, activeMetrics, isCollapseScenario
 ));
 
 const FlightLayer = React.memo(({ activeAircraft, airportByIcao, selectedAircraftId, onAircraftSelect, currentEpochTime }) => {
-  const [simNow, setSimNow] = useState(currentEpochTime);
-  const lastEpochRef = useRef(currentEpochTime);
-  const updateTimeRef = useRef(Date.now());
-  const ratioRef = useRef(1800000 / 250); // 30 min per 250ms aprox default
-
-  useEffect(() => {
-    if (!currentEpochTime) return;
-    const now = Date.now();
-    const elapsedReal = now - updateTimeRef.current;
-    const elapsedSim = currentEpochTime - lastEpochRef.current;
-
-    // Calcular velocidad real si no hubo saltos extraños
-    if (elapsedReal > 50 && elapsedReal < 5000 && elapsedSim > 0) {
-      ratioRef.current = elapsedSim / elapsedReal;
-    }
-
-    lastEpochRef.current = currentEpochTime;
-    updateTimeRef.current = now;
-  }, [currentEpochTime]);
-
-  useEffect(() => {
-    let rafRef;
-    const loop = () => {
-      const now = Date.now();
-      const calculatedSimNow = lastEpochRef.current + (now - updateTimeRef.current) * ratioRef.current;
-      setSimNow(calculatedSimNow);
-      rafRef = requestAnimationFrame(loop);
-    };
-    rafRef = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef);
-  }, []);
+  // Simplificación: Ya no interpolamos localmente porque el hook useControlTowerController
+  // ya nos provee un currentEpochTime suavizado (interpolatedTime) a 60 FPS.
+  const simNow = currentEpochTime;
 
   return (
     <>

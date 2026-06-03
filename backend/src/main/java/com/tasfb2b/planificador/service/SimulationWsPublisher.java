@@ -93,15 +93,28 @@ public class SimulationWsPublisher {
     }
 
     private SimulationMapSnapshotDTO buildMapSnapshot(SimulationSessionState session, int limit) {
-        List<SimulationMapRouteDTO> routes = toRouteDtos(session.getActiveRoutes(), limit);
+        // Leemos la referencia VOLATILE una sola vez (Snapshot local consistente)
+        SimulationProgressHolder.MapSnapshot snap = session.getMapSnapshot();
+
+        if (snap == null) {
+            // Fallback si aún no hay primer snapshot procesado
+            return SimulationMapSnapshotDTO.builder()
+                    .sessionId(session.getSessionId())
+                    .status(session.getStatus().name())
+                    .simulatedTime(session.getSimulatedTime())
+                    .currentEpochTime(session.getCurrentEpochTime())
+                    .snapshotEpochTime(System.currentTimeMillis())
+                    .activeRoutes(toRouteDtos(session.getActiveRoutes(), limit))
+                    .build();
+        }
 
         return SimulationMapSnapshotDTO.builder()
                 .sessionId(session.getSessionId())
                 .status(session.getStatus().name())
-                .simulatedTime(session.getSimulatedTime())
-                .currentEpochTime(session.getCurrentEpochTime())
+                .simulatedTime(snap.clock())
+                .currentEpochTime(snap.epoch())
                 .snapshotEpochTime(System.currentTimeMillis())
-                .activeRoutes(routes)
+                .activeRoutes(toRouteDtos(snap.routes(), limit))
                 .build();
     }
 
@@ -129,6 +142,7 @@ public class SimulationWsPublisher {
                 .isCollapseMode(session.isCollapseMode())
                 .rescuedFlights(session.getRescuedFlights())
                 .errorMessage(session.getErrorMessage())
+                .startEpoch(session.getStartEpoch())
                 .build();
     }
 
@@ -146,7 +160,7 @@ public class SimulationWsPublisher {
 
     private SimulationMapRouteDTO toRouteDto(Map<String, Object> route) {
         return SimulationMapRouteDTO.builder()
-                .id(asInt(route.get("id")))
+                .id(asString(route.get("id")))
                 .from(asString(route.get("from")))
                 .to(asString(route.get("to")))
                 .progress(asDouble(route.get("progress")))

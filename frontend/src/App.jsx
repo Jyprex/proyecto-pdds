@@ -60,6 +60,8 @@ const App = () => {
     sessionId,
     isFluidMode,
     setIsFluidMode,
+    targetPlaybackMinutes,
+    setTargetPlaybackMinutes,
     setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,
@@ -199,7 +201,7 @@ const App = () => {
               setMapZoom(position.zoom);
               setMapCenter(position.coordinates);
             }}
-            currentEpochTime={currentEpochTime}
+            currentEpochTime={liveStatus?.interpolatedTime || currentEpochTime}
           />
 
           <DayToDayConfig
@@ -224,6 +226,8 @@ const App = () => {
             liveStatus={liveStatus}
             simState={simState}
             sessionId={sessionId}
+            targetPlaybackMinutes={targetPlaybackMinutes}
+            setTargetPlaybackMinutes={setTargetPlaybackMinutes}
             onExportExcel={exportSimulationExcel}
             onExportMd={exportSimulationReportMd}
             onReset={resetSimulation}

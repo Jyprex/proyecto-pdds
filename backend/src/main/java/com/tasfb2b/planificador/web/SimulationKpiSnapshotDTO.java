@@ -27,4 +27,5 @@ public class SimulationKpiSnapshotDTO {
     private Boolean isCollapseMode;
     private Integer rescuedFlights;
     private String errorMessage;
+    private Long startEpoch;
 }

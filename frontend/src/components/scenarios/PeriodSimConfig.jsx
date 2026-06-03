@@ -23,8 +23,10 @@ function PeriodSimConfig({
   onAlgorithmChange,
   onStart,           // (dias: number, startDate: string) => void
   liveStatus,
-  sessionId,
   simState,
+  sessionId,
+  targetPlaybackMinutes,
+  setTargetPlaybackMinutes,
   onExportExcel,
   onExportMd,
   onReset,           // () => void — reinicia simState a idle
@@ -34,6 +36,14 @@ function PeriodSimConfig({
   const [month,      setMonth]      = useState(1);
   const [year,       setYear]       = useState(2026);
   const [isStarting, setIsStarting] = useState(false);
+
+  const PLAYBACK_OPTIONS = [
+    { label: "Modo Rayo", value: 1, sub: "1 min" },
+    { label: "Rápido", value: 5, sub: "5 min" },
+    { label: "Balanceado", value: 15, sub: "15 min" },
+    { label: "Análisis", value: 30, sub: "30 min" },
+    { label: "Detallado", value: 60, sub: "60 min" },
+  ];
 
   const daysInSel = month === 2 && year % 4 === 0 ? 29 : DAYS_IN_MONTH[month - 1];
   const startDate = `${year}-${pad(month)}-${pad(day)}`;
@@ -168,7 +178,7 @@ function PeriodSimConfig({
               </p>
             </div>
 
-            {/* Número de días — fijo en 5 */}
+            {/* Período de simulación — fijo en 5 */}
             <div className="ct-config-section">
               <p className="ct-config-section__title">🗓 PERÍODO DE SIMULACIÓN</p>
               <div style={{
@@ -181,6 +191,32 @@ function PeriodSimConfig({
                   <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>días</p>
                   <p style={{ margin: 0, fontSize: 10, color: "#475569" }}>valor académico fijo</p>
                 </div>
+              </div>
+            </div>
+
+            {/* Duración del Playback (Nuevo) */}
+            <div className="ct-config-section">
+              <p className="ct-config-section__title">⏱ DURACIÓN DEL PLAYBACK (5 DÍAS EN...)</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: 8 }}>
+                {PLAYBACK_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setTargetPlaybackMinutes(opt.value)}
+                    style={{
+                      padding: "8px 4px", borderRadius: 8, border: "none",
+                      background: targetPlaybackMinutes === opt.value
+                        ? "linear-gradient(135deg, #4f46e5, #7c3aed)"
+                        : "rgba(255,255,255,0.06)",
+                      color: targetPlaybackMinutes === opt.value ? "white" : "#94a3b8",
+                      cursor: "pointer", fontSize: 11, fontWeight: 700,
+                      transition: "all 0.2s"
+                    }}
+                  >
+                    {opt.label}
+                    <span style={{ display: "block", fontSize: 9, opacity: 0.7, fontWeight: 400 }}>{opt.sub}</span>
+                  </button>
+                ))}
               </div>
             </div>
 

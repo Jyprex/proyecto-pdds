@@ -30,6 +30,9 @@ public class SimulationProgressHolder {
 
     public enum Status { RUNNING, DONE, FAILED }
 
+    /** Snapshot inmutable de los datos del mapa para evitar condiciones de carrera. */
+    public record MapSnapshot(Long epoch, String clock, List<Map<String, Object>> routes) {}
+
     /**
      * Estado completo de una sesión de simulación.
      * Los campos son actualizados directamente por SimulationService.
@@ -38,6 +41,9 @@ public class SimulationProgressHolder {
     public static class SimulationSessionState {
         private String sessionId;
         private Status status = Status.RUNNING;
+
+        /** Contenedor inmutable para sincronización con el WebSocket Publisher */
+        private volatile MapSnapshot mapSnapshot;
 
         private int percent = 0;
         private int currentDay = 0;
