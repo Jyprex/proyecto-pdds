@@ -134,13 +134,62 @@ export const useControlTowerController = () => {
         }
 
         // Consumir snapshots del buffer cuando el tiempo fluido alcanza su epoch
-        while (buffer.length > 1 && buffer[0].epoch < smoothSimTimeRef.current) {
-          const snap = buffer.shift();
-          setClock({
-            simulatedTime: snap.clock,
-            currentEpochTime: snap.epoch,
-          });
-          setAircraft(snap.routes || []);
+        let lastPoppedSnap = null;
+        while (buffer.length > 0 && buffer[0].epoch <= smoothSimTimeRef.current) {
+          lastPoppedSnap = buffer.shift();
+        }
+        
+        if (lastPoppedSnap) {
+           if (lastPoppedSnap.clock) {
+              setClock({ simulatedTime: lastPoppedSnap.clock, currentEpochTime: lastPoppedSnap.epoch });
+           }
+           if (lastPoppedSnap.routes) {
+              setAircraft(lastPoppedSnap.routes);
+           }
+           if (lastPoppedSnap.airportLoads) {
+              setAirportLoads(lastPoppedSnap.airportLoads);
+           }
+           if (lastPoppedSnap.kpis) {
+              const data = lastPoppedSnap.kpis;
+              if (data.startEpoch) {
+                  setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
+              }
+              setKpis({
+                  slaPercent: data.slaPercent,
+                  globalOccupancy: data.globalOccupancy,
+                  criticalNodes: data.criticalNodes,
+                  totalBagsWaiting: data.totalBagsWaiting,
+                  rescuedFlights: data.rescuedFlights,
+                  comparisonResults: data.comparisonResults || null,
+              });
+              setMeta(prev => ({
+                  ...prev,
+                  status: data.status,
+                  percent: data.percent,
+                  currentDay: data.currentDay,
+                  totalDays: data.totalDays,
+                  isCollapseMode: data.isCollapseMode,
+                  errorMessage: data.errorMessage,
+                  startEpoch: data.startEpoch || prev.startEpoch
+              }));
+
+              if (data.status === 'DONE') {
+                  setSimState('completed');
+                  try {
+                      apiFetch(`/api/v1/simulation/status/${sessionId}`).then(res => {
+                          if (res.ok) {
+                              res.json().then(finalStatus => {
+                                  setMeta(prev => ({ ...prev, ...finalStatus }));
+                              });
+                          }
+                      });
+                  } catch (err) {
+                      console.error('Error fetching final status', err);
+                  }
+              } else if (data.status === 'FAILED') {
+                  setSimState('idle');
+              }
+           }
         }
       } else if (meta.status === "DONE" || meta.status === "FAILED" || simState === "completed") {
         if (simClockRef.current.serverEpoch) {
@@ -157,7 +206,7 @@ export const useControlTowerController = () => {
     };
     raf = requestAnimationFrame(update);
     return () => cancelAnimationFrame(raf);
-  }, [simState, meta.status]);
+  }, [simState, meta.status, sessionId]);
 
   const togglePanel = useCallback((panelName = "") => {
     if (!panelName) return;
@@ -428,104 +477,62 @@ export const useControlTowerController = () => {
     const client = createStompClient()
 
     client.onConnect = () => {
+      let maxEpochReceived = 0;
+
+      const handleSnapshotData = (epoch, type, data) => {
+        if (epoch < maxEpochReceived - 60000) return; // Permitir ligero jitter, descartar viejos
+        if (epoch > maxEpochReceived) maxEpochReceived = epoch;
+
+        let snap = snapshotBufferRef.current.find(s => s.epoch === epoch);
+        if (!snap) {
+          snap = { epoch };
+          snapshotBufferRef.current.push(snap);
+          snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
+        }
+        
+        if (type === 'snapshot') {
+          snap.clock = data.simulatedTime;
+          snap.routes = data.activeRoutes || [];
+        } else if (type === 'kpi') {
+          snap.kpis = data;
+          snap.airportLoads = data.airportLoads || {};
+        }
+      };
+
       client.subscribe(`/topic/sim/${sessionId}/snapshot`, (msg) => {
         try {
           const envelope = JSON.parse(msg.body)
           const data = envelope?.data ?? {}
           const seq = envelope?.seq ?? 0
 
-          // Telemetría de Recepción
-          const receivedAt = Date.now();
-          const serverSentAt = data.snapshotEpochTime || 0;
-          const networkLatency = serverSentAt ? (receivedAt - serverSentAt) : 0;
-
-          // Regla Estricta de Orden: Descartar si el seq es viejo
-          if (seq <= simClockRef.current.lastSeq) {
-            return;
-          }
-          simClockRef.current.lastSeq = seq;
-
           if (data.currentEpochTime) {
-            // Actualizar ratio teórica de avance
             const totalSimulatedMs = (meta.totalDays || 5) * 24 * 60 * 60 * 1000;
             const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
             simClockRef.current.ratio = totalSimulatedMs / targetPlaybackMs;
 
-            // ── NUEVA LÓGICA DE BUFFERING ──
-            // En lugar de setClock/setAircraft, empujamos al buffer
-            snapshotBufferRef.current.push({
-              epoch: data.currentEpochTime,
-              clock: data.simulatedTime,
-              routes: data.activeRoutes || []
-            });
+            handleSnapshotData(data.currentEpochTime, 'snapshot', data);
 
-            // Ordenar por epoch por si acaso llegan desordenados por red
-            snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
-            
-            // Log de telemetría del buffer
-            const bufferSize = snapshotBufferRef.current.length;
-            const simTimeOffset = smoothSimTimeRef.current ? (data.currentEpochTime - smoothSimTimeRef.current) : 0;
-            console.log(`[FRONT-METRICS] Seq: ${seq} | Latency: ${networkLatency}ms | Buffer: ${bufferSize} | Offset: ${Math.round(simTimeOffset/1000)}s | Routes: ${data.activeRoutes?.length || 0}`);
-
-            // Inicialización inmediata de la referencia para evitar saltos en el primer render
             if (smoothSimTimeRef.current === 0) {
               smoothSimTimeRef.current = data.currentEpochTime;
               setSmoothSimTime(data.currentEpochTime);
             }
           }
-
-          setMeta(prev => ({ ...prev, status: data.status }))
-
         } catch (err) {
           console.error('Error parsing snapshot:', err)
         }
       })
 
-      client.subscribe(`/topic/sim/${sessionId}/kpi`, async (msg) => {
+      client.subscribe(`/topic/sim/${sessionId}/kpi`, (msg) => {
         try {
           const envelope = JSON.parse(msg.body)
           const data = envelope?.data ?? {}
 
-          if (data.startEpoch) {
-            setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
-          }
+          if (data.currentEpochTime) {
+            handleSnapshotData(data.currentEpochTime, 'kpi', data);
 
-          setKpis({
-            slaPercent: data.slaPercent,
-            globalOccupancy: data.globalOccupancy,
-            criticalNodes: data.criticalNodes,
-            totalBagsWaiting: data.totalBagsWaiting,
-            rescuedFlights: data.rescuedFlights,
-            comparisonResults: data.comparisonResults || null,
-          })
-          setAirportLoads(data.airportLoads || {})
-          setMeta(prev => ({
-            ...prev,
-            status: data.status,
-            percent: data.percent,
-            currentDay: data.currentDay,
-            totalDays: data.totalDays,
-            isCollapseMode: data.isCollapseMode,
-            errorMessage: data.errorMessage,
-            startEpoch: data.startEpoch || prev.startEpoch
-          }))
-
-          if (data.status === 'DONE') {
-            setSimState('completed')
-            try {
-              const finalRes = await apiFetch(`/api/v1/simulation/status/${sessionId}`)
-              if (finalRes.ok) {
-                const finalStatus = await finalRes.json()
-                setMeta(prev => ({ ...prev, ...finalStatus }))
-              }
-            } catch (err) {
-              console.error('Error fetching final status', err)
+            if (data.status === 'DONE' || data.status === 'FAILED') {
+                client.deactivate();
             }
-            client.deactivate()
-          } else if (data.status === 'FAILED') {
-            setSimState('idle')
-            console.error('[Tasf.B2B] Simulación falló:', data.errorMessage)
-            client.deactivate()
           }
         } catch (err) {
           console.error('Error parsing kpi:', err)
@@ -550,6 +557,12 @@ export const useControlTowerController = () => {
 
     client.onWebSocketError = (err) => {
       console.warn('[Tasf.B2B] WS error:', err)
+      setMeta(prev => prev.status === 'RUNNING' ? { ...prev, status: 'FAILED', errorMessage: 'Error de conexión con el servidor' } : prev)
+    }
+
+    client.onWebSocketClose = (evt) => {
+      console.warn('[Tasf.B2B] WS close:', evt)
+      setMeta(prev => prev.status === 'RUNNING' ? { ...prev, status: 'FAILED', errorMessage: 'Desconexión del servidor' } : prev)
     }
 
     client.activate()

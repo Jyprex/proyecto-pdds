@@ -58,10 +58,10 @@ public class SimulationStatusDTO {
 
     /**
      * Ocupación actual por aeropuerto ICAO.
-     * { "SKBO": 72, "EHAM": 45, ... }
+     * { "SKBO": { "occupancy": 72, "bags": 310 }, ... }
      * El frontend usa este mapa para colorear los marcadores del WorldMap.
      */
-    private Map<String, Integer> airportLoads;
+    private Map<String, Map<String, Object>> airportLoads;
 
     /** Reloj simulado (ej. "Día 1 - 14:00") */
     private String simulatedTime;

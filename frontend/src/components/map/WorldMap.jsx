@@ -51,8 +51,11 @@ const AirportMarkers = React.memo(({ airports, activeMetrics, isCollapseScenario
             <text y={-13} textAnchor="middle" className="ct-airport-marker__label">
               {airport.icao}
             </text>
+            <text y={12} textAnchor="middle" className={`ct-airport-marker__inventory ct-airport-marker__inventory--${level}`}>
+              {metrics?.storedBags || 0}
+            </text>
             {showCityLabels && (
-              <text y={22} textAnchor="middle" className="ct-airport-marker__city">
+              <text y={23} textAnchor="middle" className="ct-airport-marker__city">
                 {airport.city}
               </text>
             )}

@@ -20,7 +20,7 @@ public class SimulationKpiSnapshotDTO {
     private Double slaPercent;
     private Double globalOccupancy;
     private Integer criticalNodes;
-    private Map<String, Integer> airportLoads;
+    private Map<String, Map<String, Object>> airportLoads;
     private Integer totalBagsWaiting;
     private String simulatedTime;
     private Long currentEpochTime;

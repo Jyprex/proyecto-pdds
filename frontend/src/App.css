@@ -2593,6 +2593,20 @@
   pointer-events: none;
 }
 
+/* Inventario Numérico */
+.ct-airport-marker__inventory {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 7px;
+  font-weight: 800;
+  paint-order: stroke fill;
+  stroke: #061828;
+  stroke-width: 2px;
+  pointer-events: none;
+}
+.ct-airport-marker__inventory--green { fill: #2ddf92; }
+.ct-airport-marker__inventory--amber { fill: #ffcb4a; }
+.ct-airport-marker__inventory--red { fill: #ff636d; }
+
 /* Nombre de ciudad */
 .ct-airport-marker__city {
   font-size: 6px;

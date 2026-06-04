@@ -326,6 +326,8 @@ public class SimulationState {
         Aeropuerto ap = airports.get(icao);
         if (ap == null || ap.getStorageCapacity() <= 0) return 0;
         int carga = cargaAeropuerto.getOrDefault(icao, 0);
-        return (int) Math.min(100, (carga * 100.0) / ap.getStorageCapacity());
+        // Usar double para evitar truncamiento prematuro a cero
+        double ratio = (carga * 100.0) / ap.getStorageCapacity();
+        return (int) Math.min(100.0, Math.ceil(ratio));
     }
 }

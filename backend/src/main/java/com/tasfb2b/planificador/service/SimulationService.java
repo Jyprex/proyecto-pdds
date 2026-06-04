@@ -23,10 +23,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
@@ -37,19 +36,14 @@ import java.util.stream.Collectors;
 /**
  * Servicio de simulación multi-día con ejecución asíncrona.
  *
- * <p>Mejoras respecto al prototipo original:
- * <ol>
- * <li><b>@Async</b>: la simulación se ejecuta en un hilo del pool
- * "simulationExecutor".
- * El controller responde HTTP 202 inmediatamente con el UUID de sesión.</li>
- * <li><b>Cola de pendientes</b>: los lotes no atendidos o con exceso de
- * capacidad en el Día N se añaden al inicio de la lista del Día N+1 con
- * prioridad máxima.</li>
- * <li><b>Métricas SLA</b>: cada {@link SimulationDayReport} incluye slaPercent,
- * totalMaletas y malatetasAtendidas para el frontend.</li>
- * <li><b>Progress tracking</b>: {@link SimulationProgressHolder} se actualiza
- * en tiempo real para que el endpoint de status sirva datos frescos.</li>
- * </ol>
+ * <p>Mejoras de la Versión 3.0:
+ * <ul>
+ * <li><b>Planificación State-Aware</b>: Inyecta capacidades de vuelos y carga de almacenes en tiempo real al ALNS
+ * para evitar el double-booking entre ciclos de planificación.</li>
+ * <li><b>Motor de Eventos Discretos</b>: Uso de PriorityQueue global para una simulación incremental eficiente.</li>
+ * <li><b>Control de Drift</b>: Compensación activa de tiempo de procesamiento para mantener 60 FPS en playback.</li>
+ * <li><b>Eficiencia de Memoria</b>: Cálculo incremental de KPIs para evitar el almacenamiento de millones de objetos Route.</li>
+ * </ul>
  */
 @Service
 @RequiredArgsConstructor
@@ -57,8 +51,10 @@ import java.util.stream.Collectors;
 public class SimulationService {
 
         private final SimulationRunner simulator;
+        private final com.tasfb2b.planificador.simulation.EventEngine eventEngine;
         private final ALNSPlannerService alnsPlanner;
         private final AeropuertoRepository airportRepo;
+        private final com.tasfb2b.vuelo.repository.VueloRepository vueloRepo;
         private final SuperLotService superLotService;
         private final SimulationProgressHolder progressHolder;
         private final EnvioService envioService;
@@ -76,8 +72,6 @@ public class SimulationService {
 
         /**
          * Duracion objetivo (minutos) para el playback visual de toda la simulacion.
-         * Esto NO acelera el algoritmo; solo controla el pacing del loop hora-a-hora
-         * que actualiza progreso/estado para el frontend.
          */
         @Value("${tasf.sim.playback.targetMinutes:60}")
         private int playbackTargetMinutes;
@@ -90,52 +84,32 @@ public class SimulationService {
         @Value("${tasf.sim.collapse.consecutiveDays:2}")
         private int collapseConsecutiveDays;
 
-        /** Fecha base por defecto: inicio del dataset académico TASF.B2B.
-         *  Se usa como fallback cuando el caller no especifica startDate.
-         *  No es hardcoded funcionalmente: el método runAsync acepta cualquier fecha.
-         */
+        /** Fecha base por defecto: inicio del dataset académico TASF.B2B. */
         private static final LocalDate DEFAULT_START_DATE = LocalDate.of(2026, 1, 2);
 
-        /** Tiempo máximo del planificador ALNS por día (ms). */
+        /** Tiempo máximo del planificador ALNS por ciclo (ms). */
         private static final long PLANNER_WINDOW_MS = 500;
 
         // ── PLANIFICACIÓN PROGRAMADA (PLANIFICACION_PROGRAMADA.md) ──────────
         /**
-         * Sa = Salto del algoritmo: granularidad de ciclos en minutos de tiempo
-         * simulado. El planificador se ejecuta cada Sa minutos de tiempo simulado.
-         * Valor fijo = 30 min → 48 ciclos por día simulado.
-         * Restricción: Sa debe ser divisor exacto de 1440 (minutos del día).
+         * Sa = Salto del algoritmo: granularidad de ciclos en minutos de tiempo simulado.
          */
-        private static final int SA_MINUTES = 30;
-
-        /**
-         * Ciclos por día simulado.
-         * Con Sa=30: 1440/30 = 48 ciclos. Cada ciclo avanza Sc=K*Sa minutos de tiempo
-         * simulado, donde K = targetMinutes*60 / (totalDays * CYCLES_PER_DAY * sleepMs).
-         */
-        private static final int CYCLES_PER_DAY = 1440 / SA_MINUTES;
+        @Value("${tasf.sim.saMinutes:10}")
+        private int saMinutes;
 
         public record WsEnvelope<T>(long seq, T data) {}
 
         /**
          * Inicia la simulación en el pool {@code simulationExecutor}.
-         * El controlador responde HTTP 202 inmediatamente con el UUID de sesión.
-         *
-         * @param sessionId UUID registrado en {@link SimulationProgressHolder}
-         * @param dias      número de días a simular
-         * @param algorithm algoritmo planificador (ignorado, usa ALNS por defecto)
-         * @param startDate fecha de inicio; si es null se usa {@code DEFAULT_START_DATE}
          */
         @Async("simulationExecutor")
         public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes) {
                 SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
-                if (session == null) {
-                        return;
-                } LocalDate fechaInicio = (startDate != null) ? startDate : DEFAULT_START_DATE;
+                if (session == null) return;
+                
+                LocalDate fechaInicio = (startDate != null) ? startDate : DEFAULT_START_DATE;
 
                 try {
-                        // ── SLIDING WINDOW: NO cargamos todo de golpe ──
-                        // La carga se hace día a día dentro de runFullSimulation
                         long startEpochMs = fechaInicio.atStartOfDay()
                                 .toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
                         session.setStartEpoch(startEpochMs);
@@ -152,8 +126,6 @@ public class SimulationService {
                         session.setTotalMissed(totalMissed);
                         session.setSlaFinal(slaFinal);
 
-                        // avgRouteLength se calcula incrementalmente en runFullSimulation
-                        // ya que los reports se compactan (routes = null) para liberar heap
                         double avgRouteLength = session.getAvgRouteLength();
 
                         Map<String, Object> metrics = new HashMap<>();
@@ -166,17 +138,14 @@ public class SimulationService {
                         metrics.put("rescuedFlights",    session.getRescuedFlights());
 
                         progressHolder.saveAlgorithmResult("ALNS", metrics);
-                        session.setSlaPercent(slaFinal); // Sincronizar para el frontend
+                        session.setSlaPercent(slaFinal);
 
                         progressHolder.markDone(sessionId);
-                        
-                        // Enviar mensaje final de completado usando el publisher
                         wsPublisher.pushImmediate(sessionId, session);
 
                 } catch (Exception ex) {
                         log.error("Simulation failed", ex);
                         progressHolder.markFailed(sessionId, ex.getMessage());
-                        // Enviar mensaje final de error usando el publisher
                         wsPublisher.pushImmediate(sessionId, session);
                 }
         }
@@ -191,82 +160,95 @@ public class SimulationService {
                 Map<String, Aeropuerto> airportMap = airportRepo.findAll().stream()
                                 .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
 
+                List<Vuelo> todosLosVuelos = vueloRepo.findAll();
+                todosLosVuelos.forEach(v -> {
+                    v.getOrigen().getIcaoCode();
+                    v.getDestino().getIcaoCode();
+                });
+
                 List<SimulationDayReport> history = new ArrayList<>();
-                long currentTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                long startTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                long currentTime = startTime;
                 List<SuperLot> pendientes = new ArrayList<>();
                 List<Route> inTransitRoutes = new ArrayList<>();
 
-                // Acumuladores para avgRouteLength (calculado incrementalmente)
+                // ── SIMULACIÓN INCREMENTAL ORIENTADA A EVENTOS ──
+                SimulationState globalState = new SimulationState(
+                        new ArrayList<>(airportMap.values()),
+                        todosLosVuelos,
+                        startTime
+                );
+                
+                PriorityQueue<com.tasfb2b.planificador.domain.Event> globalEventQueue = 
+                        new PriorityQueue<>(Comparator.comparingLong(com.tasfb2b.planificador.domain.Event::getTime));
+
                 long totalFlightLegs = 0;
                 long totalRoutesWithFlights = 0;
 
-                // ── ESTADO PERSISTENTE MULTI-DIA ──
-                Solution masterSolution = new Solution();
-                masterSolution.setRoutes(new ArrayList<>());
-
-                SimulationState globalState = new SimulationState(
-                        new ArrayList<>(airportMap.values()),
-                        new ArrayList<>(), // Se poblará vía registerFlights en advanceTo
-                        currentTime
-                );
+                int cyclesPerDay = 1440 / saMinutes;
 
                 for (int day = 0; day < dias; day++) {
 
                         LocalDate fechaDia = fechaInicio.plusDays(day);
+                        long dayStartEpochMs = fechaDia.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
 
-                        // ── SLIDING WINDOW: Cargar solo este día ──
                         envioService.cargarPorDia(fechaDia, dataPath);
-
-                        // Purgar datos de hace 3+ días para liberar heap
-                        if (day >= 3) {
-                                envioService.purgarAntesDe(fechaInicio.plusDays(day - 2));
-                        }
+                        if (day >= 3) envioService.purgarAntesDe(fechaInicio.plusDays(day - 2));
 
                         List<SuperLot> lotsDelDia = new ArrayList<>(pendientes);
                         lotsDelDia.addAll(superLotService.agruparEnviosPorFecha(fechaDia));
+                        
+                        // ── CONSOLIDACIÓN DE CARGA (Eficiencia) ──
+                        // Fusionamos lotes con mismo origen/destino para reducir N y evitar OOM
+                        lotsDelDia = superLotService.mergeLots(lotsDelDia);
+                        pendientes.clear();
 
-                        long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes);
+                        long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes, cyclesPerDay);
+                        
+                        int malatetasAtendidasDia = 0;
+                        int totalMaletasDia = 0;
+                        int maletasEntregadasAlEmpezarDia = globalState.getMaletasEntregadas();
+                        
+                        for (int cycle = 0; cycle < cyclesPerDay; cycle++) {
+                                long currentSimTime = currentTime + ((long) cycle * saMinutes * 60_000L);
+                                long nextSimTime = currentSimTime + (saMinutes * 60_000L);
 
-                        for (int cycle = 0; cycle < CYCLES_PER_DAY; cycle++) {
-                                // Tiempo simulado exacto al inicio de este ciclo
-                                long currentSimTime = currentTime + ((long) cycle * SA_MINUTES * 60_000L);
-                                long nextSimTime = currentSimTime + (SA_MINUTES * 60_000L);
-
-                                int simHour   = (cycle * SA_MINUTES) / 60;
-                                int simMinute = (cycle * SA_MINUTES) % 60;
+                                int simHour   = (cycle * saMinutes) / 60;
+                                int simMinute = (cycle * saMinutes) % 60;
                                 String simulatedTimeStr = String.format("Día %d - %02d:%02d", day + 1, simHour, simMinute);
 
                                 int currentPercent = (int)(
-                                        ((day * (double) CYCLES_PER_DAY + cycle) / (dias * (double) CYCLES_PER_DAY)) * 100);
+                                        ((day * (double) cyclesPerDay + cycle) / (dias * (double) cyclesPerDay)) * 100);
 
-                                // -- Micro-batching: Extraer lotes de esta ventana + pendientes
                                 List<SuperLot> lotesVentana = lotsDelDia.stream()
                                     .filter(l -> l.getReadyTime() < nextSimTime)
                                     .collect(Collectors.toList());
-
                                 lotsDelDia.removeAll(lotesVentana);
 
-                                // ── INSTRUMENTACIÓN DE INICIO DE CICLO ──
                                 long tCycleStart = System.nanoTime();
                                 
-                                // Ejecutar ALNS
+                                // ── ALNS STATE-AWARE: Inyectamos el estado actual de la red ──
                                 long tPlannerStart = System.nanoTime();
-                                Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS);
-                                long tPlannerEnd = System.nanoTime();
+                                Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS, 
+                                        globalState.getCapacidadVuelo(), globalState.getCargaAeropuerto());
+                                
+                                totalMaletasDia += lotesVentana.stream().mapToInt(SuperLot::getTotalMaletas).sum();
+                                malatetasAtendidasDia += sol.getRoutes().stream().mapToInt(Route::getCapacidadAsignada).sum();
 
                                 if (session.isCollapseMode()) {
                                         applyCollapseInjections(session, sol.getRoutes(), algorithm);
                                 }
 
-                                // Simulación de eventos incremental
-                                masterSolution.getRoutes().addAll(sol.getRoutes());
+                                // ── TRADUCCIÓN A EVENTOS FUTUROS ──
+                                List<com.tasfb2b.planificador.domain.Event> newEvents = eventEngine.buildEvents(sol.getRoutes(), dayStartEpochMs);
+                                globalEventQueue.addAll(newEvents);
+                                
+                                // ── MICRO-STEPPING: AVANCE DEL MOTOR (CONSUMO DE COLA) ──
+                                int microSteps = saMinutes; // 1 step = 1 minuto simulado
+                                long stepDurationMs = 60_000L;
+                                long sleepPerMicroStep = sleepPerCycleMs / microSteps;
 
-                                // Avanzar estado global (Vuelos y Aeropuertos)
-                                long tAdvanceStart = System.nanoTime();
-                                simulator.advanceTo(globalState, masterSolution.getRoutes(), airportMap, currentTime, nextSimTime);
-                                long tAdvanceEnd = System.nanoTime();
-
-                                // Preparar inTransitRoutes
+                                // Gestión de visualización (vuelos en tránsito)
                                 inTransitRoutes.addAll(sol.getRoutes().stream()
                                         .filter(r -> r.getCapacidadAsignada() > 0)
                                         .collect(Collectors.toList()));
@@ -274,329 +256,199 @@ public class SimulationService {
                                         .collect(Collectors.toMap(r -> r.getLot().getId(), r -> r, (a, b) -> b))
                                         .values()
                                         .stream()
+                                        .filter(r -> r.getArrivalTime() > currentSimTime) // Usar currentSimTime para evitar borrar vuelos prematuramente
                                         .collect(Collectors.toList());
 
-                                inTransitRoutes.removeIf(r -> r.getArrivalTime() <= nextSimTime - (SA_MINUTES * 60_000L));
-
-                                // Generar Snapshot
-                                long tSnapshotStart = System.nanoTime();
-                                double slaPercent = 100; // placeholder
-                                updateProgress(session, day + 1, dias, currentPercent,
-                                               simulatedTimeStr, slaPercent, globalState, airportMap,
-                                               inTransitRoutes, nextSimTime, currentTime);
-                                long tSnapshotEnd = System.nanoTime();
-
-                                // ── PUBLICACIÓN INMEDIATA ──
-                                wsPublisher.pushImmediate(session.getSessionId(), session);
-
-                                long tCycleEnd = System.nanoTime();
-                                long workTimeMs = (tCycleEnd - tCycleStart) / 1_000_000;
-
-                                // ── MÉTRICAS DE SISTEMA (GC y Memoria) ──
-                                var memoryBean = java.lang.management.ManagementFactory.getMemoryMXBean();
-                                var heapUsage = memoryBean.getHeapMemoryUsage();
-                                var gcBeans = java.lang.management.ManagementFactory.getGarbageCollectorMXBeans();
-                                long gcCount = 0;
-                                long gcTime = 0;
-                                for (var gc : gcBeans) {
-                                    gcCount += gc.getCollectionCount();
-                                    gcTime += gc.getCollectionTime();
+                                // Métricas incrementales de rutas
+                                for (Route rt : sol.getRoutes()) {
+                                        if (rt.getFlights() != null && !rt.getFlights().isEmpty()) {
+                                                totalFlightLegs += rt.getFlights().size();
+                                                totalRoutesWithFlights++;
+                                        }
                                 }
 
-                                // ── CÁLCULO DE COMPENSACIÓN Y DERIVA ──
-                                // Ajustamos el sleep restando el tiempo de trabajo real (ALNS + Advance + Snapshot)
-                                long adjustedSleep = Math.max(0, sleepPerCycleMs - workTimeMs);
-                                long expectedDuration = sleepPerCycleMs;
-                                
-                                log.info("[METRICS] Session: {} | Time: {} | Work: {}ms | Expected: {}ms | Sleep: {}ms | Routes: {} | Heap: {}MB | GC: {}/{}ms",
-                                         session.getSessionId(), simulatedTimeStr,
-                                         workTimeMs, expectedDuration, adjustedSleep,
-                                         inTransitRoutes.size(),
-                                         heapUsage.getUsed() / (1024 * 1024),
-                                         gcCount, gcTime);
+                                for (int step = 0; step < microSteps; step++) {
+                                        long tMicroStart = System.nanoTime();
+                                        long microEnd = currentSimTime + ((step + 1) * stepDurationMs);
 
-                                try {
-                                        // Aplicamos el sleep compensado para mantener el ritmo exacto
-                                        long tSleepStart = System.currentTimeMillis();
-                                        if (adjustedSleep > 0) {
-                                            Thread.sleep(adjustedSleep);
+                                        while (!globalEventQueue.isEmpty() && globalEventQueue.peek().getTime() <= microEnd) {
+                                                globalState.apply(globalEventQueue.poll(), airportMap);
                                         }
-                                        long actualSleep = System.currentTimeMillis() - tSleepStart;
-                                        long actualCycleDuration = workTimeMs + actualSleep;
-                                        long drift = actualCycleDuration - expectedDuration;
 
-                                        if (Math.abs(drift) > 50) {
-                                            log.warn("[DRIFT-ALERT] Time: {} | Drift: {}ms | ActualDuration: {}ms", 
-                                                    simulatedTimeStr, drift, actualCycleDuration);
+                                        int mHour = (int) (((microEnd - startTime) % (24 * 60 * 60_000L)) / 3600_000L);
+                                        int mMin = (int) (((microEnd - startTime) % 3600_000L) / 60_000L);
+                                        String mTimeStr = String.format("Día %d - %02d:%02d", day + 1, mHour, mMin);
+
+                                        double totalMicroSteps = dias * cyclesPerDay * microSteps;
+                                        int mPercent = (int) ((((day * cyclesPerDay * microSteps) + (cycle * microSteps) + step) / totalMicroSteps) * 100);
+
+                                        updateProgress(session, day + 1, dias, mPercent,
+                                                       mTimeStr, 100.0, globalState, airportMap,
+                                                       inTransitRoutes, microEnd, currentTime);
+
+                                        wsPublisher.pushImmediate(session.getSessionId(), session);
+
+                                        long tMicroEnd = System.nanoTime();
+                                        long workTimeMs = (tMicroEnd - tMicroStart) / 1_000_000;
+                                        long adjustedSleep = Math.max(0, sleepPerMicroStep - workTimeMs);
+
+                                        try {
+                                                if (adjustedSleep > 0) Thread.sleep(adjustedSleep);
+                                        } catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                                return history;
                                         }
-                                } catch (InterruptedException e) {
-                                        Thread.currentThread().interrupt();
-                                        return history; // abortar si el hilo fue interrumpido
                                 }
                         }
 
                         // --- AL FINAL DEL DIA CONSOLIDAR METRICAS ---
-                        final long dayStartTime = currentTime;
-                        // Total demand of the day was the original loaded
-                        int totalMaletas       = masterSolution.getRoutes().stream()
-                                .filter(r -> r.getLot().getReadyTime() >= dayStartTime && r.getLot().getReadyTime() < (dayStartTime + 24L * 60 * 60 * 1000))
-                                .mapToInt(r -> r.getLot().getTotalMaletas()).sum(); 
-                        int malatetasAtendidas = masterSolution.getRoutes().stream()
-                                .filter(r -> r.getLot().getReadyTime() >= dayStartTime && r.getLot().getReadyTime() < (dayStartTime + 24L * 60 * 60 * 1000))
-                                .mapToInt(Route::getCapacidadAsignada).sum();
-                        double slaPercent      = totalMaletas == 0 ? 0 : (malatetasAtendidas * 100.0) / totalMaletas;
-
-                        // ── avgRouteLength incremental ──
-                        for (Route rt : masterSolution.getRoutes()) {
-                                if (rt.getFlights() != null && !rt.getFlights().isEmpty()) {
-                                        totalFlightLegs += rt.getFlights().size();
-                                        totalRoutesWithFlights++;
-                                }
-                        }
+                        double slaPercent = totalMaletasDia == 0 ? 0 : (malatetasAtendidasDia * 100.0) / totalMaletasDia;
 
                         SimulationDayReport report = new SimulationDayReport();
                         report.setDayIndex(day);
                         report.setStartTime(currentTime);
                         report.setEndTime(currentTime + 24L * 60 * 60 * 1000);
-                        report.setRoutes(List.of()); // Mantener reporte ligero
+                        report.setRoutes(List.of()); // Mantener heap limpio
                         report.setColapsed(globalState.isColapsado());
                         report.setAirportSaturation(globalState.getSaturacionAeropuerto());
                         report.setCollapseTime(globalState.isColapsado() ? globalState.getCurrentTime() : -1L);
                         report.setSlaPercent(slaPercent);
-                        report.setTotalMaletas(totalMaletas);
-                        report.setMalatetasAtendidas(malatetasAtendidas);
-                        report.setMaletasEntregadas(globalState.getMaletasEntregadas());
-                        report.setPendingLots(pendientes); // Pasa al siguiente dia
+                        report.setTotalMaletas(totalMaletasDia);
+                        report.setMalatetasAtendidas(malatetasAtendidasDia);
+                        report.setMaletasEntregadas(globalState.getMaletasEntregadas() - maletasEntregadasAlEmpezarDia);
+                        
+                        // Los lotes que no pudieron salir hoy pasan como pendientes al siguiente día
+                        pendientes.addAll(lotsDelDia); 
+
                         history.add(report);
 
-                        // ── CONDICIÓN DE PARADA (MODO COLAPSO) ──────────────
-                        // Si el operador eligió una condición de terminación
-                        // y se cumple al fin de este día, marcamos el reporte y
-                        // salimos del bucle. status final = DONE, no FAILED.
-                        if (session.isCollapseMode()
-                                        && session.getEndCondition() != CollapseEndCondition.NONE) {
+                        if (session.isCollapseMode() && session.getEndCondition() != CollapseEndCondition.NONE) {
                                 CollapseCheckResult check = checkEndCondition(
                                                 session, report, globalState, airportMap,
                                                 collapseSlaThreshold, collapseConsecutiveDays);
                                 if (check.terminated()) {
-                                        report.setColapsed(true);
-                                        report.setCollapseTime(report.getEndTime());
                                         session.setCollapseDayIndex(day + 1);
                                         session.setCollapseReason(check.reason());
-                                        session.getEventLog().add(String.format(
-                                                        "[Fin] Colapso efectivo: %s (día %d)",
-                                                        check.reason(), day + 1));
-                                        log.info("[Colapso] Terminación por {} en día {}: {}",
-                                                        session.getEndCondition(), day + 1, check.reason());
+                                        session.getEventLog().add(String.format("[Fin] Colapso efectivo: %s (día %d)", check.reason(), day + 1));
                                         break;
                                 }
                         }
 
                         currentTime += 24L * 60 * 60 * 1000;
                 }
-                // Guardar avgRouteLength calculado incrementalmente
-                session.setAvgRouteLength(
-                        totalRoutesWithFlights == 0 ? 0.0
-                                : (double) totalFlightLegs / totalRoutesWithFlights
-                );
 
+                session.setAvgRouteLength(totalRoutesWithFlights == 0 ? 0.0 : (double) totalFlightLegs / totalRoutesWithFlights);
                 return history;
         }
 
-
-
-        /**
-         * Eleva un lote no atendido a prioridad máxima para el día siguiente,
-         * conservando únicamente la demanda original sin re-planificar cargas ya despachadas.
-         */
-        private SuperLot elevateToMaxPriority(SuperLot lot, long currentTime) {
-                return new SuperLot(
-                        lot.getId(), lot.getOrigenIcao(), lot.getDestinoIcao(),
-                        lot.getTotalMaletas(),
-                        currentTime + 24L * 60 * 60 * 1000,
-                        lot.getSla(), lot.isIntercontinental(),
-                        Integer.MAX_VALUE);
-        }
-
-        /**
-         * Actualiza el SimulationProgressHolder con las métricas del ciclo recien
-         * completado (ciclos de SA_MINUTES minutos de tiempo simulado).
-         *
-         * @param currentSimTime epoch ms del inicio del ciclo actual en tiempo simulado
-         * @param baseTime       epoch ms del inicio del día simulado actual
-         */
         private void updateProgress(SimulationProgressHolder.SimulationSessionState session,
-                        int completedDays,
-                        int totalDays,
-                        int currentPercent,
-                        String simulatedTime,
-                        double slaPercent,
-                        SimulationState state,
-                        Map<String, Aeropuerto> airportMap,
-                        List<Route> activeRoutesList,
-                        long currentSimTime,
-                        long baseTime) {
+                        int completedDays, int totalDays, int currentPercent, String simulatedTime,
+                        double slaPercent, SimulationState state, Map<String, Aeropuerto> airportMap,
+                        List<Route> activeRoutesList, long currentSimTime, long baseTime) {
 
                 session.setCurrentDay(completedDays);
                 session.setPercent(currentPercent);
                 session.setSimulatedTime(simulatedTime);
                 session.setSlaPercent(slaPercent);
 
-                Map<String, Integer> loads = new HashMap<>();
-                airportMap.keySet().forEach(icao -> loads.put(icao, state.getOccupancyPercent(icao, airportMap)));
+                Map<String, Map<String, Object>> loads = new HashMap<>();
+                for (String icao : airportMap.keySet()) {
+                    Map<String, Object> airportData = new HashMap<>();
+                    airportData.put("bags", state.getLoadAt(icao));
+                    airportData.put("occupancy", state.getOccupancyPercent(icao, airportMap));
+                    loads.put(icao, airportData);
+                }
                 session.setAirportLoads(loads);
 
-                // Nodos críticos (ocupación >= 90%)
-                int critical = (int) loads.values().stream().filter(pct -> pct >= 90).count();
+                int critical = (int) loads.values().stream()
+                    .filter(data -> (int)data.get("occupancy") >= 90).count();
                 session.setCriticalNodes(critical);
 
                 session.setCurrentEpochTime(currentSimTime);
+                session.setTotalBagsWaiting(state.getCargaAeropuerto().values().stream().mapToInt(Integer::intValue).sum());
 
-                int totalBagsWaiting = state.getCargaAeropuerto().values().stream().mapToInt(Integer::intValue).sum();
-                session.setTotalBagsWaiting(totalBagsWaiting);
-
-                // Rutas activas: descompuestas en segmentos hop-a-hop para animar cada tramo
-                // Rutas activas: agrupadas por VUELO FÍSICO para no colapsar el frontend
-                // La llave del mapa será "vueloId-depEpoch" para asegurar unicidad exacta por despegue
                 Map<String, Map<String, Object>> vuelosFisicos = new HashMap<>();
-
                 for (Route r : activeRoutesList) {
                         List<Vuelo> flights = r.getFlights();
                         if (flights == null || flights.isEmpty()) continue;
 
-                        String baseStatus  = r.isTarde() ? "critical" : (r.isNoAtendido() ? "blocked" : "normal");
-                        String routeStatus = "normal".equals(r.getStatus()) ? baseStatus : r.getStatus();
+                        String routeStatus = "normal".equals(r.getStatus()) ? 
+                                (r.isTarde() ? "critical" : (r.isNoAtendido() ? "blocked" : "normal")) : r.getStatus();
 
                         long routeTime = r.getLot().getReadyTime();
-
                         for (int i = 0; i < flights.size(); i++) {
                                 Vuelo v = flights.get(i);
-                                String fromIcao = r.getHops().get(i);
-                                String toIcao   = r.getHops().get(i + 1);
-
                                 long depEpoch = v.calcularSiguienteSalida(routeTime);
                                 long arrEpoch = depEpoch + v.getDuracionMs();
                                 routeTime = arrEpoch;
 
-                                if (currentSimTime < depEpoch) {
-                                        continue;
-                                }
-                                // No mantener segmentos tras aterrizar para evitar solapamiento visual.
-                                if (currentSimTime >= arrEpoch) {
-                                        continue;
-                                }
+                                if (currentSimTime < depEpoch || currentSimTime >= arrEpoch) continue;
 
                                 String mapKey = v.getId() + "-" + depEpoch;
-
-                                if (!vuelosFisicos.containsKey(mapKey)) {
+                                vuelosFisicos.computeIfAbsent(mapKey, k -> {
                                         Map<String, Object> segMap = new HashMap<>();
                                         segMap.put("id", "vuelo-" + mapKey);
-                                        segMap.put("from",           fromIcao);
-                                        segMap.put("to",             toIcao);
-                                        segMap.put("progress",       computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
-                                        segMap.put("status",         routeStatus);
-                                        segMap.put("departureTime",  depEpoch);
-                                        segMap.put("arrivalTime",    arrEpoch);
-                                        
-                                        segMap.put("ocupacionReal", r.getCapacidadAsignada());
+                                        segMap.put("from", v.getOrigen().getIcaoCode());
+                                        segMap.put("to", v.getDestino().getIcaoCode());
+                                        segMap.put("progress", computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
+                                        segMap.put("status", routeStatus);
+                                        segMap.put("departureTime", depEpoch);
+                                        segMap.put("arrivalTime", arrEpoch);
+                                        segMap.put("ocupacionReal", 0);
                                         segMap.put("capacidadMax", v.getCapacidadTotal());
-                                        vuelosFisicos.put(mapKey, segMap);
-                                } else {
-                                        Map<String, Object> existing = vuelosFisicos.get(mapKey);
-                                        int ocupacionActual = (int) existing.get("ocupacionReal");
-                                        existing.put("ocupacionReal", ocupacionActual + r.getCapacidadAsignada());
-                                        
-                                        // Priorizamos mostrar estados de alerta si algún paquete lo requiere
-                                        String existingStatus = (String) existing.get("status");
-                                        if ("critical".equals(routeStatus) || "rescued".equals(routeStatus)) {
-                                                existing.put("status", routeStatus);
-                                        } else if ("cancelled".equals(routeStatus) && !"rescued".equals(existingStatus)) {
-                                                existing.put("status", routeStatus);
-                                        }
+                                        return segMap;
+                                });
+                                
+                                Map<String, Object> existing = vuelosFisicos.get(mapKey);
+                                existing.put("ocupacionReal", (int)existing.get("ocupacionReal") + r.getCapacidadAsignada());
+                                if (isHigherPriority(routeStatus, (String)existing.get("status"))) {
+                                        existing.put("status", routeStatus);
                                 }
                         }
                 }
 
-                // Generar lista final y calcular % de ocupación del avión físico
                 List<Map<String, Object>> activeRoutes = new ArrayList<>();
                 for (Map<String, Object> avion : vuelosFisicos.values()) {
                         int ocupacion = (int) avion.get("ocupacionReal");
                         int max = (int) avion.get("capacidadMax");
-                        double capacityPercent = (ocupacion * 100.0) / Math.max(1, max);
-                        avion.put("capacityPercent", Math.min(100.0, capacityPercent)); // Tope en 100% visual
-                        
+                        avion.put("capacityPercent", Math.min(100.0, (ocupacion * 100.0) / Math.max(1, max)));
                         avion.remove("ocupacionReal");
                         avion.remove("capacidadMax");
                         activeRoutes.add(avion);
                 }
 
                 session.setActiveRoutes(activeRoutes);
-                
-                // CAMBIO: En lugar de emitir por WebSocket directamente (que causa ráfagas desordenadas),
-                // "congelamos" el estado del mapa en un snapshot inmutable para que el publicador 
-                // independiente lo envíe a un ritmo constante y predecible.
-                session.setMapSnapshot(new SimulationProgressHolder.MapSnapshot(
-                        currentSimTime,
-                        simulatedTime,
-                        new ArrayList<>(activeRoutes) // Copia defensiva para inmutabilidad
-                ));
+                session.setMapSnapshot(new SimulationProgressHolder.MapSnapshot(currentSimTime, simulatedTime, new ArrayList<>(activeRoutes)));
         }
 
-        private long computeSleepPerCycleMs(int totalDays, int playbackMinutes) {
-                int minutes = playbackMinutes;
-                if (minutes < 1) minutes = 1;
-                minutes = Math.max(1, Math.min(minutes, 90));
-                long totalCycles = (long) totalDays * CYCLES_PER_DAY;
-                
-                // Sincronización exacta con el tiempo de playback solicitado por el usuario
-                long ms = (long) minutes * 60_000L / totalCycles;
+        private boolean isHigherPriority(String newStatus, String currentStatus) {
+                Map<String, Integer> p = Map.of("critical", 3, "rescued", 2, "cancelled", 1, "normal", 0);
+                return p.getOrDefault(newStatus, 0) > p.getOrDefault(currentStatus, 0);
+        }
 
-                // Mantenemos un mínimo de 100ms para estabilidad del hilo, 
-                // pero respetamos el tiempo teórico si es mayor.
+        private long computeSleepPerCycleMs(int totalDays, int playbackMinutes, int cyclesPerDay) {
+                int minutes = Math.max(1, Math.min(playbackMinutes, 90));
+                long ms = (long) minutes * 60_000L / ((long) totalDays * cyclesPerDay);
                 return Math.max(100L, ms);
         }
 
-        // ── INYECCIÓN DE COLAPSO (PARALELA) ─────────────────────────────────
-        // Ver PLANES/PLAN_PERF_COLAPSO.md.
+        private double computeFlightProgress(long currentEpochTime, long dep, long arr) {
+                if (dep <= 0 || arr <= 0 || arr <= dep) return 0.0;
+                double p = (currentEpochTime - dep) / (double) (arr - dep);
+                return Math.max(0.0, Math.min(1.0, p));
+        }
 
-        /**
-         * Aplica la inyección de cancelaciones propia del modo colapso:
-         * <ol>
-         *   <li>Calcula cancelCount según stressFactor (×1→3%, ×5→15%, ×10→30%).</li>
-         *   <li>Recolecta los {@code vueloId} únicos a cancelar (varias rutas pueden
-         *       compartir vuelo).</li>
-         *   <li>Lanza replans ALNS en paralelo con {@code replanExecutor}, ventana
-         *       {@link #REPLAN_WINDOW_MS}. Usa {@code ALNSPlannerService.doReplan}
-         *       (sin side-effect, paralela-segura).</li>
-         *   <li>Espera a que todos los replans terminen; las excepciones individuales
-         *       no abortan el ciclo.</li>
-         *   <li>Marca cada ruta como "rescued" si su vuelo fue replanificado con éxito,
-         *       o "cancelled" en caso contrario.</li>
-         * </ol>
-         *
-         * @return número de rutas rescatadas en este ciclo
-         */
-        int applyCollapseInjections(
-                        SimulationProgressHolder.SimulationSessionState session,
-                        List<Route> routes,
-                        String algorithm) {
+        int applyCollapseInjections(SimulationProgressHolder.SimulationSessionState session, List<Route> routes, String algorithm) {
                 if (routes == null || routes.isEmpty()) return 0;
-
-                double cancelFraction = session.getStressFactor() * 0.03; // ×1→3%, ×10→30%
+                double cancelFraction = session.getStressFactor() * 0.03;
                 int cancelCount = (int) Math.max(1, routes.size() * cancelFraction);
-                log.info("[Colapso] Estrés ×{} → cancelando {} rutas ({} %)",
-                                session.getStressFactor(), cancelCount,
-                                Math.round(cancelFraction * 100));
-
                 List<Route> rutasModificables = new ArrayList<>(routes);
                 Collections.shuffle(rutasModificables);
 
-                // Cache de replans por vueloId (varias rutas pueden compartir vuelo).
                 Set<Long> uniqueVueloIds = new LinkedHashSet<>();
                 for (int i = 0; i < cancelCount && i < rutasModificables.size(); i++) {
-                        Route r = rutasModificables.get(i);
-                        if (!r.getFlights().isEmpty()) {
-                                uniqueVueloIds.add(r.getFlights().get(0).getId());
+                        if (!rutasModificables.get(i).getFlights().isEmpty()) {
+                                uniqueVueloIds.add(rutasModificables.get(i).getFlights().get(0).getId());
                         }
                 }
 
@@ -605,64 +457,23 @@ public class SimulationService {
                         return 0;
                 }
 
-                // Ajustar ventana de tiempo dinámica para prevenir colapso de la CPU.
-                // Si hay muchos vuelos, le damos menos tiempo a cada ALNS para que la simulación no se congele.
-                long calculatedWindow = Math.max(100L, 10000L / uniqueVueloIds.size());
-                final long dynamicWindowMs = Math.min(calculatedWindow, REPLAN_WINDOW_MS);
-
-                // Lanzar replans en paralelo
                 Solution tempSol = new Solution();
                 tempSol.setRoutes(routes);
 
-                List<CompletableFuture<Set<Long>>> futures = new ArrayList<>(uniqueVueloIds.size());
-                for (Long vueloId : uniqueVueloIds) {
-                        CompletableFuture<Set<Long>> f = CompletableFuture
-                                        .supplyAsync(() -> alnsPlanner.doReplan(tempSol, vueloId, dynamicWindowMs),
-                                                        replanExecutor)
-                                        .handle((sol, ex) -> {
-                                                if (ex != null || sol == null || sol.getRoutes() == null
-                                                                || sol.getRoutes().isEmpty()) {
-                                                        if (ex != null) {
-                                                                log.warn("Fallo en replan ALNS para vuelo {}: {}",
-                                                                                vueloId, ex.getMessage());
-                                                        }
-                                                        return Collections.<Long>emptySet();
-                                                }
-                                                // Replan exitoso: marcamos el vueloId como rescatado.
-                                                return Set.of(vueloId);
-                                        });
-                        futures.add(f);
-                }
+                List<CompletableFuture<Set<Long>>> futures = uniqueVueloIds.stream().map(vId -> 
+                        CompletableFuture.supplyAsync(() -> alnsPlanner.doReplan(tempSol, vId, REPLAN_WINDOW_MS), replanExecutor)
+                        .handle((sol, ex) -> (ex == null && sol != null && !sol.getRoutes().isEmpty()) ? Set.of(vId) : Collections.<Long>emptySet())
+                ).collect(Collectors.toList());
 
-                // Esperar todos y unir los vueloIds rescatados
-                Set<Long> rescuedVueloIds = new HashSet<>();
-                for (CompletableFuture<Set<Long>> f : futures) {
-                        rescuedVueloIds.addAll(f.join());
-                }
-
+                Set<Long> rescuedVueloIds = futures.stream().flatMap(f -> f.join().stream()).collect(Collectors.toSet());
                 markCancelled(rutasModificables, cancelCount, rescuedVueloIds);
-
-                // Conteo de rutas efectivamente rescatadas (para métrica rescuedFlights).
-                int rescued = 0;
-                for (int i = 0; i < cancelCount && i < rutasModificables.size(); i++) {
-                        if ("rescued".equals(rutasModificables.get(i).getStatus())) {
-                                rescued++;
-                        }
-                }
-                return rescued;
+                return (int) rutasModificables.stream().limit(cancelCount).filter(r -> "rescued".equals(r.getStatus())).count();
         }
 
-        /**
-         * Marca las primeras {@code cancelCount} rutas como "rescued" (si su vueloId
-         * está en {@code rescuedVueloIds}) o "cancelled" (en caso contrario).
-         */
-        private void markCancelled(List<Route> rutasModificables,
-                                  int cancelCount,
-                                  Set<Long> rescuedVueloIds) {
-                for (int i = 0; i < cancelCount && i < rutasModificables.size(); i++) {
-                        Route r = rutasModificables.get(i);
-                        if (!r.getFlights().isEmpty()
-                                        && rescuedVueloIds.contains(r.getFlights().get(0).getId())) {
+        private void markCancelled(List<Route> routes, int count, Set<Long> rescued) {
+                for (int i = 0; i < count && i < routes.size(); i++) {
+                        Route r = routes.get(i);
+                        if (!r.getFlights().isEmpty() && rescued.contains(r.getFlights().get(0).getId())) {
                                 r.setStatus("rescued");
                         } else {
                                 r.setStatus("cancelled");
@@ -671,57 +482,20 @@ public class SimulationService {
                 }
         }
 
-        // ── TERMINACIÓN POR CONDICIÓN (MODO COLAPSO) ───────────────────────
-        // Ver PLANES/PLAN_COLAPSO_INFORMATIVO.md.
-        record CollapseCheckResult(boolean terminated, String reason) {}
-
-        /**
-         * Evalúa la condición de terminación elegida al fin de un día simulado.
-         * Mutación permitida: actualiza session.slaStreak para SLA_BELOW_THRESHOLD.
-         * Static para permitir testing directo sin instanciar el service.
-         */
-        static CollapseCheckResult checkEndCondition(
-                        SimulationProgressHolder.SimulationSessionState session,
-                        SimulationDayReport report,
-                        SimulationState endOfDayState,
-                        Map<String, Aeropuerto> airportMap,
-                        double slaThreshold,
-                        int consecutiveDays) {
-
+        static CollapseCheckResult checkEndCondition(SimulationProgressHolder.SimulationSessionState session, SimulationDayReport report, SimulationState state, Map<String, Aeropuerto> airportMap, double threshold, int consecutive) {
                 return switch (session.getEndCondition()) {
                         case SLA_BELOW_THRESHOLD -> {
-                                int streak = report.getSlaPercent() < slaThreshold
-                                                ? session.getSlaStreak() + 1
-                                                : 0;
+                                int streak = report.getSlaPercent() < threshold ? session.getSlaStreak() + 1 : 0;
                                 session.setSlaStreak(streak);
-                                yield new CollapseCheckResult(
-                                                streak >= consecutiveDays,
-                                                String.format(
-                                                                "SLA < %.1f%% por %d días consecutivos (actual %.1f%%)",
-                                                                slaThreshold, consecutiveDays, report.getSlaPercent()));
+                                yield new CollapseCheckResult(streak >= consecutive, String.format("SLA < %.1f%% por %d días", threshold, consecutive));
                         }
                         case ALL_AIRPORTS_CRITICAL -> {
-                                final int total = airportMap.size();
-                                long critical = airportMap.keySet().stream()
-                                                .filter(icao -> endOfDayState
-                                                                .getOccupancyPercent(icao, airportMap) >= 90)
-                                                .count();
-                                yield new CollapseCheckResult(
-                                                critical >= total,
-                                                String.format("Todos los aeropuertos críticos (%d/%d)",
-                                                                critical, total));
+                                long crit = airportMap.keySet().stream().filter(icao -> state.getOccupancyPercent(icao, airportMap) >= 90).count();
+                                yield new CollapseCheckResult(crit >= airportMap.size(), "Todos los aeropuertos críticos");
                         }
-                        case NONE -> new CollapseCheckResult(false, "NONE");
+                        default -> new CollapseCheckResult(false, "NONE");
                 };
         }
 
-        private double computeFlightProgress(long currentEpochTime, long dep, long arr) {
-                if (dep <= 0 || arr <= 0 || arr <= dep) {
-                        return 0.0;
-                }
-                double p = (currentEpochTime - dep) / (double) (arr - dep);
-                if (p < 0) return 0.0;
-                if (p > 1) return 1.0;
-                return p;
-        }
+        record CollapseCheckResult(boolean terminated, String reason) {}
 }

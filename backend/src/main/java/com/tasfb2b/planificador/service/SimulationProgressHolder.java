@@ -52,8 +52,11 @@ public class SimulationProgressHolder {
         /** Reporte acumulado de todos los días completados. */
         private final List<SimulationDayReport> reports = new ArrayList<>();
 
-        /** Snapshot de ocupación por aeropuerto ICAO → porcentaje 0-100. */
-        private Map<String, Integer> airportLoads;
+        /** 
+         * Snapshot de ocupación por aeropuerto ICAO.
+         * Cada valor es un mapa con { "occupancy": Integer, "bags": Integer }.
+         */
+        private Map<String, Map<String, Object>> airportLoads;
 
         /** SLA acumulado hasta el día actual. */
         private double slaPercent = 0.0;

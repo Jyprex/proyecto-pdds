@@ -28,23 +28,6 @@ import java.util.stream.Collectors;
 /**
  * Implementación del algoritmo Adaptive Large Neighborhood Search (ALNS)
  * para la planificación y replanificación de rutas logísticas en TASF.B2B.
- *
- * <p>Soporta tres modos de operación:
- * <ul>
- *   <li>{@link #plan}: planificación desde cero, usada en experimentación numérica.</li>
- *   <li>{@link #replanificar}: replanificación operativa ante cancelación manual de vuelo,
- *       con warm-start sobre backup routes. Persiste la solución en {@link PlanningSessionHolder}.</li>
- *   <li>{@link #doReplan}: variante sin side-effect, usada por el modo colapso
- *       (PLAN_PERF_COLAPSO.md) para replanificar en paralelo sin race en el holder.</li>
- * </ul>
- *
- * <p>Parámetros del algoritmo:
- * <ul>
- *   <li>INITIAL_TEMP_FACTOR = 0.05</li>
- *   <li>COOLING_FACTOR = 0.997</li>
- *   <li>SEGMENT_SIZE = 100 iteraciones</li>
- *   <li>DESTROY_FRACTION = 0.20</li>
- * </ul>
  */
 @Service
 @RequiredArgsConstructor
@@ -63,64 +46,44 @@ public class ALNSPlannerService {
     private static final int    SEGMENT_SIZE        = 100;
     private static final double DESTROY_FRACTION    = 0.20;
 
-    /** Resultado de una evaluación: fitness + state, para evitar el campo compartido lastSimState. */
     private record EvaluationResult(double fitness, SimulationState state) {}
 
     /**
      * Planificación completa desde cero sobre todos los SuperLots.
-     * Equivalente al escenario TIEMPO_REAL para comparación con HGA.
-     *
-     * @param lots     lotes a planificar
-     * @param windowMs ventana de tiempo máxima en milisegundos
-     * @return solución optimizada
      */
     public Solution plan(List<SuperLot> lots, long windowMs) {
+        return plan(lots, windowMs, new HashMap<>(), new HashMap<>());
+    }
+
+    /**
+     * Planificación consciente del estado actual de la red (State-Aware).
+     * Evita el double-booking al respetar capacidades ya consumidas.
+     */
+    public Solution plan(List<SuperLot> lots, long windowMs,
+                         Map<Long, Integer> baseFlightCapacity,
+                         Map<String, Integer> baseAirportLoad) {
         if (lots.isEmpty()) return emptySolution();
 
         Map<String, Aeropuerto> airportMap = loadAirportMap();
         Random rng = new Random();
 
-        List<Route> currentRoutes = buildInitialSolution(lots, airportMap);
-        return runAlns(currentRoutes, airportMap, rng, windowMs, null);
+        List<Route> currentRoutes = buildInitialSolution(lots, airportMap, baseAirportLoad, baseFlightCapacity);
+        return runAlns(currentRoutes, airportMap, rng, windowMs, null, baseFlightCapacity, baseAirportLoad);
     }
 
-    /**
-     * Replanifica únicamente los lotes afectados por la cancelación de un vuelo.
-     * Usa warm-start con backup routes del HGA para respuesta operativa inmediata.
-     * Persiste la solución resultante en {@link PlanningSessionHolder}.
-     *
-     * @param vueloIdCancelado ID del vuelo cancelado
-     * @param windowMs         ventana de tiempo para el ciclo ALNS
-     * @return solución actualizada
-     */
     public Solution replanificar(Long vueloIdCancelado, long windowMs) {
         Solution sol = doReplan(vueloIdCancelado, windowMs);
         sessionHolder.store(sol);
         return sol;
     }
 
-    /**
-     * Variante sin side-effect de {@link #replanificar}, paralela-segura.
-     * Usada por el modo colapso (ver PLANES/PLAN_PERF_COLAPSO.md) donde múltiples
-     * replans corren en paralelo y no deben competir por escribir en
-     * {@link PlanningSessionHolder} (race last-write-wins).
-     *
-     * @param vueloIdCancelado ID del vuelo cancelado
-     * @param windowMs         ventana de tiempo para el ciclo ALNS
-     * @return solución calculada, sin persistir en el holder
-     */
     Solution doReplan(Long vueloIdCancelado, long windowMs) {
         if (!sessionHolder.hasSolution()) {
-            throw new IllegalStateException(
-                    "No hay planificación activa. Ejecute /planificador/ejecutar primero.");
+            throw new IllegalStateException("No hay planificación activa.");
         }
         return doReplan(sessionHolder.get(), vueloIdCancelado, windowMs);
     }
 
-    /**
-     * Variante que acepta la solución vigente por parámetro. 
-     * Ideal para simulaciones en paralelo donde no se depende de sessionHolder.
-     */
     public Solution doReplan(Solution current, Long vueloIdCancelado, long windowMs) {
         Map<String, Aeropuerto> airportMap = loadAirportMap();
         Random rng = new Random();
@@ -133,11 +96,8 @@ public class ALNSPlannerService {
         for (Route r : rutasActuales) {
             boolean usoVueloCancelado = r.getFlights().stream()
                     .anyMatch(v -> vueloIdCancelado.equals(v.getId()));
-            if (usoVueloCancelado) {
-                afectados.add(r.getLot());
-            } else {
-                rutasNoAfectadas.add(r);
-            }
+            if (usoVueloCancelado) afectados.add(r.getLot());
+            else rutasNoAfectadas.add(r);
         }
 
         for (SuperLot lot : afectados) {
@@ -159,13 +119,15 @@ public class ALNSPlannerService {
             partialRoutes.add(routeBuilder.build(lot, airportMap, new HashMap<>(), new HashMap<>()));
         }
 
-        return runAlns(partialRoutes, airportMap, rng, windowMs, vueloIdCancelado);
+        return runAlns(partialRoutes, airportMap, rng, windowMs, vueloIdCancelado, new HashMap<>(), new HashMap<>());
     }
 
     private Solution runAlns(List<Route> initialRoutes,
                              Map<String, Aeropuerto> airportMap,
                              Random rng, long windowMs,
-                             Long vueloIdCancelado) {
+                             Long vueloIdCancelado,
+                             Map<Long, Integer> baseFlightCapacity,
+                             Map<String, Integer> baseAirportLoad) {
 
         long start = System.currentTimeMillis();
 
@@ -194,58 +156,35 @@ public class ALNSPlannerService {
 
         boolean primeraIteracion = (vueloIdCancelado != null);
 
-        // Saturación inicial del tracker
-        if (iterState != null) {
-            tracker.setSaturationLevel(computeSaturationLevel(iterState, airportMap));
-        }
+        if (iterState != null) tracker.setSaturationLevel(computeSaturationLevel(iterState, airportMap));
 
         while (System.currentTimeMillis() - start < windowMs) {
             int q = Math.max(1, (int) (current.size() * DESTROY_FRACTION));
-
             List<Route> candidatePartial = new ArrayList<>(current);
 
             DestroyOperator dOp;
-            if (primeraIteracion) {
-                dOp = destroyOps.get(0);
-                tracker.forceDestroy(0);
-                primeraIteracion = false;
-            } else {
-                dOp = tracker.selectDestroy(rng);
-            }
+            if (primeraIteracion) { dOp = destroyOps.get(0); tracker.forceDestroy(0); primeraIteracion = false; }
+            else { dOp = tracker.selectDestroy(rng); }
             RepairOperator rOp = tracker.selectRepair(rng);
 
-            // ── FASE 1: DESTROY ──
             long tD0 = System.nanoTime();
             List<SuperLot> removed = dOp.destroy(candidatePartial, q, rng);
             totalDestroyNanos += (System.nanoTime() - tD0);
             
-            // Las rutas viejas removidas pueden ser recicladas
-            List<Route> rutasViejas = new ArrayList<>(current);
-            rutasViejas.removeAll(candidatePartial);
+            Map<Long, Integer> capacidadDisponible = buildCapacidadDisponible(candidatePartial, baseFlightCapacity);
             
-            Map<Long, Integer> capacidadDisponible = buildCapacidadDisponible(candidatePartial);
-            
-            // ── FASE 2: REPAIR ──
             long tR0 = System.nanoTime();
             List<Route> candidate = rOp.repair(candidatePartial, removed, airportMap, capacidadDisponible);
             totalRepairNanos += (System.nanoTime() - tR0);
             
-            resolverConflictosCapacidad(candidate);
+            resolverConflictosCapacidad(candidate, baseFlightCapacity);
 
-            // ── FASE 3: SURROGATE DELTA FITNESS ──
             long tE0 = System.nanoTime();
             double candidateRouteFitness = fitnessEval.evaluateRoutes(candidate, start);
             double currentRouteFitness = fitnessEval.evaluateRoutes(current, start);
-            
-            // Aproximamos el delta asumiendo que el estado global (colas) no cambió drásticamente.
             double approxDelta = candidateRouteFitness - currentRouteFitness;
             
-            boolean surrogateAccepted = false;
-            if (approxDelta > 0) {
-                surrogateAccepted = true;
-            } else if (acceptarSA(approxDelta, temp, rng)) {
-                surrogateAccepted = true;
-            }
+            boolean surrogateAccepted = approxDelta > 0 || acceptarSA(approxDelta, temp, rng);
             totalEvalNanos += (System.nanoTime() - tE0);
 
             double reward = AdaptiveWeightTracker.REWARD_REJECT;
@@ -253,131 +192,76 @@ public class ALNSPlannerService {
 
             if (surrogateAccepted) {
                 surrogatePasses++;
-                
-                // ── FASE 4: SIMULACIÓN ──
                 long tS0 = System.nanoTime();
                 SimulationState candidateState = simulator.run(candidate, airportMap, start, start);
                 simulationCalls++;
                 totalSimNanos += (System.nanoTime() - tS0);
                 
-                // ── FASE 5: EVALUACIÓN ESTADO ──
                 long tE1 = System.nanoTime();
-                double candidateStateFitness = fitnessEval.evaluateState(candidateState);
-                double candidateFitness = candidateRouteFitness + candidateStateFitness;
+                double candidateFitness = candidateRouteFitness + fitnessEval.evaluateState(candidateState);
                 totalEvalNanos += (System.nanoTime() - tE1);
                 
                 double realDelta = candidateFitness - currentFitness;
 
-                if (realDelta > 0) {
-                    current        = candidate;
-                    currentFitness = candidateFitness;
-                    iterState      = candidateState;
-                    reward         = AdaptiveWeightTracker.REWARD_IMPROVE;
-                    moveAccepted   = true;
-                    acceptanceCount++;
-                } else if (acceptarSA(realDelta, temp, rng)) {
-                    current        = candidate;
-                    currentFitness = candidateFitness;
-                    iterState      = candidateState;
-                    reward         = AdaptiveWeightTracker.REWARD_ACCEPT;
-                    moveAccepted   = true;
-                    acceptanceCount++;
+                if (realDelta > 0 || acceptarSA(realDelta, temp, rng)) {
+                    current = candidate; currentFitness = candidateFitness; iterState = candidateState;
+                    reward = realDelta > 0 ? AdaptiveWeightTracker.REWARD_IMPROVE : AdaptiveWeightTracker.REWARD_ACCEPT;
+                    moveAccepted = true; acceptanceCount++;
                 }
 
                 if (candidateFitness > bestFitness) {
-                    best        = new ArrayList<>(candidate);
-                    bestFitness = candidateFitness;
-                    reward      = AdaptiveWeightTracker.REWARD_GLOBAL_BEST;
+                    best = new ArrayList<>(candidate); bestFitness = candidateFitness;
+                    reward = AdaptiveWeightTracker.REWARD_GLOBAL_BEST;
                 }
             }
 
             if (!moveAccepted) {
-                // FASE Reciclar las rutas nuevas creadas en esta iteración que no fueron aceptadas
-                List<Route> rutasNuevasRechazadas = new ArrayList<>(candidate);
-                rutasNuevasRechazadas.removeAll(candidatePartial);
-                for (Route r : rutasNuevasRechazadas) {
-                    com.tasfb2b.planificador.domain.RoutePool.recycle(r);
-                }
+                List<Route> rejected = new ArrayList<>(candidate);
+                rejected.removeAll(candidatePartial);
+                for (Route r : rejected) com.tasfb2b.planificador.domain.RoutePool.recycle(r);
             }
 
             tracker.update(reward);
             temp *= COOLING_FACTOR;
-
-            // Actualizar nivel de saturación para selección adaptativa
-            if (iterState != null) {
-                tracker.setSaturationLevel(computeSaturationLevel(iterState, airportMap));
-            }
+            if (iterState != null) tracker.setSaturationLevel(computeSaturationLevel(iterState, airportMap));
 
             iter++;
             if (iter % SEGMENT_SIZE == 0) tracker.normalizeWeights();
         }
         
-        // LOG DE PERFILADO INTERNO ALNS
-        if (iter > 0) {
-            double dMs = totalDestroyNanos / 1_000_000.0;
-            double rMs = totalRepairNanos / 1_000_000.0;
-            double sMs = totalSimNanos / 1_000_000.0;
-            double eMs = totalEvalNanos / 1_000_000.0;
-            
-            double surrPct = (surrogatePasses * 100.0) / iter;
-            double accPct  = (acceptanceCount * 100.0) / iter;
-            
-            double avgRepair = (iter > 0) ? (rMs / iter) : 0;
-            double avgSim    = (simulationCalls > 0) ? (sMs / simulationCalls) : 0;
-
-            log.info("[ALNS_PROFILER] Iter: {} | SurrogatePass: {} ({}%) | Acceptance: {} ({}%) | " +
-                     "Destroy: {}ms | Repair: {}ms | Simulation: {}ms | Eval: {}ms | SimCalls: {} | " +
-                     "AvgRepair: {}ms | AvgSim: {}ms",
-                     iter, surrogatePasses, String.format("%.1f", surrPct), 
-                     acceptanceCount, String.format("%.1f", accPct),
-                     String.format("%.2f", dMs), String.format("%.2f", rMs), 
-                     String.format("%.2f", sMs), String.format("%.2f", eMs), 
-                     simulationCalls, String.format("%.4f", avgRepair), 
-                     String.format("%.4f", avgSim));
-        }
-
         return buildSolution(best, airportMap, start);
     }
 
-    private List<Route> buildInitialSolution(List<SuperLot> lots, Map<String, Aeropuerto> airportMap) {
+    private List<Route> buildInitialSolution(List<SuperLot> lots, 
+                                             Map<String, Aeropuerto> airportMap,
+                                             Map<String, Integer> baseAirportLoad,
+                                             Map<Long, Integer> baseFlightCapacity) {
         return lots.stream()
                 .sorted(Comparator.comparingLong(SuperLot::getDeadline))
-                .map(lot -> routeBuilder.build(lot, airportMap, new HashMap<>(), new HashMap<>()))
+                .map(lot -> routeBuilder.build(lot, airportMap, baseAirportLoad, baseFlightCapacity))
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Resuelve conflictos de capacidad por prioridad descendente.
-     * Los lotes con mayor prioridad consumen capacidad de vuelo primero.
-     */
-    private void resolverConflictosCapacidad(List<Route> routes) {
-        Map<Long, Integer> cap = new HashMap<>();
+    private void resolverConflictosCapacidad(List<Route> routes, Map<Long, Integer> baseFlightCapacity) {
+        Map<Long, Integer> cap = new HashMap<>(baseFlightCapacity);
         for (Route r : routes) {
             for (Vuelo v : r.getFlights()) cap.putIfAbsent(v.getId(), v.getCapacidadTotal());
         }
 
-        // EDF (Earliest Deadline First) para maximizar tiempo de colapso
         routes.sort(Comparator.comparingLong((Route r) -> r.getLot().getDeadline())
                 .thenComparingInt(r -> -r.getLot().getPriority()));
 
         for (Route r : routes) {
             if (r.getFlights().isEmpty()) continue;
-            int capacidadRuta = r.getFlights().stream()
-                    .mapToInt(v -> cap.getOrDefault(v.getId(), 0)).min().orElse(0);
+            int capacidadRuta = r.getFlights().stream().mapToInt(v -> cap.getOrDefault(v.getId(), 0)).min().orElse(0);
             int asignar = Math.min(r.getDemandaTotal(), capacidadRuta);
             r.setCapacidadAsignada(asignar);
             for (Vuelo v : r.getFlights()) cap.merge(v.getId(), -asignar, Integer::sum);
         }
     }
 
-    /**
-     * Construye el mapa de capacidad disponible por vuelo dado el estado actual de rutas.
-     *
-     * @param routes rutas actuales, posiblemente con asignaciones parciales
-     * @return mapa {@code vueloId → capacidad restante}
-     */
-    private Map<Long, Integer> buildCapacidadDisponible(List<Route> routes) {
-        Map<Long, Integer> cap = new HashMap<>();
+    private Map<Long, Integer> buildCapacidadDisponible(List<Route> routes, Map<Long, Integer> baseFlightCapacity) {
+        Map<Long, Integer> cap = new HashMap<>(baseFlightCapacity);
         for (Route r : routes) {
             for (Vuelo v : r.getFlights()) cap.putIfAbsent(v.getId(), v.getCapacidadTotal());
         }
@@ -405,17 +289,10 @@ public class ALNSPlannerService {
     }
 
     private Map<String, Aeropuerto> loadAirportMap() {
-        return aeropuertoRepo.findAll().stream()
-                .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
+        return aeropuertoRepo.findAll().stream().collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
     }
 
-    /**
-     * Calcula el nivel máximo de saturación de la red (0.0–1.0).
-     * Es el ratio máximo de ocupación de cualquier aeropuerto.
-     * Usado para alimentar AdaptiveWeightTracker.setSaturationLevel().
-     */
-    private double computeSaturationLevel(SimulationState state,
-                                          Map<String, Aeropuerto> airportMap) {
+    private double computeSaturationLevel(SimulationState state, Map<String, Aeropuerto> airportMap) {
         double maxRatio = 0.0;
         for (Map.Entry<String, Integer> entry : state.getCargaAeropuerto().entrySet()) {
             Aeropuerto ap = airportMap.get(entry.getKey());
@@ -438,12 +315,9 @@ public class ALNSPlannerService {
         return List.of(new GreedyRepairOp(routeBuilder), new RegretRepairOp(routeBuilder));
     }
 
-    private Solution buildSolution(List<Route> routes,
-                                   Map<String, Aeropuerto> airportMap,
-                                   long startTime) {
+    private Solution buildSolution(List<Route> routes, Map<String, Aeropuerto> airportMap, long startTime) {
         SimulationState state = simulator.run(routes, airportMap, startTime, startTime);
         double fit = fitnessEval.evaluate(routes, state);
-
         Solution sol = new Solution();
         sol.setRoutes(routes);
         sol.setFitness(fit);

@@ -313,11 +313,13 @@ export const getCapacityLabel = (level = "green") => {
 /** Construye métricas de aeropuerto para un escenario dado */
 export const buildAirportMetrics = (airports = [], occupancyMap = null) =>
   airports.reduce((acc, airport, index) => {
-    const occupancy =
-      occupancyMap != null
-        ? (occupancyMap[airport.icao] ?? 0)
-        : 38 + ((index * 11) % 58);
-    const storedBags = Math.round((airport.warehouseCapacity * occupancy) / 100);
+    const data = occupancyMap != null ? occupancyMap[airport.icao] : null;
+    
+    // Si hay datos reales del BE { bags, occupancy }, usarlos. 
+    // Si no, fallback a 0 o valores iniciales.
+    const occupancy = data ? (data.occupancy ?? 0) : 0;
+    const storedBags = data ? (data.bags ?? 0) : 0;
+    
     const level = getCapacityLevel(occupancy);
     acc[airport.icao] = {
       warehouseId: `ALM-${airport.icao}`,
