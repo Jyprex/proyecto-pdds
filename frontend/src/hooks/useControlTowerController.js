@@ -71,9 +71,14 @@ export const useControlTowerController = () => {
   const [aircraft, setAircraft] = useState([]);
   const [clock, setClock] = useState({ simulatedTime: "--:--", currentEpochTime: 0 });
   const [smoothSimTime, setSmoothSimTime] = useState(0);
+  const smoothSimTimeRef = useRef(0);
   const [realElapsedSecs, setRealElapsedSecs] = useState(0);
   const realStartRef = useRef(null);
   const [logs, setLogs] = useState([]);
+
+  // ── BUFFER DE SNAPSHOTS PARA SIMULACIÓN FLUIDA ────────────────────────────
+  const snapshotBufferRef = useRef([]);
+  const BUFFER_MIN_SIZE = 1; // Basta con un snapshot para iniciar visualmente
 
   /** Reconstrucción de liveStatus para compatibilidad con App.jsx y otros componentes */
   const liveStatus = useMemo(() => {
@@ -100,16 +105,52 @@ export const useControlTowerController = () => {
   /** Loop de interpolación suave para el mapa y el reloj */
   useEffect(() => {
     let raf;
+    let lastRealTime = performance.now();
+
     const update = () => {
-      const now = Date.now();
-      if (simClockRef.current.serverEpoch && simClockRef.current.receivedAt) {
-        const elapsedReal = now - simClockRef.current.receivedAt;
-        const currentSim = simClockRef.current.serverEpoch + (elapsedReal * simClockRef.current.ratio);
-        setSmoothSimTime(currentSim);
+      const now = performance.now();
+      const delta = now - lastRealTime;
+      lastRealTime = now;
+
+      const isStillRunning = (meta.status === "RUNNING" || simState === "running");
+
+      if (isStillRunning) {
+        const buffer = snapshotBufferRef.current;
+        
+        // Solo avanzamos si ya tenemos datos iniciales
+        if (smoothSimTimeRef.current > 0) {
+            // Avance lineal monótono basado en performance.now (delta real)
+            const nextTime = smoothSimTimeRef.current + (delta * simClockRef.current.ratio);
+            
+            // Sincronización suave:
+            // Si nos adelantamos más de 45 minutos del servidor, frenamos para que nos alcance.
+            const lastSnapshot = buffer[buffer.length - 1];
+            if (!lastSnapshot || nextTime < lastSnapshot.epoch + 45 * 60 * 1000) {
+               smoothSimTimeRef.current = nextTime;
+            }
+            
+            // Actualizar estado de React solo para la visualización de la UI
+            setSmoothSimTime(smoothSimTimeRef.current);
+        }
+
+        // Consumir snapshots del buffer cuando el tiempo fluido alcanza su epoch
+        while (buffer.length > 1 && buffer[0].epoch < smoothSimTimeRef.current) {
+          const snap = buffer.shift();
+          setClock({
+            simulatedTime: snap.clock,
+            currentEpochTime: snap.epoch,
+          });
+          setAircraft(snap.routes || []);
+        }
+      } else if (meta.status === "DONE" || meta.status === "FAILED" || simState === "completed") {
+        if (simClockRef.current.serverEpoch) {
+          smoothSimTimeRef.current = simClockRef.current.serverEpoch;
+          setSmoothSimTime(smoothSimTimeRef.current);
+        }
       }
       
-      if (realStartRef.current && (simState === "running" || meta.status === "RUNNING")) {
-        setRealElapsedSecs(Math.floor((now - realStartRef.current) / 1000));
+      if (realStartRef.current && isStillRunning) {
+        setRealElapsedSecs(Math.floor((Date.now() - realStartRef.current) / 1000));
       }
 
       raf = requestAnimationFrame(update);
@@ -159,6 +200,8 @@ export const useControlTowerController = () => {
     setAircraft([]);
     setClock({ simulatedTime: "--:--", currentEpochTime: 0 });
     setLogs([]);
+    smoothSimTimeRef.current = 0;
+    setSmoothSimTime(0);
   }, []);
 
   const hideAirportDetail = useCallback(() => {
@@ -391,6 +434,11 @@ export const useControlTowerController = () => {
           const data = envelope?.data ?? {}
           const seq = envelope?.seq ?? 0
 
+          // Telemetría de Recepción
+          const receivedAt = Date.now();
+          const serverSentAt = data.snapshotEpochTime || 0;
+          const networkLatency = serverSentAt ? (receivedAt - serverSentAt) : 0;
+
           // Regla Estricta de Orden: Descartar si el seq es viejo
           if (seq <= simClockRef.current.lastSeq) {
             return;
@@ -398,57 +446,33 @@ export const useControlTowerController = () => {
           simClockRef.current.lastSeq = seq;
 
           if (data.currentEpochTime) {
-            const now = Date.now();
-            
-            // FIX: Solo actualizar el punto de referencia si el tiempo del servidor ha AVANZADO.
-            // Esto evita que snapshots duplicados (con el mismo timestamp) reseteen la interpolación suave.
-            if (data.currentEpochTime > simClockRef.current.serverEpoch) {
-              const totalSimulatedMs = (meta.totalDays || 5) * 24 * 60 * 60 * 1000;
-              const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
-              const theoreticalRatio = totalSimulatedMs / targetPlaybackMs;
+            // Actualizar ratio teórica de avance
+            const totalSimulatedMs = (meta.totalDays || 5) * 24 * 60 * 60 * 1000;
+            const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
+            simClockRef.current.ratio = totalSimulatedMs / targetPlaybackMs;
 
-              simClockRef.current = {
-                ...simClockRef.current,
-                serverEpoch: data.currentEpochTime,
-                receivedAt: now,
-                ratio: theoreticalRatio
-              };
-            }
-          }
-
-          setClock({
-            simulatedTime: data.simulatedTime,
-            currentEpochTime: data.currentEpochTime,
-          })
-
-          /** Fix: Persistencia de estado para evitar "flashing" (Append/Delta) */
-          setAircraft(prev => {
-            const incoming = data.activeRoutes || [];
-            const now = data.currentEpochTime;
-            const nextMap = new Map();
-
-            // 1. Cargar estado previo (Delta base para persistencia)
-            prev.forEach(f => nextMap.set(f.id, f));
-
-            // 2. Mezclar con lo nuevo (Actualización incremental)
-            // Si el backend envía una lista parcial, los vuelos anteriores NO desaparecen.
-            incoming.forEach(f => {
-              if (f && f.id) nextMap.set(f.id, f);
+            // ── NUEVA LÓGICA DE BUFFERING ──
+            // En lugar de setClock/setAircraft, empujamos al buffer
+            snapshotBufferRef.current.push({
+              epoch: data.currentEpochTime,
+              clock: data.simulatedTime,
+              routes: data.activeRoutes || []
             });
 
-            // 3. Limpieza diferida solo si el reloj es válido
-            // Mantenemos los vuelos un tiempo extra (90s buffer) para estabilidad visual.
-            if (now) {
-              const cleanupBuffer = 90000;
-              for (const [id, f] of nextMap.entries()) {
-                if (f.arrivalTime + cleanupBuffer < now) {
-                  nextMap.delete(id);
-                }
-              }
-            }
+            // Ordenar por epoch por si acaso llegan desordenados por red
+            snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
+            
+            // Log de telemetría del buffer
+            const bufferSize = snapshotBufferRef.current.length;
+            const simTimeOffset = smoothSimTimeRef.current ? (data.currentEpochTime - smoothSimTimeRef.current) : 0;
+            console.log(`[FRONT-METRICS] Seq: ${seq} | Latency: ${networkLatency}ms | Buffer: ${bufferSize} | Offset: ${Math.round(simTimeOffset/1000)}s | Routes: ${data.activeRoutes?.length || 0}`);
 
-            return Array.from(nextMap.values());
-          });
+            // Inicialización inmediata de la referencia para evitar saltos en el primer render
+            if (smoothSimTimeRef.current === 0) {
+              smoothSimTimeRef.current = data.currentEpochTime;
+              setSmoothSimTime(data.currentEpochTime);
+            }
+          }
 
           setMeta(prev => ({ ...prev, status: data.status }))
 
@@ -1002,9 +1026,3 @@ export const useControlTowerController = () => {
     cancelFlight,
   };
 };
-
-
-
-
-
-

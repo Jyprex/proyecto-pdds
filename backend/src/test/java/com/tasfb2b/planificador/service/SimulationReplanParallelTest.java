@@ -57,7 +57,7 @@ class SimulationReplanParallelTest {
     @Mock SuperLotService superLotService;
     @Mock SimulationProgressHolder progressHolder;
     @Mock EnvioService envioService;
-    @Mock SimpMessagingTemplate messagingTemplate;
+    @Mock SimulationWsPublisher wsPublisher;
 
     /**
      * Construye un SimulationService con los mocks y un executor configurable.
@@ -66,7 +66,7 @@ class SimulationReplanParallelTest {
     private SimulationService buildService(Executor exec) {
         return new SimulationService(
                 simulator, alnsPlanner, airportRepo, superLotService,
-                progressHolder, envioService, messagingTemplate, exec);
+                progressHolder, envioService, wsPublisher, exec);
     }
 
     /**

@@ -44,35 +44,32 @@ public class SimulationWsPublisher {
 
     @Scheduled(fixedDelayString = "${tasf.sim.stream.intervalMs:500}")
     public void publishAllSessions() {
-        // Nota: el holder no expone el map; se publica solo sesiones activas via una lista snapshot.
-        // Para mantener cambios minimos, se usa reflection-free: se agrego getAllSessionIds() en holder.
         for (String sessionId : progressHolder.getAllSessionIds()) {
             SimulationSessionState session = progressHolder.get(sessionId);
-            if (session == null) {
-                continue;
-            }
+            if (session == null) continue;
 
             boolean isRunning = session.getStatus() == SimulationProgressHolder.Status.RUNNING;
             if (isRunning) {
-                publishOne(sessionId, session);
+                // Seguimos permitiendo el polling de KPIs globales/logs
+                pushImmediate(sessionId, session);
                 continue;
             }
 
-            // Publicar una ultima vez al terminar/fallar, y luego dejar de spamear.
             if (finalSentBySession.putIfAbsent(sessionId, true) == null) {
-                publishOne(sessionId, session);
+                pushImmediate(sessionId, session);
                 seqBySession.remove(sessionId);
                 lastEventIdxBySession.remove(sessionId);
             }
         }
     }
 
-    private void publishOne(String sessionId, SimulationSessionState session) {
+    /** Publicación inmediata bajo demanda (Direct Push) */
+    public void pushImmediate(String sessionId, SimulationSessionState session) {
+        long tStart = System.currentTimeMillis();
         long seq = seqBySession.merge(sessionId, 1L, Long::sum);
         int safeLimit = sanitizeLimit(routeLimit);
 
         SimulationMapSnapshotDTO map = buildMapSnapshot(session, safeLimit);
-        // Añadimos seq a headers via payload wrapper minimo
         messaging.convertAndSend(topic(sessionId, "snapshot"), new WsEnvelope<>(seq, map));
 
         SimulationKpiSnapshotDTO kpi = buildKpiSnapshot(session);
@@ -85,7 +82,11 @@ public class SimulationWsPublisher {
         }
         lastEventIdxBySession.put(sessionId, logSnapshot.size());
 
-        // La limpieza por sesion se maneja en publishAllSessions() al detectar fin.
+        long tEnd = System.currentTimeMillis();
+        int routesCount = (map.getActiveRoutes() != null) ? map.getActiveRoutes().size() : 0;
+        
+        System.out.printf("[PUBLISH] snapshotTime: %s | generatedAt: %d | publishedAt: %d | publishDelayMs: %d | Routes: %d%n", 
+                        map.getSimulatedTime(), tStart, tEnd, (tEnd - tStart), routesCount);
     }
 
     private String topic(String sessionId, String channel) {

@@ -62,7 +62,7 @@ public class SimulationService {
         private final SuperLotService superLotService;
         private final SimulationProgressHolder progressHolder;
         private final EnvioService envioService;
-        private final SimpMessagingTemplate messagingTemplate;
+        private final SimulationWsPublisher wsPublisher;
 
         /** Pool dedicado para replans ALNS paralelos del modo colapso (ver PLAN_PERF_COLAPSO.md). */
         @Qualifier("replanExecutor")
@@ -170,20 +170,14 @@ public class SimulationService {
 
                         progressHolder.markDone(sessionId);
                         
-                        // Enviar mensaje final de completado
-                        messagingTemplate.convertAndSend(
-                            "/topic/sim/" + sessionId + "/kpi", 
-                            new WsEnvelope<>(System.currentTimeMillis(), session)
-                        );
+                        // Enviar mensaje final de completado usando el publisher
+                        wsPublisher.pushImmediate(sessionId, session);
 
                 } catch (Exception ex) {
                         log.error("Simulation failed", ex);
                         progressHolder.markFailed(sessionId, ex.getMessage());
-                        // Enviar mensaje final de error
-                        messagingTemplate.convertAndSend(
-                            "/topic/sim/" + sessionId + "/kpi", 
-                            new WsEnvelope<>(System.currentTimeMillis(), session)
-                        );
+                        // Enviar mensaje final de error usando el publisher
+                        wsPublisher.pushImmediate(sessionId, session);
                 }
         }
 
@@ -252,33 +246,27 @@ public class SimulationService {
 
                                 lotsDelDia.removeAll(lotesVentana);
 
-                                // Ejecutar ALNS solo sobre los lotes de esta ventana
-                                long tPlanner0 = System.nanoTime();
+                                // ── INSTRUMENTACIÓN DE INICIO DE CICLO ──
+                                long tCycleStart = System.nanoTime();
+                                
+                                // Ejecutar ALNS
+                                long tPlannerStart = System.nanoTime();
                                 Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS);
-                                long plannerNanos = System.nanoTime() - tPlanner0;
-
-                                // Colapso es INFORMATIVO a partir de PLAN_COLAPSO_INFORMATIVO.md:
-                                // la simulación ya NO aborta por SLA breach del plan.
-                                // La terminación se decide al fin de cada día vía
-                                // checkEndCondition() según session.getEndCondition().
+                                long tPlannerEnd = System.nanoTime();
 
                                 if (session.isCollapseMode()) {
-                                        int rescued = applyCollapseInjections(
-                                                        session, sol.getRoutes(), algorithm);
-                                        if (rescued > 0) {
-                                                session.setRescuedFlights(
-                                                                session.getRescuedFlights() + rescued);
-                                        }
+                                        applyCollapseInjections(session, sol.getRoutes(), algorithm);
                                 }
 
                                 // Simulación de eventos incremental
                                 masterSolution.getRoutes().addAll(sol.getRoutes());
 
-                                // Avanzar estado global usando todas las rutas conocidas hasta ahora
+                                // Avanzar estado global (Vuelos y Aeropuertos)
+                                long tAdvanceStart = System.nanoTime();
                                 simulator.advanceTo(globalState, masterSolution.getRoutes(), airportMap, currentTime, nextSimTime);
+                                long tAdvanceEnd = System.nanoTime();
 
-                                // Añadir a en tránsito SOLO las rutas que tengan capacidad asignada (>0)
-                                // para no animar vuelos fantasmas bloqueados.
+                                // Preparar inTransitRoutes
                                 inTransitRoutes.addAll(sol.getRoutes().stream()
                                         .filter(r -> r.getCapacidadAsignada() > 0)
                                         .collect(Collectors.toList()));
@@ -288,84 +276,59 @@ public class SimulationService {
                                         .stream()
                                         .collect(Collectors.toList());
 
-                                // Limpiar rutas que ya terminaron de volar hace más de un ciclo
                                 inTransitRoutes.removeIf(r -> r.getArrivalTime() <= nextSimTime - (SA_MINUTES * 60_000L));
 
-                                // Event log sintético (solo en ciclos clave)
-                                if (cycle == 0) {
-                                        session.getEventLog().add(String.format(
-                                                "[00:00] Iniciando operaciones del Día %d con %d maletas en primer batch.",
-                                                day + 1, lotesVentana.size()));
-                                } else if (cycle == CYCLES_PER_DAY / 2) {
-                                        session.getEventLog().add(String.format(
-                                                "[12:00] Reporte de medio día."));
-                                }
-                                if (globalState.isColapsado() && cycle == (int)(CYCLES_PER_DAY * 0.75)) {
-                                        session.getEventLog().add(String.format(
-                                                "[18:00] ¡ALERTA! Posible colapso detectado en la red."));
-                                }
-                                if (cycle == (int)(CYCLES_PER_DAY * 5.0 / 6)) {
-                                        int entregadas = globalState.getMaletasEntregadas();
-                                        if (entregadas > 0) {
-                                                session.getEventLog().add(String.format(
-                                                        "[20:00] %d maletas entregadas a clientes — almacenes liberados.",
-                                                        entregadas));
-                                        }
-                                }
-
-                                // Lotes que no pudieron ser enrutados completamente se devuelven para el siguiente ciclo.
-                                // Si llegamos al final del día, los pasamos a `pendientes` para el día siguiente.
-                                List<SuperLot> remanentes = sol.getRoutes().stream()
-                                    .filter(r -> r.excedeCapacidad() || r.isNoAtendido())
-                                    .map(r -> {
-                                        SuperLot nextLot = elevateToMaxPriority(r.getLot(), nextSimTime);
-                                        nextLot.setTotalMaletas(r.getDemandaNoAtendida());
-                                        return nextLot;
-                                    })
-                                    .collect(Collectors.toList());
-
-                                // FASE 2: Fusión de Lotes Arrastrados (Mega-Lots)
-                                remanentes = superLotService.mergeLots(remanentes);
-
-                                if (cycle < CYCLES_PER_DAY - 1) {
-                                    lotsDelDia.addAll(remanentes); // Reintentar en siguiente batch hoy
-                                } else {
-                                    // Fin del día. Estos pasan a ser la semilla de pendientes de mañana.
-                                    pendientes = remanentes;
-                                }
-
-                                // Metrics for frontend update (Snapshot)
-                                // En este momento del ciclo reportaremos el progreso
-                                double slaPercent = 100; // placeholder until day ends
-
-                                long tUpdate0 = System.nanoTime();
+                                // Generar Snapshot
+                                long tSnapshotStart = System.nanoTime();
+                                double slaPercent = 100; // placeholder
                                 updateProgress(session, day + 1, dias, currentPercent,
                                                simulatedTimeStr, slaPercent, globalState, airportMap,
                                                inTransitRoutes, nextSimTime, currentTime);
-                                long tUpdate1 = System.nanoTime();
+                                long tSnapshotEnd = System.nanoTime();
 
-                                // LOG DE PERFILADO ESTRUCTURADO
-                                double plannerMs = plannerNanos / 1_000_000.0;
-                                double buildMs   = globalState.getBuildEventsTimeNanos() / 1_000_000.0;
-                                double applyMs   = globalState.getApplyEventsTimeNanos() / 1_000_000.0;
-                                double updateMs  = (tUpdate1 - tUpdate0) / 1_000_000.0;
+                                // ── PUBLICACIÓN INMEDIATA ──
+                                wsPublisher.pushImmediate(session.getSessionId(), session);
 
-                                log.info("[PROFILER] Session: {} | Day: {} | Cycle: {} | " +
-                                         "Planner: {}ms | BuildEvents: {}ms | RunUntil_Apply: {}ms | " +
-                                         "UpdateProgress: {}ms | Lots: {} | Routes: {} | " +
-                                         "Events_Total: {} | Events_Applied: {}",
-                                         session.getSessionId(), day + 1, cycle,
-                                         String.format("%.2f", plannerMs),
-                                         String.format("%.2f", buildMs),
-                                         String.format("%.2f", applyMs),
-                                         String.format("%.2f", updateMs),
-                                         lotesVentana.size(),
-                                         masterSolution.getRoutes().size(),
-                                         globalState.getTotalEventsCount(),
-                                         globalState.getAppliedEventsCount());
+                                long tCycleEnd = System.nanoTime();
+                                long workTimeMs = (tCycleEnd - tCycleStart) / 1_000_000;
+
+                                // ── MÉTRICAS DE SISTEMA (GC y Memoria) ──
+                                var memoryBean = java.lang.management.ManagementFactory.getMemoryMXBean();
+                                var heapUsage = memoryBean.getHeapMemoryUsage();
+                                var gcBeans = java.lang.management.ManagementFactory.getGarbageCollectorMXBeans();
+                                long gcCount = 0;
+                                long gcTime = 0;
+                                for (var gc : gcBeans) {
+                                    gcCount += gc.getCollectionCount();
+                                    gcTime += gc.getCollectionTime();
+                                }
+
+                                // ── CÁLCULO DE COMPENSACIÓN Y DERIVA ──
+                                // Ajustamos el sleep restando el tiempo de trabajo real (ALNS + Advance + Snapshot)
+                                long adjustedSleep = Math.max(0, sleepPerCycleMs - workTimeMs);
+                                long expectedDuration = sleepPerCycleMs;
+                                
+                                log.info("[METRICS] Session: {} | Time: {} | Work: {}ms | Expected: {}ms | Sleep: {}ms | Routes: {} | Heap: {}MB | GC: {}/{}ms",
+                                         session.getSessionId(), simulatedTimeStr,
+                                         workTimeMs, expectedDuration, adjustedSleep,
+                                         inTransitRoutes.size(),
+                                         heapUsage.getUsed() / (1024 * 1024),
+                                         gcCount, gcTime);
 
                                 try {
-                                        Thread.sleep(sleepPerCycleMs);
+                                        // Aplicamos el sleep compensado para mantener el ritmo exacto
+                                        long tSleepStart = System.currentTimeMillis();
+                                        if (adjustedSleep > 0) {
+                                            Thread.sleep(adjustedSleep);
+                                        }
+                                        long actualSleep = System.currentTimeMillis() - tSleepStart;
+                                        long actualCycleDuration = workTimeMs + actualSleep;
+                                        long drift = actualCycleDuration - expectedDuration;
+
+                                        if (Math.abs(drift) > 50) {
+                                            log.warn("[DRIFT-ALERT] Time: {} | Drift: {}ms | ActualDuration: {}ms", 
+                                                    simulatedTimeStr, drift, actualCycleDuration);
+                                        }
                                 } catch (InterruptedException e) {
                                         Thread.currentThread().interrupt();
                                         return history; // abortar si el hilo fue interrumpido
@@ -584,8 +547,13 @@ public class SimulationService {
                 if (minutes < 1) minutes = 1;
                 minutes = Math.max(1, Math.min(minutes, 90));
                 long totalCycles = (long) totalDays * CYCLES_PER_DAY;
+                
+                // Sincronización exacta con el tiempo de playback solicitado por el usuario
                 long ms = (long) minutes * 60_000L / totalCycles;
-                return Math.max(250L, ms);
+
+                // Mantenemos un mínimo de 100ms para estabilidad del hilo, 
+                // pero respetamos el tiempo teórico si es mayor.
+                return Math.max(100L, ms);
         }
 
         // ── INYECCIÓN DE COLAPSO (PARALELA) ─────────────────────────────────

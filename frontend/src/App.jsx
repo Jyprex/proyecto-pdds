@@ -60,6 +60,7 @@ const App = () => {
     sessionId,
     isFluidMode,
     setIsFluidMode,
+    isBuffering,
     targetPlaybackMinutes,
     setTargetPlaybackMinutes,
     setSelectedAircraftId,
