@@ -32,6 +32,9 @@ public class SimulationDayReport {
     /** Maletas efectivamente asignadas a vuelos (capacidadAsignada total). */
     private int malatetasAtendidas;
 
+    /** Maletas entregadas al cliente final (recogidas del almacén destino). */
+    private int maletasEntregadas;
+
     /**
      * Lotes no atendidos o con exceso de capacidad que no pudieron ser
      * procesados completamente en este día. Se pasan al día N+1 con prioridad máxima.

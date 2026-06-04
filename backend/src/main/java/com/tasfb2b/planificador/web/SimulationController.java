@@ -8,9 +8,11 @@ package com.tasfb2b.planificador.web;
  */
 
 import com.tasfb2b.planificador.service.SimulationExcelService;
+import com.tasfb2b.planificador.service.FlightCancellationService;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import com.tasfb2b.planificador.service.SimulationProgressHolder;
 import com.tasfb2b.planificador.service.SimulationService;
+import com.tasfb2b.planificador.service.SimulationWsPublisher;
 import com.tasfb2b.envio.service.EnvioService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -45,13 +47,16 @@ public class SimulationController {
     private final SimulationProgressHolder   progressHolder;
     private final SimulationExcelService     excelService;
     private final EnvioService               envioService;
+    private final FlightCancellationService  flightCancellationService;
+    private final SimulationWsPublisher      wsPublisher;
 
     @PostMapping("/run/{dias}")
     public ResponseEntity<Map<String, String>> startSimulation(
             @PathVariable(required = false) Integer dias,
             @RequestParam(required = false, defaultValue = "HGA") String algorithm,
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
+            @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
+            @RequestParam(required = false) String preCancelledFlightIds) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         String sessionId = UUID.randomUUID().toString();
@@ -64,7 +69,7 @@ public class SimulationController {
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setAlgorithm(algorithm);
         
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -81,10 +86,11 @@ public class SimulationController {
             @RequestParam(required = false, defaultValue = "HGA") String algorithm,
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false, defaultValue = "5") int stressFactor,
-            @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
+            @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
+            @RequestParam(required = false) String preCancelledFlightIds) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
-        int clampedStress = Math.max(1, Math.min(10, stressFactor)); // clamp 1–10
+        double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); // clamp 1–10
         String sessionId = UUID.randomUUID().toString();
 
         java.time.LocalDate fechaInicio = null;
@@ -97,7 +103,7 @@ public class SimulationController {
         session.setStressFactor(clampedStress);
         session.setAlgorithm(algorithm);
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -326,6 +332,45 @@ public class SimulationController {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Cancela manualmente un vuelo durante una simulación en curso.
+     * Dispara replanificación ALNS automática si hay sesión activa.
+     */
+    @PostMapping("/cancel-flight/{vueloId}")
+    public ResponseEntity<Map<String, String>> cancelFlight(
+            @PathVariable Long vueloId,
+            @RequestParam(required = false) String sessionId) {
+        return handleCancelFlight(vueloId, sessionId);
+    }
+
+    @PostMapping("/cancel-flight/{sessionId}/{vueloId}")
+    public ResponseEntity<Map<String, String>> cancelFlightPath(
+            @PathVariable String sessionId,
+            @PathVariable Long vueloId) {
+        return handleCancelFlight(vueloId, sessionId);
+    }
+
+    private ResponseEntity<Map<String, String>> handleCancelFlight(Long vueloId, String sessionId) {
+        try {
+            flightCancellationService.cancelarVuelo(vueloId, sessionId);
+            if (sessionId != null) {
+                SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
+                if (session != null) {
+                    wsPublisher.pushImmediate(sessionId, session);
+                }
+            }
+            return ResponseEntity.ok(Map.of(
+                    "status", "ok",
+                    "message", "Vuelo " + vueloId + " cancelado exitosamente"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "status", "error",
+                    "message", e.getMessage()
+            ));
+        }
     }
 }
 

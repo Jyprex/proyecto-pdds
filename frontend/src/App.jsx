@@ -211,13 +211,14 @@ const App = () => {
             liveStatus={liveStatus}
             onStartDayToDay={startDayToDaySimulation}
             onReset={resetSimulation}
+            sessionId={sessionId}
           />
           <PeriodSimConfig
             isOpen={isScenarioConfigOpen && activeTab === "periodo"}
             onClose={toggleScenarioConfig}
             selectedAlgorithm={selectedAlgorithm}
             onAlgorithmChange={setSelectedAlgorithm}
-            onStart={(dias, startDate) => startDayToDaySimulation(startDate, dias)}
+            onStart={(dias, startDate, preCancelledIds) => startDayToDaySimulation(startDate, dias, preCancelledIds)}
             liveStatus={liveStatus}
             simState={simState}
             sessionId={sessionId}
@@ -232,6 +233,8 @@ const App = () => {
             onAlgorithmChange={setSelectedAlgorithm}
             onStart={startCollapseSimulation}
             liveStatus={liveStatus}
+            sessionId={sessionId}
+            simState={simState}
           />
 
           <div className="ct-floating-rail ct-floating-rail--left">

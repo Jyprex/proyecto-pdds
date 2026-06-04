@@ -16,11 +16,24 @@ import java.util.*;
  *
  * <p>saturacionAeropuerto = suma de maletas en exceso ACTUALES
  * (no acumulativo histórico).
+ *
+ * <p>Mejoras V2 integradas:
+ * <ul>
+ *   <li>Cola FIFO por aeropuerto (carry-over cuando almacén está lleno)</li>
+ *   <li>Hard Constraint tracking: maletas realmente embarcadas por (lote, vuelo)</li>
+ *   <li>Evento STORAGE_RELEASE (permanencia 24h en destino)</li>
+ *   <li>Evento FLIGHT_CANCELLED / REPLAN_TRIGGER</li>
+ *   <li>Métricas de profiling (buildEventsTimeNanos, applyEventsTimeNanos)</li>
+ * </ul>
  */
 @Getter
 public class SimulationState {
 
     private long currentTime;
+
+    public void setCurrentTime(long currentTime) {
+        this.currentTime = currentTime;
+    }
 
     /** Carga actual (maletas almacenadas) por aeropuerto ICAO. */
     private final Map<String, Integer> cargaAeropuerto = new HashMap<>();
@@ -28,14 +41,65 @@ public class SimulationState {
     /** Capacidad disponible restante por vuelo (decrece en DEPARTURE). */
     private final Map<Long, Integer> capacidadVuelo = new HashMap<>();
 
+    /** Hard Constraint: maletas realmente embarcadas por (lote, vuelo). */
+    private final Map<String, Integer> maletasEmbarcadas = new HashMap<>();
+
     /** Exceso actual de maletas sobre capacidad (suma de todos los aeropuertos saturados). */
     private int saturacionAeropuerto = 0;
 
     /** true si ALGÚN aeropuerto supera su storageCapacity en este instante. */
     private boolean colapso = false;
 
+    /**
+     * Acumulado de maletas entregadas al cliente (eventos BAGGAGE_PICKUP / STORAGE_RELEASE).
+     * Se usa para poblar SimulationDayReport.maletasEntregadas.
+     */
+    private int maletasEntregadas = 0;
+
+    /** Cantidad de maletas que están a la espera de replanificación por cancelación. */
+    private int maletasEnEsperaReplan = 0;
+
+    /** Vuelos cancelados procesados en la simulación. */
+    private final Set<Long> vuelosCancelados = new HashSet<>();
+
+    /** Cantidad de eventos totales generados para el periodo. */
+    private int totalEventsCount = 0;
+
+    /** Cantidad de eventos efectivamente aplicados (dentro del tiempo). */
+    private int appliedEventsCount = 0;
+
+    /** Tiempo consumido en construir eventos (ns). */
+    @lombok.Setter
+    private long buildEventsTimeNanos = 0;
+
+    /** Tiempo consumido en aplicar eventos (ns). */
+    @lombok.Setter
+    private long applyEventsTimeNanos = 0;
+
+    public void setEventCounts(int total, int applied) {
+        this.totalEventsCount = total;
+        this.appliedEventsCount = applied;
+    }
+
     /** Mapa de aeropuertos, necesario para reevaluar saturación en DEPARTURE. */
     private Map<String, Aeropuerto> airportMap;
+
+    // ── COLA DE ESPERA (CARRY-OVER) ────────────────────────
+    /**
+     * Registro de maletas en espera por capacidad de almacén.
+     * @param lotId       ID del SuperLot al que pertenece
+     * @param cantidad    número de maletas pendientes
+     * @param enqueueTime epoch ms cuando se encoló (para prioridad FIFO)
+     */
+    public record PendingBag(int lotId, int cantidad, long enqueueTime) {}
+
+    /** Cola FIFO de maletas que no pudieron entrar al almacén por capacidad. */
+    @Getter
+    private final Map<String, ArrayDeque<PendingBag>> colaEspera = new HashMap<>();
+
+    /** Total global de maletas en cola de espera (para métricas). */
+    @Getter
+    private int maletasEnCola = 0;
 
     public SimulationState(List<Aeropuerto> airports,
                            List<Vuelo> vuelos,
@@ -51,6 +115,16 @@ public class SimulationState {
 
         vuelos.forEach(v ->
                 capacidadVuelo.put(v.getId(), v.getCapacidadTotal()));
+    }
+
+    /** Registra nuevos vuelos en el estado para trackear su capacidad. */
+    public void registerFlights(List<Vuelo> vuelos) {
+        if (vuelos == null) return;
+        vuelos.forEach(v -> {
+            if (!capacidadVuelo.containsKey(v.getId())) {
+                capacidadVuelo.put(v.getId(), v.getCapacidadTotal());
+            }
+        });
     }
 
     // ─────────────────────────────────────────────
@@ -69,36 +143,114 @@ public class SimulationState {
             case FLIGHT_DEPARTURE -> {
                 Vuelo v = event.getVuelo();
 
-                // Descontar capacidad usada en este vuelo
+                // Hard Constraint: descontar capacidad real, no planificada
                 int remaining = capacidadVuelo.getOrDefault(v.getId(), v.getCapacidadTotal());
-                capacidadVuelo.put(v.getId(),
-                        Math.max(0, remaining - event.getLoad()));
+                int actualLoad = Math.min(event.getLoad(), remaining);
+
+                maletasEmbarcadas.put(v.getId() + "-" + event.getLot().getId(), actualLoad);
+                capacidadVuelo.put(v.getId(), remaining - actualLoad);
 
                 // Las maletas SALEN del aeropuerto origen → reducir carga
                 String icaoOrigen = v.getOrigen().getIcaoCode();
                 int cargaActual = cargaAeropuerto.getOrDefault(icaoOrigen, 0);
-                int nuevaCarga = Math.max(0, cargaActual - event.getLoad());
+                int nuevaCarga = Math.max(0, cargaActual - actualLoad);
                 cargaAeropuerto.put(icaoOrigen, nuevaCarga);
 
                 // Re-evaluar saturación global tras el egreso
                 recalcularSaturacion(airports);
+
+                // Drenar cola de espera si se liberó espacio
+                drainCola(icaoOrigen, airports);
             }
 
             case FLIGHT_ARRIVAL -> {
                 Vuelo v = event.getVuelo();
+                int actualLoad = maletasEmbarcadas.getOrDefault(
+                        v.getId() + "-" + event.getLot().getId(), event.getLoad());
+
                 String icao = v.getDestino().getIcaoCode();
                 Aeropuerto ap = airports.get(icao);
-
                 int current = cargaAeropuerto.getOrDefault(icao, 0);
-                int updated = current + event.getLoad();
-                cargaAeropuerto.put(icao, updated);
 
-                // Re-evaluar saturación global tras el ingreso
+                // Cola de espera: si el almacén está lleno, encolar excedente
+                if (ap != null && current + actualLoad > ap.getStorageCapacity()) {
+                    int espacioLibre = Math.max(0, ap.getStorageCapacity() - current);
+                    int excedente = actualLoad - espacioLibre;
+
+                    if (espacioLibre > 0) {
+                        cargaAeropuerto.put(icao, current + espacioLibre);
+                    }
+                    if (excedente > 0) {
+                        colaEspera.computeIfAbsent(icao, k -> new ArrayDeque<>())
+                                .add(new PendingBag(event.getLot().getId(), excedente, event.getTime()));
+                        maletasEnCola += excedente;
+                    }
+                } else {
+                    cargaAeropuerto.put(icao, current + actualLoad);
+                }
+
                 recalcularSaturacion(airports);
             }
 
             case LOT_ARRIVAL -> {
-                // solo informativo
+                String icao = event.getLot().getOrigenIcao();
+                Aeropuerto ap = airports.get(icao);
+                int actualLoad = event.getLoad();
+                int current = cargaAeropuerto.getOrDefault(icao, 0);
+
+                if (ap != null && current + actualLoad > ap.getStorageCapacity()) {
+                    int espacioLibre = Math.max(0, ap.getStorageCapacity() - current);
+                    int excedente = actualLoad - espacioLibre;
+
+                    if (espacioLibre > 0) {
+                        cargaAeropuerto.put(icao, current + espacioLibre);
+                    }
+                    if (excedente > 0) {
+                        colaEspera.computeIfAbsent(icao, k -> new ArrayDeque<>())
+                                .add(new PendingBag(event.getLot().getId(), excedente, event.getTime()));
+                        maletasEnCola += excedente;
+                    }
+                } else {
+                    cargaAeropuerto.put(icao, current + actualLoad);
+                }
+                recalcularSaturacion(airports);
+            }
+
+            case BAGGAGE_PICKUP -> {
+                Vuelo v = event.getVuelo();
+                int actualLoad = maletasEmbarcadas.getOrDefault(
+                        v.getId() + "-" + event.getLot().getId(), event.getLoad());
+
+                String icaoDestino = v.getDestino().getIcaoCode();
+                int cargaActual = cargaAeropuerto.getOrDefault(icaoDestino, 0);
+                int nuevaCarga = Math.max(0, cargaActual - actualLoad);
+                cargaAeropuerto.put(icaoDestino, nuevaCarga);
+                maletasEntregadas += actualLoad;
+                recalcularSaturacion(airports);
+                drainCola(icaoDestino, airports);
+            }
+
+            case STORAGE_RELEASE -> {
+                Vuelo v = event.getVuelo();
+                int actualLoad = maletasEmbarcadas.getOrDefault(
+                        v.getId() + "-" + event.getLot().getId(), event.getLoad());
+
+                String icaoDestino = v.getDestino().getIcaoCode();
+                int cargaActual = cargaAeropuerto.getOrDefault(icaoDestino, 0);
+                int nuevaCarga = Math.max(0, cargaActual - actualLoad);
+                cargaAeropuerto.put(icaoDestino, nuevaCarga);
+                maletasEntregadas += actualLoad;
+                recalcularSaturacion(airports);
+                drainCola(icaoDestino, airports);
+            }
+
+            case FLIGHT_CANCELLED -> {
+                vuelosCancelados.add(event.getVuelo().getId());
+                maletasEnEsperaReplan += event.getLoad();
+            }
+
+            case REPLAN_TRIGGER -> {
+                maletasEnEsperaReplan = Math.max(0, maletasEnEsperaReplan - event.getLoad());
             }
         }
     }
@@ -124,6 +276,45 @@ public class SimulationState {
         this.saturacionAeropuerto = totalExceso;
         // Colapso reversible: se activa Y desactiva según la saturación actual
         this.colapso = totalExceso > 0;
+    }
+
+    /**
+     * Drena la cola de espera de un aeropuerto, moviendo maletas encoladas
+     * al almacén mientras haya espacio disponible. Llamar después de cada
+     * evento que libere espacio (DEPARTURE, STORAGE_RELEASE, BAGGAGE_PICKUP).
+     */
+    private void drainCola(String icao, Map<String, Aeropuerto> airports) {
+        ArrayDeque<PendingBag> cola = colaEspera.get(icao);
+        if (cola == null || cola.isEmpty()) return;
+
+        Aeropuerto ap = airports.get(icao);
+        if (ap == null) return;
+
+        int cargaActual = cargaAeropuerto.getOrDefault(icao, 0);
+        int espacioLibre = ap.getStorageCapacity() - cargaActual;
+
+        while (!cola.isEmpty() && espacioLibre > 0) {
+            PendingBag pb = cola.peek();
+            if (pb.cantidad() <= espacioLibre) {
+                cola.poll();
+                cargaAeropuerto.put(icao, cargaAeropuerto.getOrDefault(icao, 0) + pb.cantidad());
+                espacioLibre -= pb.cantidad();
+                maletasEnCola -= pb.cantidad();
+            } else {
+                // Mover parcial: llenar el espacio y dejar el resto en cola
+                cola.poll();
+                cargaAeropuerto.put(icao, ap.getStorageCapacity());
+                int restante = pb.cantidad() - espacioLibre;
+                cola.addFirst(new PendingBag(pb.lotId(), restante, pb.enqueueTime()));
+                maletasEnCola -= espacioLibre;
+                espacioLibre = 0;
+            }
+        }
+
+        // Limpiar entrada del mapa si la cola quedó vacía
+        if (cola.isEmpty()) colaEspera.remove(icao);
+
+        recalcularSaturacion(airports);
     }
 
     public boolean isColapsado() {

@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import FlightCancellationPanel from './FlightCancellationPanel'
 
 
 // Fecha mínima = hoy, máxima = 31 dic 2026
@@ -7,7 +8,7 @@ function getTodayStr() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
-function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChange, onStart, liveStatus }) {
+function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChange, onStart, liveStatus, sessionId, simState }) {
   const [activeSection, setActiveSection] = useState('config')
   const [isStarting, setIsStarting]       = useState(false)
   const [startDate, setStartDate]         = useState('2026-04-09')
@@ -334,6 +335,12 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
                 ))}
               </div>
             )}
+
+            {/* Panel de cancelación manual de vuelos (solo visible durante simulación) */}
+            <FlightCancellationPanel
+              sessionId={sessionId}
+              isRunning={simState === 'running'}
+            />
           </div>
         )}
 

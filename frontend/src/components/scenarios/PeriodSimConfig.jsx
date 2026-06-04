@@ -34,6 +34,9 @@ function PeriodSimConfig({
   const [month,      setMonth]      = useState(1);
   const [year,       setYear]       = useState(2026);
   const [isStarting, setIsStarting] = useState(false);
+  const [preCancelledFlights, setPreCancelledFlights] = useState([]);
+  const [tempFlightId, setTempFlightId] = useState("");
+  const [tempDay, setTempDay] = useState("all");
 
   const daysInSel = month === 2 && year % 4 === 0 ? 29 : DAYS_IN_MONTH[month - 1];
   const startDate = `${year}-${pad(month)}-${pad(day)}`;
@@ -98,7 +101,7 @@ function PeriodSimConfig({
   const handleStart = async () => {
     if (!onStart) return;
     setIsStarting(true);
-    await onStart(DIAS_SIMULACION, startDate);
+    await onStart(DIAS_SIMULACION, startDate, preCancelledFlights);
     setIsStarting(false);
   };
 
@@ -212,6 +215,171 @@ function PeriodSimConfig({
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Configurar pre-cancelaciones */}
+            <div className="ct-config-section" style={{
+              background: 'rgba(15, 23, 42, 0.85)',
+              borderRadius: '12px',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              padding: '14px 16px',
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                marginBottom: '10px',
+                fontSize: '13px',
+                fontWeight: 600,
+                color: '#818cf8',
+                letterSpacing: '0.5px',
+              }}>
+                ⚙️ CANCELACIONES PROGRAMADAS (PREVIAS)
+              </div>
+              <p style={{ fontSize: '11px', color: '#64748b', margin: '0 0 12px 0', lineHeight: '1.4' }}>
+                Programa la cancelación de vuelos para un día específico o para todo el periodo.
+              </p>
+
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <input
+                  type="number"
+                  placeholder="ID de vuelo"
+                  value={tempFlightId}
+                  onChange={(e) => setTempFlightId(e.target.value)}
+                  style={{
+                    flex: '1.5',
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    border: '1px solid rgba(100, 116, 139, 0.4)',
+                    borderRadius: '8px',
+                    padding: '8px 10px',
+                    color: '#e2e8f0',
+                    fontSize: '12px',
+                    outline: 'none',
+                    minWidth: '70px',
+                  }}
+                />
+                <select
+                  value={tempDay}
+                  onChange={(e) => setTempDay(e.target.value)}
+                  style={{
+                    flex: '2',
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    border: '1px solid rgba(100, 116, 139, 0.4)',
+                    borderRadius: '8px',
+                    padding: '8px 10px',
+                    color: '#e2e8f0',
+                    fontSize: '12px',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="all">Todos los días</option>
+                  <option value="1">Día 1</option>
+                  <option value="2">Día 2</option>
+                  <option value="3">Día 3</option>
+                  <option value="4">Día 4</option>
+                  <option value="5">Día 5</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fId = tempFlightId.trim();
+                    if (!fId) return;
+                    const entry = tempDay === "all" ? fId : `${fId}:${tempDay}`;
+                    if (!preCancelledFlights.includes(entry)) {
+                      setPreCancelledFlights([...preCancelledFlights, entry]);
+                    }
+                    setTempFlightId("");
+                  }}
+                  disabled={!tempFlightId}
+                  style={{
+                    flex: '1',
+                    background: !tempFlightId
+                      ? 'rgba(100, 116, 139, 0.4)'
+                      : 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: !tempFlightId ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  ➕
+                </button>
+              </div>
+
+              {preCancelledFlights.length > 0 ? (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
+                    Vuelos programados para cancelar:
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {preCancelledFlights.map(entry => {
+                      const hasDay = entry.includes(":");
+                      const parts = entry.split(":");
+                      const fid = parts[0];
+                      const dayLabel = hasDay ? `Día ${parts[1]}` : "Todos";
+                      return (
+                        <div
+                          key={`pre-p-${entry}`}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            background: 'rgba(239, 68, 68, 0.15)',
+                            border: '1px solid rgba(239, 68, 68, 0.3)',
+                            borderRadius: '20px',
+                            padding: '4px 10px',
+                            fontSize: '11px',
+                            color: '#ef4444',
+                            fontWeight: 700,
+                          }}
+                        >
+                          <span>Vuelo {fid} ({dayLabel})</span>
+                          <button
+                            type="button"
+                            onClick={() => setPreCancelledFlights(preCancelledFlights.filter(e => e !== entry))}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              padding: 0,
+                              fontSize: '12px',
+                              lineHeight: 1,
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPreCancelledFlights([])}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#64748b',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      marginTop: '10px',
+                      padding: 0,
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    Limpiar lista
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize: '11px', color: '#64748b', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>
+                  Ningún vuelo programado.
+                </div>
+              )}
             </div>
 
             {/* Botón iniciar */}
@@ -414,7 +582,10 @@ function PeriodSimConfig({
                 </button>
               )}
               <button id="period-btn-new" type="button"
-                onClick={() => { onReset && onReset(); }}
+                onClick={() => {
+                  setPreCancelledFlights([]);
+                  if (onReset) onReset();
+                }}
                 style={{
                   padding: "10px 0", borderRadius: 8,
                   border: "1px solid rgba(10,60,110,0.2)",

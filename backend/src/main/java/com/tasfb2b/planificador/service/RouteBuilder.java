@@ -13,9 +13,15 @@ import java.util.*;
 public class RouteBuilder {
 
     private final NetworkAdapter network;
+    private final RoutePool routePool;
 
-    public RouteBuilder(NetworkAdapter network) {
+    public RouteBuilder(NetworkAdapter network, RoutePool routePool) {
         this.network = network;
+        this.routePool = routePool;
+    }
+
+    public RoutePool getRoutePool() {
+        return routePool;
     }
 
     public Route build(SuperLot lot,
@@ -34,15 +40,15 @@ public class RouteBuilder {
                 : network.findBestRoute(origen, destino, lot, capacidadVuelo);
 
         if (flights == null || flights.isEmpty()) {
-            return Route.builder()
-                    .lot(lot)
-                    .hops(List.of())
-                    .flights(List.of())
-                    .demandaTotal(lot.getTotalMaletas())
-                    .capacidadAsignada(0)
-                    .arrivalTime(Long.MAX_VALUE)
-                    .deadline(lot.getSla())
-                    .build();
+            Route empty = routePool.borrow();
+            empty.setLot(lot);
+            empty.setHops(List.of());
+            empty.setFlights(List.of());
+            empty.setDemandaTotal(lot.getTotalMaletas());
+            empty.setCapacidadAsignada(0);
+            empty.setArrivalTime(Long.MAX_VALUE);
+            empty.setDeadline(lot.getSla());
+            return empty;
         }
 
         // ─────────────────────────────────────────────
@@ -82,14 +88,13 @@ public class RouteBuilder {
         }
         hops.add(destino.getIcaoCode());
 
-        Route route = Route.builder()
-                .lot(lot)
-                .hops(hops)
-                .flights(flights)
-                .demandaTotal(lot.getTotalMaletas())
-                .capacidadAsignada(asignado)
-                .deadline(lot.getSla())
-                .build();
+        Route route = routePool.borrow();
+        route.setLot(lot);
+        route.setHops(hops);
+        route.setFlights(flights);
+        route.setDemandaTotal(lot.getTotalMaletas());
+        route.setCapacidadAsignada(asignado);
+        route.setDeadline(lot.getSla());
 
         route.calcularArrivalTime();
 
@@ -128,14 +133,13 @@ public class RouteBuilder {
                 .min()
                 .orElse(0);
 
-        Route backup = Route.builder()
-                .lot(lot)
-                .hops(hops)
-                .flights(flights)
-                .demandaTotal(lot.getTotalMaletas())
-                .capacidadAsignada(Math.min(lot.getTotalMaletas(), capacidadBackup))
-                .deadline(lot.getSla())
-                .build();
+        Route backup = routePool.borrow();
+        backup.setLot(lot);
+        backup.setHops(hops);
+        backup.setFlights(flights);
+        backup.setDemandaTotal(lot.getTotalMaletas());
+        backup.setCapacidadAsignada(Math.min(lot.getTotalMaletas(), capacidadBackup));
+        backup.setDeadline(lot.getSla());
 
         backup.calcularArrivalTime();
         return backup;

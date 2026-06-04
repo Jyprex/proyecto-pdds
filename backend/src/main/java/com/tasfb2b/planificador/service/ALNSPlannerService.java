@@ -160,6 +160,7 @@ public class ALNSPlannerService {
             int q = Math.max(1, (int) (current.size() * DESTROY_FRACTION));
 
             List<Route> candidate = new ArrayList<>(current);
+            RoutePool pool = routeBuilder.getRoutePool();
 
             DestroyOperator dOp;
             if (primeraIteracion) {
@@ -190,6 +191,8 @@ public class ALNSPlannerService {
                 reward         = AdaptiveWeightTracker.REWARD_ACCEPT;
             } else {
                 reward = AdaptiveWeightTracker.REWARD_REJECT;
+                // Reciclar candidato descartado al pool
+                pool.recycleAll(candidate);
             }
 
             if (candidateFitness > bestFitness) {

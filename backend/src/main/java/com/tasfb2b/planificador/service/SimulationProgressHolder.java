@@ -1,5 +1,6 @@
 package com.tasfb2b.planificador.service;
 
+import com.tasfb2b.planificador.domain.CollapseEndCondition;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import lombok.Data;
 import org.springframework.stereotype.Component;
@@ -29,6 +30,9 @@ public class SimulationProgressHolder {
 
     public enum Status { RUNNING, DONE, FAILED }
 
+    /** Snapshot inmutable de los datos del mapa para evitar condiciones de carrera con el WebSocket publisher. */
+    public record MapSnapshot(Long epoch, String clock, List<Map<String, Object>> routes) {}
+
     /**
      * Estado completo de una sesión de simulación.
      * Los campos son actualizados directamente por SimulationService.
@@ -37,6 +41,9 @@ public class SimulationProgressHolder {
     public static class SimulationSessionState {
         private String sessionId;
         private Status status = Status.RUNNING;
+
+        /** Contenedor inmutable para sincronización con el WebSocket Publisher */
+        private volatile MapSnapshot mapSnapshot;
 
         private int percent = 0;
         private int currentDay = 0;
@@ -81,9 +88,21 @@ public class SimulationProgressHolder {
         private boolean isCollapseMode;
         private int rescuedFlights;
         /** Factor de estrés operativo (1–10). Determina el % de rutas canceladas: stress × 3%. */
-        private int stressFactor = 5;
+        private double stressFactor = 5.0;
 
-        /** Diccionario general de resultados por algortimo */
+        /** Condición de terminación explícita del modo colapso. Default: NONE. */
+        private CollapseEndCondition endCondition = CollapseEndCondition.NONE;
+
+        /** Contador de días consecutivos con SLA por debajo del umbral. */
+        private int slaStreak = 0;
+
+        /** Día (1-based) en que se cumplió la condición de terminación, null si no terminó por condición. */
+        private Integer collapseDayIndex;
+
+        /** Razón humana de la terminación por condición. */
+        private String collapseReason;
+
+        /** Diccionario general de resultados por algoritmo */
         private Map<String, Map<String, Object>> comparisonResults;
 
         /** Mensaje de error si status = FAILED. */
@@ -91,7 +110,10 @@ public class SimulationProgressHolder {
 
         /** Algoritmo utilizado (HGA, ALNS) */
         private String algorithm = "HGA";
-        
+
+        /** Longitud promedio de ruta (vuelos por ruta), calculada incrementalmente. */
+        private double avgRouteLength = 0.0;
+
         /** Epoch ms del primer día simulado — para el Excel export. */
         private Long startEpoch;
     }
@@ -115,6 +137,11 @@ public class SimulationProgressHolder {
     /** Retorna el estado de una sesión, o null si no existe. */
     public SimulationSessionState get(String sessionId) {
         return sessions.get(sessionId);
+    }
+
+    /** Snapshot de ids activos (thread-safe) para broadcasting/monitoreo. */
+    public List<String> getAllSessionIds() {
+        return new ArrayList<>(sessions.keySet());
     }
 
     /** Retorna el diccionario global de comparativa de algoritmos. */

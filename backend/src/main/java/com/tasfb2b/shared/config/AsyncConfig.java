@@ -38,4 +38,21 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * Pool dedicado para replanificaciones ALNS paralelas en modo colapso.
+     * Separado del pool principal para no bloquear las simulaciones.
+     */
+    @Bean(name = "replanExecutor")
+    public Executor replanExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(8);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("tasf-replan-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
+        executor.initialize();
+        return executor;
+    }
 }
