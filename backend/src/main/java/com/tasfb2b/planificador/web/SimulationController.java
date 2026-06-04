@@ -160,7 +160,7 @@ public class SimulationController {
         double globalOccupancy = 0;
         if (session.getAirportLoads() != null && !session.getAirportLoads().isEmpty()) {
             globalOccupancy = session.getAirportLoads().values().stream()
-                    .mapToInt(Integer::intValue)
+                    .mapToInt(data -> (Integer) data.getOrDefault("occupancy", 0))
                     .average()
                     .orElse(0);
         }

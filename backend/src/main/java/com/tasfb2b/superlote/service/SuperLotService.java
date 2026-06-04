@@ -44,7 +44,6 @@ public class SuperLotService {
         }
 
         List<SuperLot> superLots = new ArrayList<>();
-        int id = 0;
 
         for (var entry : grupos.entrySet()) {
 
@@ -62,7 +61,7 @@ public class SuperLotService {
                     : 24L * 3600_000;
 
             SuperLot lot = new SuperLot(
-                    id++,
+                    megaLotIdCounter.getAndIncrement(),
                     partes[0],
                     partes[1],
                     acc.totalMaletas,
@@ -107,7 +106,6 @@ public class SuperLotService {
         }
 
         List<SuperLot> superLots = new ArrayList<>();
-        int id = 0;
 
         for (var entry : grupos.entrySet()) {
             String[] partes = entry.getKey().split("-");
@@ -118,7 +116,7 @@ public class SuperLotService {
             long sla = intercontinental ? 48L * 3600_000 : 24L * 3600_000;
 
             SuperLot lot = new SuperLot(
-                    id++, partes[0], partes[1],
+                    megaLotIdCounter.getAndIncrement(), partes[0], partes[1],
                     acc.totalMaletas, acc.minReadyTime,
                     sla, intercontinental, 0);
 

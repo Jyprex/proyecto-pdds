@@ -34,6 +34,31 @@ public class SimulationProgressHolder {
     public record MapSnapshot(Long epoch, String clock, List<Map<String, Object>> routes) {}
 
     /**
+     * Frame WS atómico para el visualizador: unifica reloj + rutas + KPIs/inventarios.
+     *
+     * <p>El frontend puede animar (puenteo visual) entre frames consecutivos y, a la vez,
+     * mantener consistencia entre aviones y ocupación por aeropuerto.
+     */
+    public record WsFrame(
+            String sessionId,
+            String status,
+            Long currentEpochTime,
+            String simulatedTime,
+            Integer percent,
+            Integer currentDay,
+            Integer totalDays,
+            Double slaPercent,
+            Integer criticalNodes,
+            Map<String, Map<String, Object>> airportLoads,
+            Integer totalBagsWaiting,
+            Boolean isCollapseMode,
+            Integer rescuedFlights,
+            String errorMessage,
+            Long startEpoch,
+            List<Map<String, Object>> activeRoutes
+    ) {}
+
+    /**
      * Estado completo de una sesión de simulación.
      * Los campos son actualizados directamente por SimulationService.
      */
@@ -44,6 +69,9 @@ public class SimulationProgressHolder {
 
         /** Contenedor inmutable para sincronización con el WebSocket Publisher */
         private volatile MapSnapshot mapSnapshot;
+
+        /** Último frame atómico para WS (rutas + KPIs + reloj). */
+        private volatile WsFrame wsFrame;
 
         private int percent = 0;
         private int currentDay = 0;

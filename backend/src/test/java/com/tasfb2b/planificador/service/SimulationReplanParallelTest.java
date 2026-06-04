@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -52,8 +53,10 @@ import static org.mockito.Mockito.when;
 class SimulationReplanParallelTest {
 
     @Mock SimulationRunner simulator;
+    @Mock com.tasfb2b.planificador.simulation.EventEngine eventEngine;
     @Mock ALNSPlannerService alnsPlanner;
     @Mock AeropuertoRepository airportRepo;
+    @Mock com.tasfb2b.vuelo.repository.VueloRepository vueloRepo;
     @Mock SuperLotService superLotService;
     @Mock SimulationProgressHolder progressHolder;
     @Mock EnvioService envioService;
@@ -65,8 +68,16 @@ class SimulationReplanParallelTest {
      */
     private SimulationService buildService(Executor exec) {
         return new SimulationService(
-                simulator, alnsPlanner, airportRepo, superLotService,
-                progressHolder, envioService, wsPublisher, exec);
+                simulator,
+                eventEngine,
+                alnsPlanner,
+                airportRepo,
+                vueloRepo,
+                superLotService,
+                progressHolder,
+                envioService,
+                wsPublisher,
+                exec);
     }
 
     /**
@@ -114,12 +125,12 @@ class SimulationReplanParallelTest {
         // stress=10 → 30% = 3 cancelaciones
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(10.0);
 
-        when(alnsPlanner.doReplan(anyLong(), anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
 
         svc.applyCollapseInjections(s, routes, "alns");
 
         // 3 cancelaciones, todas con vueloId único → 3 llamadas
-        verify(alnsPlanner, times(3)).doReplan(anyLong(), eq(500L));
+        verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L));
         // Nunca debe invocar replanificar (la versión con side-effect)
         verify(alnsPlanner, never()).replanificar(anyLong(), anyLong());
     }
@@ -139,12 +150,12 @@ class SimulationReplanParallelTest {
         // → se seleccionan las 4 rutas, dedupe deja 3 vueloIds únicos
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(100.0);
 
-        when(alnsPlanner.doReplan(anyLong(), anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
 
         svc.applyCollapseInjections(s, routes, "alns");
 
         // 4 rutas, 3 vueloIds únicos → 3 replans (no 4)
-        verify(alnsPlanner, times(3)).doReplan(anyLong(), eq(500L));
+        verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L));
     }
 
     // ── 3. Replan exitoso → rescued ──────────────────────────────────
@@ -162,7 +173,7 @@ class SimulationReplanParallelTest {
         // Todos los replans devuelven solución con 1 ruta (éxito)
         Solution ok = new Solution();
         ok.setRoutes(List.of(routeWithVuelo(99L)));
-        when(alnsPlanner.doReplan(anyLong(), anyLong())).thenReturn(ok);
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(ok);
 
         int rescued = svc.applyCollapseInjections(s, routes, "alns");
 
@@ -184,7 +195,7 @@ class SimulationReplanParallelTest {
         // stress=100 → cancelCount cape a 3
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(100.0);
 
-        when(alnsPlanner.doReplan(anyLong(), anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
 
         int rescued = svc.applyCollapseInjections(s, routes, "alns");
 
@@ -208,12 +219,12 @@ class SimulationReplanParallelTest {
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(100.0);
 
         // vueloId=2 explota, los otros retornan éxito
-        when(alnsPlanner.doReplan(eq(1L), anyLong())).thenReturn(emptyReplan());
-        when(alnsPlanner.doReplan(eq(2L), anyLong()))
+        when(alnsPlanner.doReplan(any(Solution.class), eq(1L), anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), eq(2L), anyLong()))
                 .thenThrow(new RuntimeException("boom simulado"));
         Solution ok = new Solution();
         ok.setRoutes(List.of(routeWithVuelo(99L)));
-        when(alnsPlanner.doReplan(eq(3L), anyLong())).thenReturn(ok);
+        when(alnsPlanner.doReplan(any(Solution.class), eq(3L), anyLong())).thenReturn(ok);
 
         int rescued = svc.applyCollapseInjections(s, routes, "alns");
 
@@ -245,7 +256,7 @@ class SimulationReplanParallelTest {
             AtomicInteger currentConcurrent = new AtomicInteger();
             AtomicInteger maxConcurrent = new AtomicInteger();
 
-            when(alnsPlanner.doReplan(anyLong(), anyLong())).thenAnswer(inv -> {
+            when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenAnswer(inv -> {
                 int now = currentConcurrent.incrementAndGet();
                 maxConcurrent.updateAndGet(m -> Math.max(m, now));
                 allStarted.countDown();

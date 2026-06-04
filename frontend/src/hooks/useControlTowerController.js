@@ -112,89 +112,121 @@ export const useControlTowerController = () => {
       const delta = now - lastRealTime;
       lastRealTime = now;
 
-      const isStillRunning = (meta.status === "RUNNING" || simState === "running");
+      // La animación debe continuar si estamos en 'running'
+      const isStillRunning = (simState === "running");
 
       if (isStillRunning) {
         const buffer = snapshotBufferRef.current;
         
-        // Solo avanzamos si ya tenemos datos iniciales
+        let maxTargetTime = smoothSimTimeRef.current;
+        if (buffer.length > 0) {
+            maxTargetTime = Math.max(smoothSimTimeRef.current, buffer[buffer.length - 1].epoch);
+        }
+
         if (smoothSimTimeRef.current > 0) {
-            // Avance lineal monótono basado en performance.now (delta real)
-            const nextTime = smoothSimTimeRef.current + (delta * simClockRef.current.ratio);
+            const timeDiff = maxTargetTime - smoothSimTimeRef.current;
+            let nextTime = smoothSimTimeRef.current;
             
-            // Sincronización suave:
-            // Si nos adelantamos más de 45 minutos del servidor, frenamos para que nos alcance.
-            const lastSnapshot = buffer[buffer.length - 1];
-            if (!lastSnapshot || nextTime < lastSnapshot.epoch + 45 * 60 * 1000) {
-               smoothSimTimeRef.current = nextTime;
+            if (timeDiff > 0) {
+                // Para que la animación sea PERFECTAMENTE FLUIDA y LINEAL en CUALQUIER VELOCIDAD
+                // (1 min, 5 min, 30 min, 60 min), calculamos la velocidad base ideal:
+                const totalDays = meta.totalDays > 0 ? meta.totalDays : 5;
+                const totalSimulatedMs = totalDays * 24 * 60 * 60 * 1000;
+                const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
+                const baseRatio = totalSimulatedMs / Math.max(1000, targetPlaybackMs);
+
+                // Compensación de red (Jitter Buffer):
+                // Si el backend se atrasa (timeDiff bajo) frenamos un poco.
+                // Si el backend se adelanta (timeDiff alto) aceleramos un poco.
+                // Así evitamos las pausas bruscas y los saltos (parpadeos).
+                const idealDelayMs = baseRatio * 500; // 500ms es la ventana de emisión del backend
+                let dynamicRatio = baseRatio;
+
+                if (timeDiff > idealDelayMs * 3) {
+                    // Si el salto es masivo (reconexión/lag alto), saltar directamente
+                    nextTime = maxTargetTime - idealDelayMs;
+                } else if (timeDiff > idealDelayMs * 1.5) {
+                    dynamicRatio = baseRatio * 1.15; // Acelerar 15% para alcanzar suavemente
+                } else if (timeDiff < idealDelayMs * 0.5) {
+                    dynamicRatio = baseRatio * 0.85; // Frenar 15% para no chocar y pausar bruscamente
+                }
+
+                nextTime += (delta * dynamicRatio);
             }
             
-            // Actualizar estado de React solo para la visualización de la UI
+            if (nextTime > maxTargetTime) {
+                nextTime = maxTargetTime;
+            }
+            
+            smoothSimTimeRef.current = nextTime;
             setSmoothSimTime(smoothSimTimeRef.current);
         }
 
-        // Consumir snapshots del buffer cuando el tiempo fluido alcanza su epoch
-        let lastPoppedSnap = null;
+        let appliedClock = null;
+        let appliedEpoch = null;
+        let appliedRoutes = null;
+        let appliedAirportLoads = null;
+        let appliedKpis = null;
+        
+        // Consumir todos los snapshots cuyo epoch ya fue alcanzado por smoothSimTime
         while (buffer.length > 0 && buffer[0].epoch <= smoothSimTimeRef.current) {
-          lastPoppedSnap = buffer.shift();
+          const snap = buffer.shift();
+          if (snap.clock !== undefined) appliedClock = snap.clock;
+          if (snap.epoch !== undefined) appliedEpoch = snap.epoch;
+          if (snap.routes !== undefined) appliedRoutes = snap.routes;
+          if (snap.airportLoads !== undefined) appliedAirportLoads = snap.airportLoads;
+          if (snap.kpis !== undefined) appliedKpis = snap.kpis;
         }
         
-        if (lastPoppedSnap) {
-           if (lastPoppedSnap.clock) {
-              setClock({ simulatedTime: lastPoppedSnap.clock, currentEpochTime: lastPoppedSnap.epoch });
-           }
-           if (lastPoppedSnap.routes) {
-              setAircraft(lastPoppedSnap.routes);
-           }
-           if (lastPoppedSnap.airportLoads) {
-              setAirportLoads(lastPoppedSnap.airportLoads);
-           }
-           if (lastPoppedSnap.kpis) {
-              const data = lastPoppedSnap.kpis;
-              if (data.startEpoch) {
-                  setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
-              }
-              setKpis({
-                  slaPercent: data.slaPercent,
-                  globalOccupancy: data.globalOccupancy,
-                  criticalNodes: data.criticalNodes,
-                  totalBagsWaiting: data.totalBagsWaiting,
-                  rescuedFlights: data.rescuedFlights,
-                  comparisonResults: data.comparisonResults || null,
-              });
-              setMeta(prev => ({
-                  ...prev,
-                  status: data.status,
-                  percent: data.percent,
-                  currentDay: data.currentDay,
-                  totalDays: data.totalDays,
-                  isCollapseMode: data.isCollapseMode,
-                  errorMessage: data.errorMessage,
-                  startEpoch: data.startEpoch || prev.startEpoch
-              }));
-
-              if (data.status === 'DONE') {
-                  setSimState('completed');
-                  try {
-                      apiFetch(`/api/v1/simulation/status/${sessionId}`).then(res => {
-                          if (res.ok) {
-                              res.json().then(finalStatus => {
-                                  setMeta(prev => ({ ...prev, ...finalStatus }));
-                              });
-                          }
-                      });
-                  } catch (err) {
-                      console.error('Error fetching final status', err);
-                  }
-              } else if (data.status === 'FAILED') {
-                  setSimState('idle');
-              }
-           }
+        if (appliedClock !== null && appliedEpoch !== null) {
+           setClock({ simulatedTime: appliedClock, currentEpochTime: appliedEpoch });
         }
-      } else if (meta.status === "DONE" || meta.status === "FAILED" || simState === "completed") {
-        if (simClockRef.current.serverEpoch) {
-          smoothSimTimeRef.current = simClockRef.current.serverEpoch;
-          setSmoothSimTime(smoothSimTimeRef.current);
+        if (appliedRoutes !== null) {
+           setAircraft(appliedRoutes);
+        }
+        if (appliedAirportLoads !== null) {
+           setAirportLoads(appliedAirportLoads);
+        }
+        if (appliedKpis !== null) {
+           const data = appliedKpis;
+           if (data.startEpoch) {
+               setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
+           }
+           setKpis({
+               slaPercent: data.slaPercent,
+               globalOccupancy: data.globalOccupancy,
+               criticalNodes: data.criticalNodes,
+               totalBagsWaiting: data.totalBagsWaiting,
+               rescuedFlights: data.rescuedFlights,
+               comparisonResults: data.comparisonResults || null,
+           });
+           setMeta(prev => ({
+               ...prev,
+               status: data.status,
+               percent: data.percent,
+               currentDay: data.currentDay,
+               totalDays: data.totalDays,
+               isCollapseMode: data.isCollapseMode,
+               errorMessage: data.errorMessage,
+               startEpoch: data.startEpoch || prev.startEpoch
+           }));
+
+           if (data.status === 'DONE') {
+               setSimState('completed');
+               try {
+                   apiFetch(`/api/v1/simulation/status/${sessionId}`).then(res => {
+                       if (res.ok) {
+                           res.json().then(finalStatus => {
+                               setMeta(prev => ({ ...prev, ...finalStatus }));
+                           });
+                       }
+                   });
+               } catch (err) {
+                   console.error('Error fetching final status', err);
+               }
+           } else if (data.status === 'FAILED') {
+               setSimState('idle');
+           }
         }
       }
       
@@ -206,7 +238,7 @@ export const useControlTowerController = () => {
     };
     raf = requestAnimationFrame(update);
     return () => cancelAnimationFrame(raf);
-  }, [simState, meta.status, sessionId]);
+  }, [simState, sessionId, targetPlaybackMinutes, meta.totalDays]);
 
   const togglePanel = useCallback((panelName = "") => {
     if (!panelName) return;
@@ -479,24 +511,66 @@ export const useControlTowerController = () => {
     client.onConnect = () => {
       let maxEpochReceived = 0;
 
-      const handleSnapshotData = (epoch, type, data) => {
-        if (epoch < maxEpochReceived - 60000) return; // Permitir ligero jitter, descartar viejos
+      // Unir mensajes por seq (snapshot + kpi comparten seq). Esto evita desalineación temporal.
+      const pendingBySeq = new Map();
+      const BUFFER_MAX_FRAMES = 240;
+
+      const pushCompleteFrame = (seq) => {
+        const f = pendingBySeq.get(seq);
+        if (!f) return;
+
+        const hasSnapshot = f.clock !== undefined && f.routes !== undefined;
+        const hasKpi = f.kpis !== undefined;
+        if (!hasSnapshot || !hasKpi) return;
+
+        snapshotBufferRef.current.push(f);
+        snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
+
+        // Limitar memoria: conservar los últimos N frames
+        if (snapshotBufferRef.current.length > BUFFER_MAX_FRAMES) {
+          snapshotBufferRef.current.splice(0, snapshotBufferRef.current.length - BUFFER_MAX_FRAMES);
+        }
+
+        pendingBySeq.delete(seq);
+
+        if (smoothSimTimeRef.current === 0 && f.epoch) {
+          smoothSimTimeRef.current = f.epoch;
+          setSmoothSimTime(f.epoch);
+        }
+      };
+
+      const upsertBySeq = (seq, type, data) => {
+        const epoch = data?.currentEpochTime;
+        if (!epoch) return;
+
+        // Permitir ligero jitter, descartar frames muy viejos
+        if (epoch < maxEpochReceived - 60000) return;
         if (epoch > maxEpochReceived) maxEpochReceived = epoch;
 
-        let snap = snapshotBufferRef.current.find(s => s.epoch === epoch);
-        if (!snap) {
-          snap = { epoch };
-          snapshotBufferRef.current.push(snap);
-          snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
+        let f = pendingBySeq.get(seq);
+        if (!f) {
+          f = { seq, epoch };
+          pendingBySeq.set(seq, f);
         }
-        
+
+        // Normalizar epoch si cambia (debe ser el mismo para snapshot/kpi tras el fix BE)
+        f.epoch = epoch;
+
         if (type === 'snapshot') {
-          snap.clock = data.simulatedTime;
-          snap.routes = data.activeRoutes || [];
+          f.clock = data.simulatedTime;
+          f.routes = data.activeRoutes || [];
         } else if (type === 'kpi') {
-          snap.kpis = data;
-          snap.airportLoads = data.airportLoads || {};
+          f.kpis = data;
+          f.airportLoads = data.airportLoads || {};
         }
+
+        // Limpieza defensiva de pendientes
+        if (pendingBySeq.size > 50) {
+          const keys = Array.from(pendingBySeq.keys()).sort((a, b) => a - b);
+          for (let i = 0; i < keys.length - 50; i++) pendingBySeq.delete(keys[i]);
+        }
+
+        pushCompleteFrame(seq);
       };
 
       client.subscribe(`/topic/sim/${sessionId}/snapshot`, (msg) => {
@@ -510,12 +584,7 @@ export const useControlTowerController = () => {
             const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
             simClockRef.current.ratio = totalSimulatedMs / targetPlaybackMs;
 
-            handleSnapshotData(data.currentEpochTime, 'snapshot', data);
-
-            if (smoothSimTimeRef.current === 0) {
-              smoothSimTimeRef.current = data.currentEpochTime;
-              setSmoothSimTime(data.currentEpochTime);
-            }
+            upsertBySeq(seq, 'snapshot', data);
           }
         } catch (err) {
           console.error('Error parsing snapshot:', err)
@@ -528,10 +597,11 @@ export const useControlTowerController = () => {
           const data = envelope?.data ?? {}
 
           if (data.currentEpochTime) {
-            handleSnapshotData(data.currentEpochTime, 'kpi', data);
+            upsertBySeq(envelope?.seq ?? 0, 'kpi', data);
 
             if (data.status === 'DONE' || data.status === 'FAILED') {
-                client.deactivate();
+              // dar chance a que llegue el snapshot final del mismo seq
+              setTimeout(() => client.deactivate(), 250);
             }
           }
         } catch (err) {
@@ -613,7 +683,7 @@ export const useControlTowerController = () => {
   // Lógica de Ventana Móvil: Vuelos en curso o que despegan inminentemente.
   const activeShipments = useMemo(() => {
     if (!aircraft || aircraft.length === 0 || !currentEpochTime) return []
-    const viewWindow = 2 * 3600 * 1000
+    const viewWindow = 12 * 3600 * 1000 // 12 horas de look-ahead asegurado para cualquier velocidad
     return aircraft
       .filter((r) => r.status !== "cancelled") // BUSINESS RULE: Ocultar cancelados de la lista operativa
       .filter((r) => r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow)
@@ -621,9 +691,7 @@ export const useControlTowerController = () => {
   }, [aircraft, currentEpochTime])
 
   const activeAircraftAll = useMemo(() => {
-    const routes = activeShipments.length > 0
-      ? activeShipments
-      : (aircraft?.filter(r => r.status !== "cancelled") ?? []) // BUSINESS RULE: Ocultar cancelados del mapa
+    const routes = aircraft?.filter(r => r.status !== "cancelled") ?? [] // BUSINESS RULE: Ocultar cancelados del mapa
     if (routes.length === 0) return []
 
     const byId = new Map()
@@ -655,7 +723,7 @@ export const useControlTowerController = () => {
     })
 
     return Array.from(byId.values())
-  }, [activeShipments, aircraft])
+  }, [aircraft])
 
   // ── Optimización A: Ranking de Aviones (Nivel 1: Estático) ───────────────
   const rankedAircraftBase = useMemo(() => {

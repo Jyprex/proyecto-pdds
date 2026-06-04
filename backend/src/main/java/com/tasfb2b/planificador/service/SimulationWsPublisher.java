@@ -69,10 +69,13 @@ public class SimulationWsPublisher {
         long seq = seqBySession.merge(sessionId, 1L, Long::sum);
         int safeLimit = sanitizeLimit(routeLimit);
 
-        SimulationMapSnapshotDTO map = buildMapSnapshot(session, safeLimit);
+        // Leer frame WS una sola vez para consistencia temporal entre snapshot y KPI.
+        SimulationProgressHolder.WsFrame frame = session.getWsFrame();
+
+        SimulationMapSnapshotDTO map = buildMapSnapshot(session, frame, safeLimit);
         messaging.convertAndSend(topic(sessionId, "snapshot"), new WsEnvelope<>(seq, map));
 
-        SimulationKpiSnapshotDTO kpi = buildKpiSnapshot(session);
+        SimulationKpiSnapshotDTO kpi = buildKpiSnapshot(session, frame);
         messaging.convertAndSend(topic(sessionId, "kpi"), new WsEnvelope<>(seq, kpi));
 
         int lastIdx = lastEventIdxBySession.getOrDefault(sessionId, 0);
@@ -93,10 +96,20 @@ public class SimulationWsPublisher {
         return "/topic/sim/" + sessionId + "/" + channel;
     }
 
-    private SimulationMapSnapshotDTO buildMapSnapshot(SimulationSessionState session, int limit) {
-        // Leemos la referencia VOLATILE una sola vez (Snapshot local consistente)
-        SimulationProgressHolder.MapSnapshot snap = session.getMapSnapshot();
+    private SimulationMapSnapshotDTO buildMapSnapshot(SimulationSessionState session, SimulationProgressHolder.WsFrame frame, int limit) {
+        if (frame != null) {
+            return SimulationMapSnapshotDTO.builder()
+                    .sessionId(frame.sessionId())
+                    .status(frame.status())
+                    .simulatedTime(frame.simulatedTime())
+                    .currentEpochTime(frame.currentEpochTime())
+                    .snapshotEpochTime(System.currentTimeMillis())
+                    .activeRoutes(toRouteDtos(frame.activeRoutes(), limit))
+                    .build();
+        }
 
+        // Fallback: Leemos la referencia VOLATILE una sola vez (Snapshot local consistente)
+        SimulationProgressHolder.MapSnapshot snap = session.getMapSnapshot();
         if (snap == null) {
             // Fallback si aún no hay primer snapshot procesado
             return SimulationMapSnapshotDTO.builder()
@@ -119,14 +132,39 @@ public class SimulationWsPublisher {
                 .build();
     }
 
-    private SimulationKpiSnapshotDTO buildKpiSnapshot(SimulationSessionState session) {
+    private SimulationKpiSnapshotDTO buildKpiSnapshot(SimulationSessionState session, SimulationProgressHolder.WsFrame frame) {
+        Map<String, Map<String, Object>> loads = (frame != null) ? frame.airportLoads() : session.getAirportLoads();
+
         double globalOccupancy = 0;
-        if (session.getAirportLoads() != null && !session.getAirportLoads().isEmpty()) {
-            globalOccupancy = session.getAirportLoads().values().stream()
-                    .mapToInt(Integer::intValue)
+        if (loads != null && !loads.isEmpty()) {
+            globalOccupancy = loads.values().stream()
+                    .mapToInt(data -> (Integer) data.getOrDefault("occupancy", 0))
                     .average()
                     .orElse(0);
         }
+
+        if (frame != null) {
+            return SimulationKpiSnapshotDTO.builder()
+                    .sessionId(frame.sessionId())
+                    .status(frame.status())
+                    .percent(frame.percent())
+                    .currentDay(frame.currentDay())
+                    .totalDays(frame.totalDays())
+                    .slaPercent(frame.slaPercent())
+                    .globalOccupancy(globalOccupancy)
+                    .criticalNodes(frame.criticalNodes())
+                    .airportLoads(loads)
+                    .totalBagsWaiting(frame.totalBagsWaiting())
+                    .simulatedTime(frame.simulatedTime())
+                    .currentEpochTime(frame.currentEpochTime())
+                    .isCollapseMode(frame.isCollapseMode())
+                    .rescuedFlights(frame.rescuedFlights())
+                    .errorMessage(frame.errorMessage())
+                    .startEpoch(frame.startEpoch())
+                    .build();
+        }
+
+        // Fallback legado
         return SimulationKpiSnapshotDTO.builder()
                 .sessionId(session.getSessionId())
                 .status(session.getStatus().name())
@@ -136,7 +174,7 @@ public class SimulationWsPublisher {
                 .slaPercent(session.getSlaPercent())
                 .globalOccupancy(globalOccupancy)
                 .criticalNodes(session.getCriticalNodes())
-                .airportLoads(session.getAirportLoads())
+                .airportLoads(loads)
                 .totalBagsWaiting(session.getTotalBagsWaiting())
                 .simulatedTime(session.getSimulatedTime())
                 .currentEpochTime(session.getCurrentEpochTime())

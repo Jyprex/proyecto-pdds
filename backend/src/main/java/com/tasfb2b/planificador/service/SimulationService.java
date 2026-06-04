@@ -286,7 +286,8 @@ public class SimulationService {
                                                        mTimeStr, 100.0, globalState, airportMap,
                                                        inTransitRoutes, microEnd, currentTime);
 
-                                        wsPublisher.pushImmediate(session.getSessionId(), session);
+                                        // Removido: wsPublisher.pushImmediate(...) para evitar saturar el WebSocket
+                                        // La publicación se delega al @Scheduled de SimulationWsPublisher (cada 500ms)
 
                                         long tMicroEnd = System.nanoTime();
                                         long workTimeMs = (tMicroEnd - tMicroStart) / 1_000_000;
@@ -419,6 +420,26 @@ public class SimulationService {
 
                 session.setActiveRoutes(activeRoutes);
                 session.setMapSnapshot(new SimulationProgressHolder.MapSnapshot(currentSimTime, simulatedTime, new ArrayList<>(activeRoutes)));
+
+                // Frame atómico para el visualizador (misma marca de tiempo para mapa + KPIs)
+                session.setWsFrame(new SimulationProgressHolder.WsFrame(
+                        session.getSessionId(),
+                        session.getStatus().name(),
+                        currentSimTime,
+                        simulatedTime,
+                        currentPercent,
+                        completedDays,
+                        totalDays,
+                        slaPercent,
+                        critical,
+                        loads,
+                        session.getTotalBagsWaiting(),
+                        session.isCollapseMode(),
+                        session.getRescuedFlights(),
+                        session.getErrorMessage(),
+                        session.getStartEpoch(),
+                        new ArrayList<>(activeRoutes)
+                ));
         }
 
         private boolean isHigherPriority(String newStatus, String currentStatus) {
@@ -491,7 +512,9 @@ public class SimulationService {
                         }
                         case ALL_AIRPORTS_CRITICAL -> {
                                 long crit = airportMap.keySet().stream().filter(icao -> state.getOccupancyPercent(icao, airportMap) >= 90).count();
-                                yield new CollapseCheckResult(crit >= airportMap.size(), "Todos los aeropuertos críticos");
+                                yield new CollapseCheckResult(
+                                        crit >= airportMap.size(),
+                                        String.format("Todos los aeropuertos críticos (%d/%d)", crit, airportMap.size()));
                         }
                         default -> new CollapseCheckResult(false, "NONE");
                 };
