@@ -88,7 +88,7 @@ public class SimulationService {
          * El controlador responde HTTP 202 inmediatamente con el UUID de sesión.
          */
         @Async("simulationExecutor")
-        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds) {
+        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds, String startTime) {
                 SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
                 if (session == null) return;
 
@@ -100,7 +100,7 @@ public class SimulationService {
                         session.setStartEpoch(startEpochMs);
 
                         List<SimulationDayReport> reports = runFullSimulation(
-                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
+                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime);
                         session.getReports().addAll(reports);
 
                         int totalAttended = reports.stream().mapToInt(SimulationDayReport::getMalatetasAtendidas).sum();
@@ -144,7 +144,8 @@ public class SimulationService {
                         String algorithm,
                         LocalDate fechaInicio,
                         int playbackMinutes,
-                        String preCancelledFlightIds) {
+                        String preCancelledFlightIds,
+                        String startTime) {
 
                 // Parsear pre-cancelaciones (ej: 5:2, 12, 15:all)
                 List<PreCancellation> preCancellations = new ArrayList<>();
@@ -249,6 +250,16 @@ public class SimulationService {
                         long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes);
 
                         // ── MICRO-BATCHING: 48 ciclos por día ──────────────────
+                        int startCycle = 0;
+                        if (day == 0 && startTime != null && startTime.contains(":")) {
+                                try {
+                                        String[] parts = startTime.split(":");
+                                        int targetHour = Integer.parseInt(parts[0].trim());
+                                        int targetMin = Integer.parseInt(parts[1].trim());
+                                        startCycle = (targetHour * 60 + targetMin) / SA_MINUTES;
+                                } catch (Exception ignored) {}
+                        }
+
                         for (int cycle = 0; cycle < CYCLES_PER_DAY; cycle++) {
                                 long currentSimTime = currentTime + ((long) cycle * SA_MINUTES * 60_000L);
                                 long nextSimTime = currentSimTime + (SA_MINUTES * 60_000L);
@@ -401,7 +412,11 @@ public class SimulationService {
                                          masterSolution.getRoutes().size());
 
                                 try {
-                                        Thread.sleep(sleepPerCycleMs);
+                                        if (day == 0 && cycle < startCycle) {
+                                                // Fast-forward (no sleep)
+                                        } else {
+                                                Thread.sleep(sleepPerCycleMs);
+                                        }
                                 } catch (InterruptedException e) {
                                         Thread.currentThread().interrupt();
                                         return history;
@@ -432,7 +447,12 @@ public class SimulationService {
                         report.setDayIndex(day);
                         report.setStartTime(currentTime);
                         report.setEndTime(currentTime + 24L * 60 * 60 * 1000);
-                        report.setRoutes(List.of()); // Ligero: no retener rutas en memoria
+                        final long dayStartTimeVal = currentTime;
+                        List<Route> dayRoutes = masterSolution.getRoutes().stream()
+                                .filter(r -> r.getLot().getReadyTime() >= dayStartTimeVal
+                                        && r.getLot().getReadyTime() < (dayStartTimeVal + 24L * 60 * 60 * 1000))
+                                .collect(Collectors.toList());
+                        report.setRoutes(dayRoutes);
                         report.setColapsed(globalState.isColapsado());
                         report.setAirportSaturation(globalState.getSaturacionAeropuerto());
                         report.setCollapseTime(globalState.isColapsado() ? globalState.getCurrentTime() : -1L);

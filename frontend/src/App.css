@@ -2,7 +2,7 @@
   height: 100svh;
   display: flex;
   flex-direction: column;
-  background: #0e1f31;
+  background: #0F172A;
   color: #dbe6f2;
 }
 
@@ -2688,4 +2688,9 @@
   .ct-airport-marker__city {
     display: none;
   }
+}
+
+@keyframes ct-fade-out-line {
+  0% { opacity: 0.8; }
+  100% { opacity: 0; }
 }

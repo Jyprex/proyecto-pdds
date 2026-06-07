@@ -5,6 +5,8 @@ const ControlDock = ({
   onTogglePanel = () => {},
   onToggleScenarioConfig = () => {},
   panelVisibility = {},
+  maxWindows = 1,
+  setMaxWindows = () => {}
 }) => (
   <section
     className={`ct-dock ${isCollapsed ? "ct-dock--collapsed" : ""}`}
@@ -67,6 +69,22 @@ const ControlDock = ({
       >
         Envío
       </button>
+      <div style={{ width: "1px", height: "24px", background: "rgba(255,255,255,0.1)", margin: "0 4px" }} />
+      <button
+        type="button"
+        className={panelVisibility.reports ? "active" : ""}
+        aria-pressed={panelVisibility.reports}
+        onClick={() => onTogglePanel("reports")}
+      >
+        📑 Reportes
+      </button>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto', background: 'rgba(0,0,0,0.2)', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', color: '#cbd5e1' }}>
+        <span>Max. Paneles:</span>
+        <button type="button" onClick={() => setMaxWindows(Math.max(1, maxWindows - 1))} style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '0 4px', fontSize: '14px' }}>-</button>
+        <span style={{ fontWeight: 'bold', width: '12px', textAlign: 'center' }}>{maxWindows}</span>
+        <button type="button" onClick={() => setMaxWindows(Math.min(5, maxWindows + 1))} style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '0 4px', fontSize: '14px' }}>+</button>
+      </div>
     </div>
 
     <button

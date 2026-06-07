@@ -27,6 +27,7 @@ function PeriodSimConfig({
   simState,
   onExportExcel,
   onExportMd,
+  onExportDetails,
   onReset,           // () => void — reinicia simState a idle
 }) {
   // ── Todos los hooks PRIMERO ───────────────────────────────────────────────
@@ -579,6 +580,19 @@ function PeriodSimConfig({
                   }}
                 >
                   📝 Exportar Reporte (.md)
+                </button>
+              )}
+              {onExportDetails && (
+                <button id="period-btn-export-details" type="button"
+                  onClick={() => onExportDetails(sessionId)}
+                  style={{
+                    padding: "11px 0", borderRadius: 8, border: "none",
+                    background: "linear-gradient(135deg, #0f172a, #1e293b)",
+                    color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                    boxShadow: "0 4px 15px rgba(15, 23, 42, 0.35)",
+                  }}
+                >
+                  ✈️ Reporte Detallado de Vuelos
                 </button>
               )}
               <button id="period-btn-new" type="button"

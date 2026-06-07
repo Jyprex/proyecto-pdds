@@ -161,7 +161,7 @@ export const useControlTowerController = () => {
     }
   }, [selectedAlgorithm, isFluidMode]);
 
-  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = []) => {
+  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = [], startTime = "00:00") => {
     try {
       setSimState("running");
       setAircraft([]);
@@ -174,7 +174,7 @@ export const useControlTowerController = () => {
 
       const playbackMin = isFluidMode ? 60 : 1;
       const preCancelStr = preCancelledIds.length > 0 ? preCancelledIds.join(",") : "";
-      const url = apiUrl(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${playbackMin}&preCancelledFlightIds=${preCancelStr}`);
+      const url = apiUrl(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${playbackMin}&preCancelledFlightIds=${preCancelStr}&startTime=${startTime}`);
       const res = await fetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
@@ -455,6 +455,25 @@ export const useControlTowerController = () => {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("[Tasf.B2B] Error al exportar MD:", err);
+    }
+  }, []);
+
+  const exportDetailedSimulationReport = useCallback(async (sid) => {
+    if (!sid) return;
+    try {
+      const res = await apiFetch(`/api/v1/simulation/export-details/${sid}`);
+      if (!res.ok) throw new Error(`Error al exportar reporte detallado: ${res.status}`);
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `ReporteDetalladoVuelos_${sid.substring(0, 8)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[Tasf.B2B] Error al exportar Reporte Detallado:", err);
     }
   }, []);
 
@@ -1126,6 +1145,7 @@ export const useControlTowerController = () => {
     startCollapseSimulation,
     exportSimulationExcel,
     exportSimulationReportMd,
+    exportDetailedSimulationReport,
     resetSimulation,
     summary,
     tabs: SCENARIO_TABS,
