@@ -10,10 +10,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -45,6 +42,10 @@ public class SimulationWsPublisher {
     private final ConcurrentHashMap<String, Long> seqBySession = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Integer> lastEventIdxBySession = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> finalSentBySession = new ConcurrentHashMap<>();
+    
+    // -- DIAGNOSTIC STATE --
+    private final ConcurrentHashMap<String, Set<String>> prevIdsBySession = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, List<String>> trackedBySession = new ConcurrentHashMap<>();
 
     @Scheduled(fixedDelayString = "${tasf.sim.stream.intervalMs:500}")
     public void publishAllSessions() {
@@ -63,6 +64,8 @@ public class SimulationWsPublisher {
                 pushImmediate(sessionId, session);
                 seqBySession.remove(sessionId);
                 lastEventIdxBySession.remove(sessionId);
+                prevIdsBySession.remove(sessionId);
+                trackedBySession.remove(sessionId);
             }
         }
     }
@@ -72,6 +75,10 @@ public class SimulationWsPublisher {
         int safeLimit = sanitizeLimit(routeLimit);
 
         SimulationMapSnapshotDTO map = buildMapSnapshot(session, safeLimit);
+        
+        // --- DIAGNOSTIC INSTRUMENTATION ---
+        instrumentSnapshot(sessionId, map);
+        
         messaging.convertAndSend(topic(sessionId, "snapshot"), new WsEnvelope<>(seq, map));
 
         SimulationKpiSnapshotDTO kpi = buildKpiSnapshot(session);
@@ -85,6 +92,57 @@ public class SimulationWsPublisher {
                     new WsEnvelope<>(seq, logSnapshot.get(i)));
         }
         lastEventIdxBySession.put(sessionId, logSnapshot.size());
+    }
+
+    private void instrumentSnapshot(String sessionId, SimulationMapSnapshotDTO map) {
+        List<SimulationMapRouteDTO> routesRaw = map.getActiveRoutes();
+        final List<SimulationMapRouteDTO> routes = (routesRaw == null) ? Collections.emptyList() : routesRaw;
+
+        Set<String> currentIds = routes.stream().map(SimulationMapRouteDTO::getId).collect(Collectors.toSet());
+        
+        // 1. Backend - Continuidad de vuelos [SNAPSHOT_DIAG]
+        System.out.printf("[SNAPSHOT_DIAG] Time=%s Flights=%d Ids=%s%n", 
+            map.getSimulatedTime(), routes.size(), 
+            routes.stream().limit(10).map(SimulationMapRouteDTO::getId).collect(Collectors.joining(",")));
+
+        // 1. Backend - Continuidad de vuelos [TRACK_FLIGHT]
+        List<String> tracked = trackedBySession.get(sessionId);
+        if (tracked == null || tracked.isEmpty()) {
+            tracked = routes.stream().limit(5).map(SimulationMapRouteDTO::getId).collect(Collectors.toList());
+            if (!tracked.isEmpty()) {
+                trackedBySession.put(sessionId, tracked);
+            }
+        }
+
+        for (String flightId : tracked) {
+            Optional<SimulationMapRouteDTO> r = routes.stream().filter(f -> f.getId().equals(flightId)).findFirst();
+            if (r.isPresent()) {
+                 System.out.printf("[TRACK_FLIGHT] Time=%s Flight=%s Present=true Origin=%s Destination=%s%n",
+                    map.getSimulatedTime(), flightId, r.get().getFrom(), r.get().getTo());
+            } else {
+                 System.out.printf("[TRACK_FLIGHT] Time=%s Flight=%s Present=false%n",
+                    map.getSimulatedTime(), flightId);
+            }
+        }
+
+        // 2. Backend - Estabilidad de identidad [IDENTITY_DIAG]
+        Set<String> prevIds = prevIdsBySession.getOrDefault(sessionId, Collections.emptySet());
+        Set<String> added = new HashSet<>(currentIds);
+        added.removeAll(prevIds);
+        Set<String> removed = new HashSet<>(prevIds);
+        removed.removeAll(currentIds);
+
+        System.out.printf("[IDENTITY_DIAG] Time=%s Added=%d Removed=%d%n", 
+            map.getSimulatedTime(), added.size(), removed.size());
+
+        for (String id : added) {
+            System.out.printf("[FLIGHT_CHANGE] Time=%s Type=ADDED Flight=%s%n", map.getSimulatedTime(), id);
+        }
+        for (String id : removed) {
+            System.out.printf("[FLIGHT_CHANGE] Time=%s Type=REMOVED Flight=%s%n", map.getSimulatedTime(), id);
+        }
+
+        prevIdsBySession.put(sessionId, currentIds);
     }
 
     private String topic(String sessionId, String channel) {

@@ -31,6 +31,9 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
@@ -68,6 +71,9 @@ public class SimulationService {
         private final CollapseHelper collapseHelper;
         private final VueloRepository vueloRepo;
         private final NetworkAdapter networkAdapter;
+
+        // -- DIAGNOSTIC STATE --
+        private final ConcurrentHashMap<String, Map<String, String>> prevRoutesBySession = new ConcurrentHashMap<>();
 
         @Value("${tasf.data.path}")
         private String dataPath;
@@ -553,7 +559,20 @@ public class SimulationService {
                                 long arrEpoch = depEpoch + v.getDuracionMs();
                                 routeTime = arrEpoch;
 
-                                if (currentSimTime < depEpoch || currentSimTime >= arrEpoch) continue;
+                                if (currentSimTime < depEpoch) {
+                                        if (i == 0) {
+                                            // Aún no despega el primer tramo
+                                        } else {
+                                            // Layover: Ya aterrizó de un tramo anterior pero no despega el siguiente
+                                            System.out.printf("[LAYOVER_DIAG] Time=%s Flight=%s Shipment=%s At=%s NextDep=%s%n",
+                                                simulatedTime, v.getId(), r.getLot().getId(), fromIcao, new Date(depEpoch));
+                                        }
+                                        continue;
+                                }
+                                // No mantener segmentos tras aterrizar para evitar solapamiento visual.
+                                if (currentSimTime >= arrEpoch) {
+                                        continue;
+                                }
 
                                 String mapKey = v.getId() + "-" + depEpoch;
 
@@ -582,7 +601,21 @@ public class SimulationService {
 
                 // Calcular % de ocupación del avión físico
                 List<Map<String, Object>> activeRoutes = new ArrayList<>();
+                Map<String, String> currentRouteStructure = new HashMap<>();
+                Map<String, String> prevRoutes = prevRoutesBySession.getOrDefault(session.getSessionId(), Collections.emptyMap());
+
                 for (Map<String, Object> avion : vuelosFisicos.values()) {
+                        String id = (String) avion.get("id");
+                        String from = (String) avion.get("from");
+                        String to = (String) avion.get("to");
+                        String routeStr = from + "->" + to;
+                        currentRouteStructure.put(id, routeStr);
+
+                        if (prevRoutes.containsKey(id) && !prevRoutes.get(id).equals(routeStr)) {
+                            System.out.printf("[ROUTE_CHANGE] Time=%s Flight=%s PreviousRoute=%s CurrentRoute=%s%n",
+                                    simulatedTime, id, prevRoutes.get(id), routeStr);
+                        }
+
                         int ocupacion = (int) avion.get("ocupacionReal");
                         int max = (int) avion.get("capacidadMax");
                         double capacityPercent = (ocupacion * 100.0) / Math.max(1, max);
@@ -591,6 +624,7 @@ public class SimulationService {
                         avion.remove("capacidadMax");
                         activeRoutes.add(avion);
                 }
+                prevRoutesBySession.put(session.getSessionId(), currentRouteStructure);
 
                 session.setActiveRoutes(activeRoutes);
 

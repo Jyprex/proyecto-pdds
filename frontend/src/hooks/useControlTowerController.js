@@ -64,6 +64,8 @@ export const useControlTowerController = () => {
   });
   const [airportLoads, setAirportLoads] = useState({});
   const [aircraft, setAircraft] = useState([]);
+  const prevAircraftRef = useRef([]);
+  const prevActiveIdsRef = useRef(new Set());
   const [clock, setClock] = useState({ simulatedTime: "--:--", currentEpochTime: 0 });
   const [smoothSimTime, setSmoothSimTime] = useState(0);
   const smoothSimTimeRef = useRef(0);
@@ -73,10 +75,90 @@ export const useControlTowerController = () => {
 
   /** Snapshot buffer y referencias de reloj */
   const snapshotBufferRef = useRef([]);
-  const simClockRef = useRef({ serverEpoch: 0, receivedAt: 0, ratio: 1 });
+  const simClockRef = useRef({
+    serverEpoch: 0,
+    receivedAt: 0,
+    lastSeq: -1,
+    ratio: (5 * 24 * 60) / 30 // ratio por defecto para 5 días en 30 minutos (240x)
+  });
 
   const isCollapseScenario = activeTab === "colapso";
   const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
+
+  /** Loop de interpolación suave para el mapa y el reloj */
+  useEffect(() => {
+    let raf;
+    let lastRealTime = performance.now();
+
+    const update = () => {
+      const now = performance.now();
+      const delta = now - lastRealTime;
+      lastRealTime = now;
+
+      const isStillRunning = (meta.status === "RUNNING" || simState === "running");
+
+      if (isStillRunning) {
+        const buffer = snapshotBufferRef.current;
+        
+        // Solo avanzamos si ya tenemos datos iniciales
+        if (smoothSimTimeRef.current > 0) {
+            // Avance lineal monótono basado en performance.now (delta real)
+            const nextTime = smoothSimTimeRef.current + (delta * simClockRef.current.ratio);
+            
+            // Sincronización suave:
+            // Si nos adelantamos más de 45 minutos del servidor, frenamos para que nos alcance.
+            const lastSnapshot = buffer[buffer.length - 1];
+            if (!lastSnapshot || nextTime < lastSnapshot.epoch + 45 * 60 * 1000) {
+               smoothSimTimeRef.current = nextTime;
+            }
+            
+            // Actualizar estado de React solo para la visualización de la UI
+            setSmoothSimTime(smoothSimTimeRef.current);
+        }
+
+        // Consumir snapshots del buffer cuando el tiempo fluido alcanza su epoch
+        while (buffer.length > 1 && buffer[0].epoch < smoothSimTimeRef.current) {
+          const snap = buffer.shift();
+          setClock({
+            simulatedTime: snap.clock,
+            currentEpochTime: snap.epoch,
+          });
+
+          // --- DIAGNOSTIC: Aircraft State Lifecycle ---
+          const currentIds = new Set(snap.routes.map(r => r.id));
+          const prevIds = new Set(prevAircraftRef.current.map(r => r.id));
+
+          snap.routes.forEach(r => {
+            if (!prevIds.has(r.id)) {
+              console.log(`[AIRCRAFT_CREATE] Flight=${r.id}`);
+            }
+          });
+
+          prevAircraftRef.current.forEach(r => {
+            if (!currentIds.has(r.id)) {
+              console.log(`[AIRCRAFT_REMOVE] Flight=${r.id}`);
+            }
+          });
+          prevAircraftRef.current = snap.routes;
+
+          setAircraft(snap.routes || []);
+        }
+      } else if (meta.status === "DONE" || meta.status === "FAILED" || simState === "completed") {
+        if (simClockRef.current.serverEpoch) {
+          smoothSimTimeRef.current = simClockRef.current.serverEpoch;
+          setSmoothSimTime(smoothSimTimeRef.current);
+        }
+      }
+      
+      if (realStartRef.current && isStillRunning) {
+        setRealElapsedSecs(Math.floor((Date.now() - realStartRef.current) / 1000));
+      }
+
+      raf = requestAnimationFrame(update);
+    };
+    raf = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(raf);
+  }, [simState, meta.status]);
 
   const togglePanel = useCallback((panelName = "") => {
     if (!panelName) return;
@@ -728,8 +810,16 @@ export const useControlTowerController = () => {
 
   /** Lógica de Ventana Móvil: Vuelos en curso o inminentes (ocultando cancelados) */
   const activeShipments = useMemo(() => {
-    if (!aircraft || aircraft.length === 0 || !currentEpochTime) return [];
-    const viewWindow = 2 * 3600 * 1000;
+    if (!aircraft || aircraft.length === 0 || !currentEpochTime) return []
+    const viewWindow = 2 * 3600 * 1000
+    
+    // --- DIAGNOSTIC: Cancelled Filter ---
+    aircraft.forEach(r => {
+      if (r.status === "cancelled") {
+        console.log(`[AIRCRAFT_FILTER] Reason=CANCELLED Flight=${r.id}`);
+      }
+    });
+
     return aircraft
       .filter((r) => r.status !== "cancelled")
       .filter((r) => r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow)
@@ -812,6 +902,17 @@ export const useControlTowerController = () => {
     if (selected && !finalSelection.some((p) => p.id === selected.id)) {
       finalSelection.push(selected);
     }
+
+    // --- DIAGNOSTIC: Visual Lifecycle (Filter) ---
+    const activeIds = new Set(finalSelection.map(a => a.id));
+    const prevActiveIds = prevActiveIdsRef.current;
+    
+    prevActiveIds.forEach(id => {
+        if (!activeIds.has(id)) {
+             console.log(`[AIRCRAFT_REMOVE] (Visual/Filter) Flight=${id}`);
+        }
+    });
+    prevActiveIdsRef.current = activeIds;
 
     return finalSelection;
   }, [rankedAircraftBase, currentEpochTime, smoothSimTime, selectedAircraftId]);
