@@ -79,6 +79,17 @@ const ControlDock = ({
         📑 Reportes
       </button>
 
+      <button
+        type="button"
+        style={{ color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}
+        onClick={() => {
+          navigator.clipboard.writeText(window.location.href);
+          alert("URL de la sesión copiada al portapapeles");
+        }}
+      >
+        🔗 Compartir
+      </button>
+
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto', background: 'rgba(0,0,0,0.2)', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', color: '#cbd5e1' }}>
         <span>Max. Paneles:</span>
         <button type="button" onClick={() => setMaxWindows(Math.max(1, maxWindows - 1))} style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '0 4px', fontSize: '14px' }}>-</button>

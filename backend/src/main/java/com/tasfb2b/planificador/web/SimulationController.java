@@ -93,7 +93,8 @@ public class SimulationController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false, defaultValue = "5") int stressFactor,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
-            @RequestParam(required = false) String preCancelledFlightIds) {
+            @RequestParam(required = false) String preCancelledFlightIds,
+            @RequestParam(required = false) String startTime) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); // clamp 1–10
@@ -109,7 +110,7 @@ public class SimulationController {
         session.setStressFactor(clampedStress);
         session.setAlgorithm(algorithm);
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -204,6 +205,57 @@ public class SimulationController {
         }
 
         return ResponseEntity.ok(builder.build());
+    }
+
+    /**
+     * Búsqueda profunda de trazabilidad para un envío o maleta específica.
+     * Consulta el historial completo de rutas de la sesión.
+     */
+    @GetMapping("/shipment/{sessionId}/{shipmentId}")
+    public ResponseEntity<Map<String, Object>> getShipmentTraceability(
+            @PathVariable String sessionId,
+            @PathVariable String shipmentId) {
+
+        SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
+        if (session == null) return ResponseEntity.notFound().build();
+
+        // Buscar en el reporte de todos los días simulados hasta el momento
+        for (SimulationDayReport report : session.getReports()) {
+            if (report.getRoutes() == null) continue;
+            for (Route r : report.getRoutes()) {
+                if (String.valueOf(r.getLot().getId()).equals(shipmentId)) {
+                    return ResponseEntity.ok(buildShipmentTraceMap(r));
+                }
+            }
+        }
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", "Envío no encontrado en el historial de esta sesión"));
+    }
+
+    private Map<String, Object> buildShipmentTraceMap(Route r) {
+        Map<String, Object> trace = new LinkedHashMap<>();
+        trace.put("id", r.getLot().getId());
+        trace.put("origin", r.getLot().getOrigenIcao());
+        trace.put("destination", r.getLot().getDestinoIcao());
+        trace.put("totalBags", r.getLot().getTotalMaletas());
+        trace.put("departure", r.getLot().getReadyTime());
+        trace.put("arrival", r.getArrivalTime());
+        trace.put("deadline", r.getLot().getDeadline());
+        trace.put("status", r.getStatus());
+        
+        List<Map<String, Object>> hops = r.getFlights().stream().map(v -> {
+            Map<String, Object> h = new HashMap<>();
+            h.put("id", v.getId());
+            h.put("from", v.getOrigen().getIcaoCode());
+            h.put("to", v.getDestino().getIcaoCode());
+            h.put("dep", v.getDepartureMinute());
+            h.put("arr", v.getArrivalMinute());
+            return h;
+        }).collect(Collectors.toList());
+        
+        trace.put("route", hops);
+        return trace;
     }
 
     // ── POST /export-excel/{sessionId} ─────────────────────────────────────
