@@ -4,8 +4,10 @@ import com.tasfb2b.planificador.domain.Event;
 import com.tasfb2b.planificador.domain.EventType;
 import com.tasfb2b.planificador.domain.Route;
 import com.tasfb2b.vuelo.domain.Vuelo;
+import com.tasfb2b.bloqueo.service.BloqueoService;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.*;
 
 /**
@@ -22,6 +24,12 @@ import java.util.*;
  */
 @Component
 public class EventEngine {
+
+    private final BloqueoService bloqueoService;
+
+    public EventEngine(BloqueoService bloqueoService) {
+        this.bloqueoService = bloqueoService;
+    }
 
     /**
      * Construye todos los eventos de simulación para las rutas dadas.
@@ -57,7 +65,16 @@ public class EventEngine {
                 long depTime = v.calcularSiguienteSalida(sequenceTime);
                 events.add(new Event(depTime, EventType.FLIGHT_DEPARTURE, r.getLot(), v, load));
 
-                long arrTime = depTime + v.getDuracionMs();
+                long duration = v.getDuracionMs();
+                // B09: Avería Tipo 3 - Demora de tránsito (duplica el tiempo de tránsito)
+                if (bloqueoService != null && bloqueoService.tieneDemoraTransito(
+                        v.getOrigen().getIcaoCode(),
+                        v.getDestino().getIcaoCode(),
+                        Instant.ofEpochMilli(depTime))) {
+                    duration *= 2;
+                }
+
+                long arrTime = depTime + duration;
                 events.add(new Event(arrTime, EventType.FLIGHT_ARRIVAL, r.getLot(), v, load));
 
                 sequenceTime = arrTime;

@@ -199,7 +199,6 @@ function DayToDayConfig({
               id="dtd-btn-reset"
               type="button"
               onClick={() => {
-                setPreCancelledFlightIds([]);
                 if (onReset) onReset();
               }}
               style={{
@@ -248,7 +247,7 @@ function DayToDayConfig({
                   return (
                     <div key={`s-${s.id}`} className="ct-shipment-item">
                       <div className="ct-shipment-item__header">
-                        <strong>Vuelo {s.id}</strong>
+                        <strong>Vuelo {s.id.toString().replace("vuelo-", "").split("-")[0]}</strong>
                         <span className="ct-sla-dot" style={{ background: dot }} title={s.status} />
                       </div>
                       <p className="ct-shipment-item__route">{s.from} → {s.to} · {depFmt}</p>

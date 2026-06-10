@@ -12,6 +12,7 @@ import TransitInventoryPanel from "./components/floating/TransitInventoryPanel";
 import AlgorithmComparisonPanel from "./components/floating/AlgorithmComparisonPanel";
 import ShipmentDetailPanel from "./components/floating/ShipmentDetailPanel";
 import ReportsPanel from "./components/floating/ReportsPanel";
+import EntitiesListPanel from "./components/floating/EntitiesListPanel";
 import FlightDetailPanel from "./components/floating/FlightDetailPanel";
 import KpiStrip from "./components/kpi/KpiStrip";
 import KpiControls from "./components/kpi/KpiControls";
@@ -20,6 +21,9 @@ import DayToDayConfig from "./components/scenarios/DayToDayConfig";
 import PeriodSimConfig from "./components/scenarios/PeriodSimConfig";
 import CollapseSimConfig from "./components/scenarios/CollapseSimConfig";
 import DraggableWindow from "./components/common/DraggableWindow";
+import AirportConfigPanel from "./components/floating/AirportConfigPanel";
+import BloqueoPanel from "./components/floating/BloqueoPanel";
+import { AIRPORTS } from "./data/airportsData";
 import { useControlTowerController } from "./hooks/useControlTowerController";
 import "./App.css";
 
@@ -229,7 +233,7 @@ const App = () => {
           return kpi;
         })} />
         <SimulationControls
-          isVisible={isSimScenario}
+          isVisible={isSimScenario || (activeTab === "vivo" && simState !== "idle")}
           simState={isCollapseScenario ? "collapsed" : simState}
           simulatedClock={summary.systemClock}
           elapsedReal={elapsedOperationTime}
@@ -271,6 +275,18 @@ const App = () => {
       {isWindowOpen("reports") && (
         <DraggableWindow title="Reportes y Exportación" onClose={() => handleToggleWindow("reports")} initialPosition={{x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "reports"} onFocus={() => handleFocusWindow("reports")}>
           <ReportsPanel />
+        </DraggableWindow>
+      )}
+
+      {isWindowOpen("airportConfig") && (
+        <DraggableWindow title="Configuración de Almacenes" onClose={() => handleToggleWindow("airportConfig")} initialPosition={{x: 200, y: 150}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "airportConfig"} onFocus={() => handleFocusWindow("airportConfig")}>
+          <AirportConfigPanel />
+        </DraggableWindow>
+      )}
+
+      {isWindowOpen("bloqueos") && (
+        <DraggableWindow title="Gestión de Bloqueos y Averías" onClose={() => handleToggleWindow("bloqueos")} initialPosition={{x: 240, y: 180}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "bloqueos"} onFocus={() => handleFocusWindow("bloqueos")}>
+          <BloqueoPanel />
         </DraggableWindow>
       )}
 
@@ -332,7 +348,7 @@ const App = () => {
             onClose={toggleScenarioConfig}
             selectedAlgorithm={selectedAlgorithm}
             onAlgorithmChange={setSelectedAlgorithm}
-            onStart={(dias, startDate, preCancelledIds) => startDayToDaySimulation(startDate, dias, preCancelledIds)}
+            onStart={(dias, startDate, preCancelledIds, startTime) => startDayToDaySimulation(startDate, dias, preCancelledIds, startTime)}
             liveStatus={liveStatus}
             simState={simState}
             sessionId={sessionId}
@@ -380,7 +396,9 @@ const App = () => {
           occupancy: isWindowOpen("occupancy"),
           transitInventory: isWindowOpen("transitInventory"),
           comparison: isWindowOpen("comparison"),
-          shipmentDetail: isWindowOpen("shipmentDetail")
+          shipmentDetail: isWindowOpen("shipmentDetail"),
+          airportConfig: isWindowOpen("airportConfig"),
+          bloqueos: isWindowOpen("bloqueos")
         }}
         onToggleScenarioConfig={toggleScenarioConfig}
         onTogglePanel={handleToggleWindow}
@@ -571,11 +589,18 @@ const App = () => {
                     <div className="ct-panel-header"><p>LOG DE EVENTOS</p></div>
                     <div style={{ padding: '0.75rem', fontSize: '11px', fontFamily: 'monospace', color: '#9ca3af', display: 'flex', flexDirection: 'column-reverse' }}>
                       {eventLog.map((log, i) => (
-                        <div key={i} style={{ marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>{log}</div>
+                        <div key={i} style={{ marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                          {log.toString().replace(/vuelo-(\d+)(-\d+)?/gi, (match, id) => `Vuelo ${id}`)}
+                        </div>
                       ))}
                     </div>
                   </aside>
                 )}
+                <EntitiesListPanel 
+                  activeAircraft={activeAircraft} 
+                  airports={AIRPORTS} 
+                  airportMetrics={activeMetrics} 
+                />
               </div>
             )}
           </div>

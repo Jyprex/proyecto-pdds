@@ -12,7 +12,10 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
   const [activeSection, setActiveSection] = useState('config')
   const [isStarting, setIsStarting]       = useState(false)
   const [startDate, setStartDate]         = useState('2026-04-09')
+  const [startTime, setStartTime]         = useState('00:00')
   const [stressFactor, setStressFactor]   = useState(5)
+  const [destroyFraction, setDestroyFraction] = useState(20)
+  const [mutationRate, setMutationRate]       = useState(15)
 
   const isRunning   = liveStatus?.status === 'RUNNING'
   const isCompleted = liveStatus?.status === 'DONE'
@@ -28,7 +31,7 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
   const handleStart = async () => {
     if (!onStart) return
     setIsStarting(true)
-    await onStart(5, startDate, stressFactor)
+    await onStart(5, startDate, stressFactor, startTime)
     setIsStarting(false)
     setActiveSection('progreso')
   }
@@ -158,6 +161,32 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
               </div>
             </div>
 
+            {/* ── Selector de hora premium ──────────────────────────────── */}
+            <div className="ct-config-section">
+              <p className="ct-config-section__title">🕒 HORA DE INICIO DEL ESTRÉS</p>
+              <div style={{
+                background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(239,68,68,0.35)',
+                borderRadius: 12, padding: '14px 16px', marginTop: 8,
+              }}>
+                <label style={{ display: 'block' }}>
+                  <span style={{ fontSize: 10, color: '#9ca3af', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Seleccionar hora
+                  </span>
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={e => setStartTime(e.target.value)}
+                    style={{
+                      width: '100%', padding: '10px 12px', borderRadius: 8, boxSizing: 'border-box',
+                      background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)',
+                      color: '#f9fafb', fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                      colorScheme: 'dark',
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
             {/* ── Slider de estrés ───────────────────────────────────────── */}
             <div className="ct-config-section">
               <p className="ct-config-section__title">📈 FACTOR DE ESTRÉS OPERATIVO</p>
@@ -183,6 +212,33 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
               </div>
             </div>
 
+            {/* Explicación detallada del factor de estrés */}
+            <div style={{
+              background: 'rgba(15,23,42,0.4)',
+              border: '1px solid rgba(239,68,68,0.2)',
+              borderRadius: '8px',
+              padding: '10px 12px',
+              marginTop: '-6px',
+              marginBottom: '14px',
+              fontSize: '11px',
+              color: '#9ca3af',
+              lineHeight: '1.4'
+            }}>
+              <p style={{ margin: '0 0 6px 0', fontWeight: 'bold', color: stressLabel.color }}>
+                ¿Qué implica el Factor ×{stressFactor}?
+              </p>
+              <ul style={{ margin: 0, paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <li><strong>Cancelación de Rutas:</strong> Cancela automáticamente el <span style={{ color: '#fca5a5', fontWeight: 'bold' }}>{Math.round(stressFactor * 3)}%</span> de las rutas de vuelo en toda la red de manera aleatoria cada día.</li>
+                <li><strong>Capacidad de Hubs:</strong> Reduce al <span style={{ color: '#fca5a5', fontWeight: 'bold' }}>50%</span> la capacidad de procesamiento de maletas en los principales aeropuertos de conexión (BOG, MAD, DEL).</li>
+                <li><strong>Impacto Esperado:</strong> {
+                  stressFactor <= 2 ? 'Estrés controlado. El sistema debería redistribuir el equipaje sin generar retrasos significativos.' :
+                  stressFactor <= 5 ? 'Estrés moderado. ALNS usará rutas de respaldo para rescatar vuelos, mientras HGA empezará a acumular pérdidas.' :
+                  stressFactor <= 8 ? 'Estrés severo. Alta saturación en almacenes de paso y demoras generalizadas en la entrega de maletas.' :
+                  'Peligro de colapso. Pérdidas masivas de equipaje por superación del límite físico de almacenamiento de la red.'
+                }</li>
+              </ul>
+            </div>
+
             {/* ── Algoritmo ─────────────────────────────────────────────── */}
             <div className="ct-config-section">
               <p className="ct-config-section__title">⚙️ ALGORITMO DE RESPUESTA</p>
@@ -205,6 +261,55 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
                   </label>
                 ))}
               </div>
+            </div>
+
+            {/* Parámetros Avanzados del Algoritmo */}
+            <div className="ct-config-section" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 12 }}>
+              <p className="ct-config-section__title">⚙️ PARÁMETROS DEL ALGORITMO</p>
+              
+              {selectedAlgorithm === "alns" ? (
+                <div style={{ background: "rgba(15,23,42,0.4)", border: "1px solid rgba(129,140,248,0.25)", borderRadius: 10, padding: "12px 14px", marginTop: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>Fracción de Destrucción (Destroy %)</span>
+                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#818cf8" }}>{destroyFraction}%</span>
+                  </div>
+                  <input
+                    type="range" min="10" max="40" step="5"
+                    value={destroyFraction}
+                    onChange={e => setDestroyFraction(Number(e.target.value))}
+                    style={{ width: "100%", accentColor: "#818cf8" }}
+                  />
+                  <p style={{ fontSize: 10, color: "#6b7280", margin: "6px 0 0 0" }}>
+                    Porcentaje de la solución que se destruye y reconstruye en cada iteración del vecindario.
+                  </p>
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 8, paddingTop: 8, fontSize: 10, color: "#9ca3af" }}>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Criterio de Parada:</strong> Tiempo límite (6.5 segundos Sa)</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Enfriamiento (Cooling Rate):</strong> 0.997 (Enfriamiento Simulado)</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Tamaño Segmento:</strong> 100 iteraciones (Actualización de pesos)</p>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ background: "rgba(15,23,42,0.4)", border: "1px solid rgba(107,114,128,0.25)", borderRadius: 10, padding: "12px 14px", marginTop: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>Tasa de Mutación (Mutation Rate)</span>
+                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#9ca3af" }}>{mutationRate}%</span>
+                  </div>
+                  <input
+                    type="range" min="5" max="30" step="5"
+                    value={mutationRate}
+                    onChange={e => setMutationRate(Number(e.target.value))}
+                    style={{ width: "100%", accentColor: "#9ca3af" }}
+                  />
+                  <p style={{ fontSize: 10, color: "#6b7280", margin: "6px 0 0 0" }}>
+                    Probabilidad de aplicar mutación de intercambio a los descendientes de la población.
+                  </p>
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 8, paddingTop: 8, fontSize: 10, color: "#9ca3af" }}>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Criterio de Parada:</strong> Tiempo límite (6.5 segundos Sa)</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Tamaño Población:</strong> 50 individuos</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Elite:</strong> 5 mejores individuos (Preservación directa)</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* ── Resumen de lo que pasará ──────────────────────────────── */}
@@ -242,9 +347,33 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
                       : `⚠ Iniciar simulación de colapso real`}
               </button>
               {isCompleted && (
-                <p style={{ textAlign: 'center', fontSize: 10, color: '#9ca3af', marginTop: 6 }}>
-                  Vuelos rescatados: <strong style={{color:'#818cf8'}}>{liveStatus?.rescuedFlights ?? 0}</strong>
-                </p>
+                <>
+                  <p style={{ textAlign: 'center', fontSize: 10, color: '#9ca3af', marginTop: 6 }}>
+                    Vuelos rescatados: <strong style={{color:'#818cf8'}}>{liveStatus?.rescuedFlights ?? 0}</strong>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const res = await fetch(`/api/v1/simulation/export-details/${sessionId}`);
+                      if (!res.ok) { alert("Error descargando reporte de colapso"); return; }
+                      const blob = await res.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `Reporte_Colapso_${sessionId}.md`;
+                      a.click();
+                    }}
+                    style={{
+                      width: '100%', padding: '12px', marginTop: '10px',
+                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      color: 'white', border: 'none', borderRadius: '6px',
+                      fontWeight: 'bold', cursor: 'pointer', fontSize: '13px',
+                      boxShadow: '0 4px 15px rgba(16,185,129,0.3)'
+                    }}
+                  >
+                    📄 Descargar Reporte Final .MD
+                  </button>
+                </>
               )}
             </div>
           </>
@@ -284,6 +413,41 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
                 <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', lineHeight: 1.6 }}>{item.desc}</p>
               </div>
             ))}
+
+            {/* Límite y Criterios de Colapso */}
+            <div style={{
+              background: 'rgba(239,68,68,0.08)',
+              border: '1.5px dashed rgba(239,68,68,0.4)',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              marginTop: '15px'
+            }}>
+              <p style={{ margin: '0 0 6px 0', fontSize: '12px', fontWeight: 'bold', color: '#fca5a5' }}>
+                🛑 CRITERIOS Y VARIABLES DE LÍMITE (COLAPSO)
+              </p>
+              <table style={{ width: '100%', fontSize: '10px', color: '#9ca3af', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                    <th style={{ paddingBottom: '4px', color: '#e2e8f0' }}>Variable / Límite</th>
+                    <th style={{ paddingBottom: '4px', color: '#e2e8f0' }}>Criterio de Colapso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: '6px 0', fontWeight: '600', color: '#fca5a5' }}>Almacén Individual (Capacidad)</td>
+                    <td style={{ padding: '6px 0' }}>Ocupación &gt; 100% de la capacidad física asignada al almacén.</td>
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: '6px 0', fontWeight: '600', color: '#fca5a5' }}>Algoritmo (Tiempo de Cómputo)</td>
+                    <td style={{ padding: '6px 0' }}>Ta ≥ Sa (Tiempo de cómputo Ta es mayor o igual a 15 segundos Sa).</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '6px 0', fontWeight: '600', color: '#fca5a5' }}>SLA Global de la Red</td>
+                    <td style={{ padding: '6px 0' }}>SLA Global &lt; 40% (más del 60% de las maletas perdidas/demoradas).</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

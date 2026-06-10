@@ -69,6 +69,22 @@ const ControlDock = ({
       >
         Envío
       </button>
+      <button
+        type="button"
+        className={panelVisibility.airportConfig ? "active" : ""}
+        aria-pressed={panelVisibility.airportConfig}
+        onClick={() => onTogglePanel("airportConfig")}
+      >
+        🏢 Almacenes
+      </button>
+      <button
+        type="button"
+        className={panelVisibility.bloqueos ? "active" : ""}
+        aria-pressed={panelVisibility.bloqueos}
+        onClick={() => onTogglePanel("bloqueos")}
+      >
+        🚧 Bloqueos
+      </button>
       <div style={{ width: "1px", height: "24px", background: "rgba(255,255,255,0.1)", margin: "0 4px" }} />
       <button
         type="button"

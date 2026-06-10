@@ -8,5 +8,8 @@ public record AeropuertoResponse(
         String city,
         String country,
         Continente continent,
-        Integer storageCapacity
+        Integer storageCapacity,
+        Integer gmtOffset,
+        Double latitude,
+        Double longitude
 ) {}

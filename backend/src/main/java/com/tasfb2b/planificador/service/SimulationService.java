@@ -21,6 +21,7 @@ import com.tasfb2b.envio.service.EnvioService;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import com.tasfb2b.vuelo.repository.VueloRepository;
 import com.tasfb2b.planificador.strategy.NetworkAdapter;
+import com.tasfb2b.bloqueo.service.BloqueoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,22 +36,6 @@ import java.util.stream.Collectors;
 
 /**
  * Servicio de simulación multi-día con ejecución asíncrona y micro-batching.
- *
- * <p>Mejoras integradas de V2:
- * <ul>
- *   <li>Micro-batching: 48 ciclos/día (cada 30 min simulados) en vez de 1 plan/día</li>
- *   <li>Estado global persistente (SimulationState incremental via advanceTo)</li>
- *   <li>MapSnapshot volatile para sincronización thread-safe con WsPublisher</li>
- *   <li>Colapso informativo con condiciones de terminación configurables</li>
- *   <li>avgRouteLength calculado incrementalmente</li>
- *   <li>Log de profiling estructurado por ciclo</li>
- * </ul>
- *
- * <p>Mantiene del proyecto principal:
- * <ul>
- *   <li>Selección HGA / ALNS por parámetro</li>
- *   <li>Exportación MD y trazabilidad de algoritmo</li>
- *   </ul>
  */
 @Service
 @RequiredArgsConstructor
@@ -68,6 +53,7 @@ public class SimulationService {
         private final CollapseHelper collapseHelper;
         private final VueloRepository vueloRepo;
         private final NetworkAdapter networkAdapter;
+        private final BloqueoService bloqueoService;
 
         @Value("${tasf.data.path}")
         private String dataPath;
@@ -192,7 +178,8 @@ public class SimulationService {
                 SimulationState globalState = new SimulationState(
                         new ArrayList<>(airportMap.values()),
                         new ArrayList<>(),
-                        currentTime
+                        currentTime,
+                        bloqueoService
                 );
 
                 boolean hubsReduced = false;
@@ -587,8 +574,6 @@ public class SimulationService {
                         int max = (int) avion.get("capacidadMax");
                         double capacityPercent = (ocupacion * 100.0) / Math.max(1, max);
                         avion.put("capacityPercent", Math.min(100.0, capacityPercent));
-                        avion.remove("ocupacionReal");
-                        avion.remove("capacidadMax");
                         activeRoutes.add(avion);
                 }
 

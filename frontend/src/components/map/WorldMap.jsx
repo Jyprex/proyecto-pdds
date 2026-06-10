@@ -113,6 +113,36 @@ const WorldMap = ({
         onAircraftSelect(null);
       }}
     >
+      {/* Floating clock overlay on the map */}
+      {systemClock && systemClock !== "--:--:--" && systemClock !== "--:--" && (
+        <div style={{
+          position: "absolute",
+          top: "20px",
+          right: "20px",
+          zIndex: 10,
+          background: "rgba(15, 23, 42, 0.85)",
+          border: isCollapseScenario ? "1.5px solid #ef4444" : "1.5px solid #3b82f6",
+          borderRadius: "8px",
+          padding: "8px 16px",
+          color: "white",
+          fontFamily: "'Courier New', Courier, monospace",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+          backdropFilter: "blur(6px)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "2px",
+          alignItems: "flex-end",
+          pointerEvents: "none"
+        }}>
+          <div style={{ fontSize: "10px", color: isCollapseScenario ? "#ef4444" : "#60a5fa", fontWeight: "bold", textTransform: "uppercase", letterSpacing: "1px" }}>
+            {isCollapseScenario ? "⚠️ Simulación Colapso" : "🕒 Tiempo Simulado"}
+          </div>
+          <div style={{ fontSize: "18px", fontWeight: "bold", letterSpacing: "0.5px" }}>
+            {systemClock}
+          </div>
+        </div>
+      )}
+
       <ComposableMap
         projection="geoMercator"
         projectionConfig={PROJECTION_CONFIG}
@@ -221,6 +251,12 @@ const WorldMap = ({
                   const isCancelled= plane.status === "cancelled";
                   const isRescued  = plane.status === "rescued";
                   const isSelected = isPlaneSelected(plane.id);
+                  const dx = to.coordinates[0] - from.coordinates[0];
+                  // Y en SVG está invertido respecto a latitud
+                  const dy = to.coordinates[1] - from.coordinates[1];
+                  // Ángulo de rotación: el caracter '✈' apunta hacia arriba/derecha, se debe ajustar si es necesario.
+                  // Se suma 45 o 90 grados dependiendo de la fuente, probaremos sumando 45 grados por defecto.
+                  const angle = Math.atan2(-dy, dx) * (180 / Math.PI) + 45;
 
                   return (
                     <Marker
@@ -254,6 +290,7 @@ const WorldMap = ({
                           dominantBaseline="central"
                           className={isBlocked ? "ct-aircraft-pin__blocked" : "ct-aircraft-pin__icon"}
                           y={0}
+                          transform={isBlocked || isCancelled ? "" : `rotate(${angle})`}
                           style={{ fontSize: isBlocked || isCancelled ? "12px" : "15px", fill: "currentColor", transition: "font-size 0.3s ease" }}
                         >
                           {isBlocked ? "✖" : isCancelled ? "✖" : "✈"}
@@ -272,6 +309,8 @@ const WorldMap = ({
             const level      = metrics?.level ?? "green";
             const isSaturated= isCollapseScenario && metrics?.isSaturated;
             const isSelected = selectedAirportCode === airport.icao;
+            const stockBags  = metrics?.load ?? 0;
+            const maxCap     = metrics?.capacity ?? "—";
 
             return (
               <Marker key={airport.icao} coordinates={airport.coordinates}>
@@ -282,6 +321,7 @@ const WorldMap = ({
                   role="button"
                   tabIndex={0}
                   aria-label={`Aeropuerto ${airport.icao}`}
+                  title={`Aeropuerto ${airport.icao}\nStock: ${stockBags} maletas / Capacidad: ${maxCap}`}
                   onClick={() => onAirportSelect(airport.icao)}
                   onKeyDown={(e) => e.key === "Enter" && onAirportSelect(airport.icao)}
                   style={{ cursor: "pointer" }}
@@ -318,7 +358,7 @@ const WorldMap = ({
                   x={-85}
                   y={tooltipY}
                   width={170}
-                  height={60}
+                  height={75}
                   style={{ pointerEvents: "auto", overflow: "visible" }}
                 >
                   <div style={{
@@ -339,6 +379,11 @@ const WorldMap = ({
                     <div style={{ fontSize: "11px", color: "#e2e8f0" }}>
                       {selectedPlane.from} ➔ {selectedPlane.to} | {systemClock.split(" - ")[1] || systemClock}
                     </div>
+                    {selectedPlane.ocupacionReal != null && selectedPlane.capacidadMax != null && (
+                      <div style={{ fontSize: "10px", color: "#9ca3af", marginTop: "2px" }}>
+                        Stock: {selectedPlane.ocupacionReal} / {selectedPlane.capacidadMax} maletas
+                      </div>
+                    )}
                   </div>
                 </foreignObject>
               </Marker>

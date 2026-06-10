@@ -3,28 +3,13 @@ package com.tasfb2b.planificador.simulation;
 import com.tasfb2b.planificador.domain.Event;
 import com.tasfb2b.aeropuerto.domain.Aeropuerto;
 import com.tasfb2b.vuelo.domain.Vuelo;
+import com.tasfb2b.bloqueo.service.BloqueoService;
 import lombok.Getter;
 
 import java.util.*;
 
 /**
  * Estado mutable de la simulación, actualizado evento a evento.
- *
- * <p>El colapso es REVERSIBLE: si la carga de todos los aeropuertos
- * baja por debajo de su storageCapacity, el sistema se recupera
- * (colapso = false). Esto permite modelar escenarios de recuperación.
- *
- * <p>saturacionAeropuerto = suma de maletas en exceso ACTUALES
- * (no acumulativo histórico).
- *
- * <p>Mejoras V2 integradas:
- * <ul>
- *   <li>Cola FIFO por aeropuerto (carry-over cuando almacén está lleno)</li>
- *   <li>Hard Constraint tracking: maletas realmente embarcadas por (lote, vuelo)</li>
- *   <li>Evento STORAGE_RELEASE (permanencia 24h en destino)</li>
- *   <li>Evento FLIGHT_CANCELLED / REPLAN_TRIGGER</li>
- *   <li>Métricas de profiling (buildEventsTimeNanos, applyEventsTimeNanos)</li>
- * </ul>
  */
 @Getter
 public class SimulationState {
@@ -84,6 +69,8 @@ public class SimulationState {
     /** Mapa de aeropuertos, necesario para reevaluar saturación en DEPARTURE. */
     private Map<String, Aeropuerto> airportMap;
 
+    private final BloqueoService bloqueoService;
+
     // ── COLA DE ESPERA (CARRY-OVER) ────────────────────────
     /**
      * Registro de maletas en espera por capacidad de almacén.
@@ -103,10 +90,12 @@ public class SimulationState {
 
     public SimulationState(List<Aeropuerto> airports,
                            List<Vuelo> vuelos,
-                           long startTime) {
+                           long startTime,
+                           BloqueoService bloqueoService) {
 
         this.currentTime = startTime;
         this.airportMap = new HashMap<>();
+        this.bloqueoService = bloqueoService;
 
         airports.forEach(a -> {
             cargaAeropuerto.put(a.getIcaoCode(), 0);
@@ -125,6 +114,15 @@ public class SimulationState {
                 capacidadVuelo.put(v.getId(), v.getCapacidadTotal());
             }
         });
+    }
+
+    /** Obtiene la capacidad de almacenamiento efectiva considerando averías vigentes */
+    private int getEffectiveStorageCapacity(Aeropuerto ap) {
+        if (ap == null) return 0;
+        int originalCapacity = ap.getStorageCapacity();
+        if (bloqueoService == null) return originalCapacity;
+        int pct = bloqueoService.getCapacidadEfectivaPct(ap.getIcaoCode(), java.time.Instant.ofEpochMilli(currentTime));
+        return (int) (originalCapacity * (pct / 100.0));
     }
 
     // ─────────────────────────────────────────────
@@ -172,9 +170,10 @@ public class SimulationState {
                 Aeropuerto ap = airports.get(icao);
                 int current = cargaAeropuerto.getOrDefault(icao, 0);
 
+                int effectiveCapacity = getEffectiveStorageCapacity(ap);
                 // Cola de espera: si el almacén está lleno, encolar excedente
-                if (ap != null && current + actualLoad > ap.getStorageCapacity()) {
-                    int espacioLibre = Math.max(0, ap.getStorageCapacity() - current);
+                if (ap != null && current + actualLoad > effectiveCapacity) {
+                    int espacioLibre = Math.max(0, effectiveCapacity - current);
                     int excedente = actualLoad - espacioLibre;
 
                     if (espacioLibre > 0) {
@@ -198,8 +197,9 @@ public class SimulationState {
                 int actualLoad = event.getLoad();
                 int current = cargaAeropuerto.getOrDefault(icao, 0);
 
-                if (ap != null && current + actualLoad > ap.getStorageCapacity()) {
-                    int espacioLibre = Math.max(0, ap.getStorageCapacity() - current);
+                int effectiveCapacity = getEffectiveStorageCapacity(ap);
+                if (ap != null && current + actualLoad > effectiveCapacity) {
+                    int espacioLibre = Math.max(0, effectiveCapacity - current);
                     int excedente = actualLoad - espacioLibre;
 
                     if (espacioLibre > 0) {
@@ -267,7 +267,7 @@ public class SimulationState {
             Aeropuerto ap = airports.get(entry.getKey());
             if (ap == null) continue;
 
-            int exceso = entry.getValue() - ap.getStorageCapacity();
+            int exceso = entry.getValue() - getEffectiveStorageCapacity(ap);
             if (exceso > 0) {
                 totalExceso += exceso;
             }
@@ -291,7 +291,8 @@ public class SimulationState {
         if (ap == null) return;
 
         int cargaActual = cargaAeropuerto.getOrDefault(icao, 0);
-        int espacioLibre = ap.getStorageCapacity() - cargaActual;
+        int effectiveCapacity = getEffectiveStorageCapacity(ap);
+        int espacioLibre = effectiveCapacity - cargaActual;
 
         while (!cola.isEmpty() && espacioLibre > 0) {
             PendingBag pb = cola.peek();
@@ -303,7 +304,7 @@ public class SimulationState {
             } else {
                 // Mover parcial: llenar el espacio y dejar el resto en cola
                 cola.poll();
-                cargaAeropuerto.put(icao, ap.getStorageCapacity());
+                cargaAeropuerto.put(icao, effectiveCapacity);
                 int restante = pb.cantidad() - espacioLibre;
                 cola.addFirst(new PendingBag(pb.lotId(), restante, pb.enqueueTime()));
                 maletasEnCola -= espacioLibre;
@@ -335,8 +336,9 @@ public class SimulationState {
      */
     public int getOccupancyPercent(String icao, Map<String, Aeropuerto> airports) {
         Aeropuerto ap = airports.get(icao);
-        if (ap == null || ap.getStorageCapacity() <= 0) return 0;
+        int effectiveCapacity = getEffectiveStorageCapacity(ap);
+        if (ap == null || effectiveCapacity <= 0) return 0;
         int carga = cargaAeropuerto.getOrDefault(icao, 0);
-        return (int) Math.min(100, (carga * 100.0) / ap.getStorageCapacity());
+        return (int) Math.min(100, (carga * 100.0) / effectiveCapacity);
     }
 }

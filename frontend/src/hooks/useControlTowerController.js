@@ -172,6 +172,22 @@ export const useControlTowerController = () => {
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
+      const startEpoch = new Date(`${startDate}T${startTime}:00`).getTime();
+      setMeta({
+        status: "RUNNING",
+        percent: 0,
+        currentDay: 1,
+        totalDays: dias,
+        isCollapseMode: false,
+        errorMessage: null,
+        algorithm: selectedAlgorithm || "hga",
+        startEpoch: startEpoch,
+        totalAttended: 0,
+        totalMissed: 0,
+        slaFinal: 0,
+        reports: []
+      });
+
       const playbackMin = isFluidMode ? 60 : 1;
       const preCancelStr = preCancelledIds.length > 0 ? preCancelledIds.join(",") : "";
       const url = apiUrl(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${playbackMin}&preCancelledFlightIds=${preCancelStr}&startTime=${startTime}`);
@@ -188,7 +204,7 @@ export const useControlTowerController = () => {
     }
   }, [selectedAlgorithm, isFluidMode]);
 
-  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5) => {
+  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5, startTime = "00:00") => {
     try {
       setSimState("running");
       setAircraft([]);
@@ -199,11 +215,29 @@ export const useControlTowerController = () => {
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
+      const resolvedDate = startDate || "2026-04-09";
+      const startEpoch = new Date(`${resolvedDate}T${startTime}:00`).getTime();
+      setMeta({
+        status: "RUNNING",
+        percent: 0,
+        currentDay: 1,
+        totalDays: dias,
+        isCollapseMode: true,
+        errorMessage: null,
+        algorithm: selectedAlgorithm || "hga",
+        startEpoch: startEpoch,
+        totalAttended: 0,
+        totalMissed: 0,
+        slaFinal: 0,
+        reports: []
+      });
+
       const playbackMin = isFluidMode ? 60 : 1;
       const dateParam   = startDate    ? `&startDate=${startDate}`       : "";
       const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
+      const timeParam   = startTime    ? `&startTime=${startTime}`       : "";
       const res = await apiFetch(
-        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}&playbackMinutes=${playbackMin}`,
+        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}${timeParam}&playbackMinutes=${playbackMin}`,
         { method: "POST" }
       );
 
@@ -211,7 +245,7 @@ export const useControlTowerController = () => {
 
       const data = await res.json();
       setSessionId(data.sessionId);
-      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()} | estrés ×${stressFactor}`);
+      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()} | estrés ×${stressFactor} | hora ${startTime}`);
     } catch (err) {
       console.error("[Tasf.B2B] Error al iniciar simulación de colapso:", err);
       setSimState("idle");
@@ -957,6 +991,16 @@ export const useControlTowerController = () => {
         ? `Día ${meta.currentDay} / ${meta.totalDays}`
         : "Iniciando...";
 
+      let fleetLoad = 0;
+      let fleetCap = 0;
+      aircraft.forEach(p => {
+        if (p.status !== "cancelled") {
+          fleetLoad += p.ocupacionReal || 0;
+          fleetCap += p.capacidadMax || 0;
+        }
+      });
+      const fleetOccupancyPct = fleetCap > 0 ? (fleetLoad / fleetCap) * 100 : 0;
+
       return [
         {
           key: "flights",
@@ -964,6 +1008,13 @@ export const useControlTowerController = () => {
           value: aircraft.filter(r => r.status !== "cancelled").length ?? 0,
           subtitle: `Día ${meta.currentDay} de simulación`,
           status: "green",
+        },
+        {
+          key: "fleetOccupancy",
+          title: "Ocupación global flota (UT)",
+          value: `${fleetOccupancyPct.toFixed(1)}%`,
+          subtitle: "Carga total / Capacidad máxima",
+          status: fleetOccupancyPct >= 90 ? "red" : fleetOccupancyPct >= 70 ? "amber" : "green",
         },
         {
           key: "occupancy",

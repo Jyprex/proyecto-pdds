@@ -4,10 +4,12 @@ import com.tasfb2b.aeropuerto.domain.Aeropuerto;
 import com.tasfb2b.superlote.domain.SuperLot;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import com.tasfb2b.vuelo.repository.VueloRepository;
+import com.tasfb2b.bloqueo.service.BloqueoService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -22,6 +24,7 @@ import java.util.Collections;
 public class NetworkAdapterImpl implements NetworkAdapter {
 
     private final VueloRepository repo;
+    private final BloqueoService bloqueoService;
 
     // EntityManager para hacer JOIN FETCH y evitar LazyInitializationException
     // en hilos @Async que no tienen sesión JPA por defecto.
@@ -39,8 +42,9 @@ public class NetworkAdapterImpl implements NetworkAdapter {
     // Volatile para asegurar visibilidad entre hilos sin bloquear findBestRoute
     private volatile Map<String, List<Vuelo>> graph;
 
-    public NetworkAdapterImpl(VueloRepository repo) {
+    public NetworkAdapterImpl(VueloRepository repo, BloqueoService bloqueoService) {
         this.repo = repo;
+        this.bloqueoService = bloqueoService;
     }
 
     private Map<String, List<Vuelo>> getGraph() {
@@ -102,8 +106,7 @@ public class NetworkAdapterImpl implements NetworkAdapter {
     }
 
     // ─────────────────────────────────────────────────────────
-    // NÚCLEO: Dijkstra con exclusión de vuelos
-    // excludedFlightIds: vacío para ruta principal, lleno para backup
+    // NÚCLEO: Dijkstra con exclusión de vuelos y bloqueos
     // ─────────────────────────────────────────────────────────
     private List<Vuelo> calcularRuta(Aeropuerto origen,
                                      Aeropuerto destino,
@@ -127,22 +130,44 @@ public class NetworkAdapterImpl implements NetworkAdapter {
             if (current.time > bestTime.getOrDefault(current.airport, Long.MAX_VALUE)) continue;
             if (current.airport.equals(destIcao)) break;
 
+            // B06: Si el nodo origen actual está bloqueado, no se puede salir de él
+            Instant momentCurrent = Instant.ofEpochMilli(current.time);
+            if (bloqueoService.nodoEstaBloqueado(current.airport, momentCurrent)) {
+                continue;
+            }
+
             for (Vuelo v : localGraph.getOrDefault(current.airport, List.of())) {
                 if (Boolean.TRUE.equals(v.getCancelled())) continue;
-                if (excludedFlightIds.contains(v.getId())) continue; // exclusión para backup
+                if (excludedFlightIds.contains(v.getId())) continue;
 
-                // Fix Dijkstra-ciego: saltar vuelos sin capacidad disponible.
-                // Un vuelo con cap=0 no puede absorber ningún lote; excluirlo fuerza
-                // a Dijkstra a encontrar una ruta alternativa con espacio real.
-                // Si remainingCap está vacío (modo legacy), este filtro no aplica.
+                // B05: Si el tramo origen->destino está bloqueado en el momento de salida
+                String orig = v.getOrigen().getIcaoCode();
+                String dest = v.getDestino().getIcaoCode();
+                if (bloqueoService.tramoEstaBloqueado(orig, dest, momentCurrent)) {
+                    continue;
+                }
+
+                // B06: Si el nodo de destino está bloqueado, no se puede aterrizar en él
+                long wait = calcularEsperaMatematica(current.time, v);
+                long duration = v.getDuracionMs();
+                
+                // B09: Avería Tipo 3 - Demora de tránsito (duplica el tiempo de tránsito)
+                if (bloqueoService.tieneDemoraTransito(orig, dest, momentCurrent)) {
+                    duration *= 2;
+                }
+
+                long arrTime = current.time + wait + duration;
+                if (bloqueoService.nodoEstaBloqueado(dest, Instant.ofEpochMilli(arrTime))) {
+                    continue;
+                }
+
                 if (!remainingCap.isEmpty()) {
                     int capRestante = remainingCap.getOrDefault(v.getId(), v.getCapacidadTotal());
                     if (capRestante <= 0) continue;
                 }
 
-                long wait = calcularEsperaMatematica(current.time, v);
-                long newTime = current.time + wait + v.getDuracionMs();
-                String next = v.getDestino().getIcaoCode();
+                long newTime = current.time + wait + duration;
+                String next = dest;
 
                 if (newTime < bestTime.getOrDefault(next, Long.MAX_VALUE)) {
                     bestTime.put(next, newTime);

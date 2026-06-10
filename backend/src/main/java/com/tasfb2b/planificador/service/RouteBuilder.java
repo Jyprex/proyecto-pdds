@@ -5,8 +5,10 @@ import com.tasfb2b.planificador.domain.Route;
 import com.tasfb2b.superlote.domain.SuperLot;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import com.tasfb2b.planificador.strategy.NetworkAdapter;
+import com.tasfb2b.bloqueo.service.BloqueoService;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.*;
 
 @Component
@@ -14,10 +16,12 @@ public class RouteBuilder {
 
     private final NetworkAdapter network;
     private final RoutePool routePool;
+    private final BloqueoService bloqueoService;
 
-    public RouteBuilder(NetworkAdapter network, RoutePool routePool) {
+    public RouteBuilder(NetworkAdapter network, RoutePool routePool, BloqueoService bloqueoService) {
         this.network = network;
         this.routePool = routePool;
+        this.bloqueoService = bloqueoService;
     }
 
     public RoutePool getRoutePool() {
@@ -74,8 +78,14 @@ public class RouteBuilder {
             int cargaActual = cargaAeropuerto.getOrDefault(icao, 0);
             int nuevaCarga = cargaActual + asignado;
 
-            if (nuevaCarga > ap.getStorageCapacity()) {
-                saturacionAeropuerto += (nuevaCarga - ap.getStorageCapacity());
+            int capacity = ap.getStorageCapacity();
+            if (bloqueoService != null) {
+                int pct = bloqueoService.getCapacidadEfectivaPct(icao, Instant.ofEpochMilli(lot.getReadyTime()));
+                capacity = (int) (capacity * (pct / 100.0));
+            }
+
+            if (nuevaCarga > capacity) {
+                saturacionAeropuerto += (nuevaCarga - capacity);
             }
         }
 
@@ -96,8 +106,16 @@ public class RouteBuilder {
         route.setCapacidadAsignada(asignado);
         route.setDeadline(lot.getSla());
 
-        route.calcularArrivalTime();
-
+        long timeAccum = lot.getReadyTime();
+        for (Vuelo v : flights) {
+            long dep = v.calcularSiguienteSalida(timeAccum);
+            long duration = v.getDuracionMs();
+            if (bloqueoService != null && bloqueoService.tieneDemoraTransito(v.getOrigen().getIcaoCode(), v.getDestino().getIcaoCode(), Instant.ofEpochMilli(dep))) {
+                duration *= 2;
+            }
+            timeAccum = dep + duration;
+        }
+        route.setArrivalTime(timeAccum);
 
         return route;
     }
@@ -141,7 +159,16 @@ public class RouteBuilder {
         backup.setCapacidadAsignada(Math.min(lot.getTotalMaletas(), capacidadBackup));
         backup.setDeadline(lot.getSla());
 
-        backup.calcularArrivalTime();
+        long timeAccum = lot.getReadyTime();
+        for (Vuelo v : flights) {
+            long dep = v.calcularSiguienteSalida(timeAccum);
+            long duration = v.getDuracionMs();
+            if (bloqueoService != null && bloqueoService.tieneDemoraTransito(v.getOrigen().getIcaoCode(), v.getDestino().getIcaoCode(), Instant.ofEpochMilli(dep))) {
+                duration *= 2;
+            }
+            timeAccum = dep + duration;
+        }
+        backup.setArrivalTime(timeAccum);
         return backup;
     }
 }

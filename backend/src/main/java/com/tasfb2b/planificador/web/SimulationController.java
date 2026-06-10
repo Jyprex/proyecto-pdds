@@ -93,7 +93,8 @@ public class SimulationController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false, defaultValue = "5") int stressFactor,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
-            @RequestParam(required = false) String preCancelledFlightIds) {
+            @RequestParam(required = false) String preCancelledFlightIds,
+            @RequestParam(required = false, defaultValue = "00:00:00") String startTime) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); // clamp 1–10
@@ -109,7 +110,7 @@ public class SimulationController {
         session.setStressFactor(clampedStress);
         session.setAlgorithm(algorithm);
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);

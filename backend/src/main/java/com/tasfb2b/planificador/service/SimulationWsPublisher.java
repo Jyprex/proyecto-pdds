@@ -164,6 +164,8 @@ public class SimulationWsPublisher {
                 .departureTime(asLong(route.get("departureTime")))
                 .arrivalTime(asLong(route.get("arrivalTime")))
                 .capacityPercent(asDouble(route.get("capacityPercent")))
+                .ocupacionReal(asInteger(route.get("ocupacionReal")))
+                .capacidadMax(asInteger(route.get("capacidadMax")))
                 .build();
     }
 
@@ -177,6 +179,10 @@ public class SimulationWsPublisher {
 
     private Double asDouble(Object value) {
         return value instanceof Number n ? n.doubleValue() : null;
+    }
+
+    private Integer asInteger(Object value) {
+        return value instanceof Number n ? n.intValue() : null;
     }
 
     private String asString(Object value) {
