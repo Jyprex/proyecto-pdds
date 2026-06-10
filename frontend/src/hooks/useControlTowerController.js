@@ -47,9 +47,28 @@ export const useControlTowerController = () => {
   const [selectedAlgorithm, setSelectedAlgorithm] = useState("hga");
   const [simState, setSimState] = useState("idle");
   const [simSpeed, setSimSpeed] = useState(1);
-
-  const [sessionId, setSessionId] = useState(null);
   const [isFluidMode, setIsFluidMode] = useState(false);
+
+  const [sessionId, setSessionId] = useState(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("session");
+    }
+    return null;
+  });
+
+  // Actualizar URL cuando cambia el sessionId
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location);
+      if (sessionId) {
+        url.searchParams.set("session", sessionId);
+      } else {
+        url.searchParams.delete("session");
+      }
+      window.history.replaceState({}, "", url);
+    }
+  }, [sessionId]);
 
   /** Fase 1: Atomización del Estado para optimización de rendimiento */
   const [meta, setMeta] = useState({
@@ -64,6 +83,8 @@ export const useControlTowerController = () => {
   });
   const [airportLoads, setAirportLoads] = useState({});
   const [aircraft, setAircraft] = useState([]);
+  const prevAircraftRef = useRef([]);
+  const prevActiveIdsRef = useRef(new Set());
   const [clock, setClock] = useState({ simulatedTime: "--:--", currentEpochTime: 0 });
   const [smoothSimTime, setSmoothSimTime] = useState(0);
   const smoothSimTimeRef = useRef(0);
@@ -73,7 +94,12 @@ export const useControlTowerController = () => {
 
   /** Snapshot buffer y referencias de reloj */
   const snapshotBufferRef = useRef([]);
-  const simClockRef = useRef({ serverEpoch: 0, receivedAt: 0, ratio: 1 });
+  const simClockRef = useRef({
+    serverEpoch: 0,
+    receivedAt: 0,
+    lastSeq: -1,
+    ratio: (5 * 24 * 60) / 30 // ratio por defecto para 5 días en 30 minutos (240x)
+  });
 
   const isCollapseScenario = activeTab === "colapso";
   const isSimScenario = activeTab === "periodo" || activeTab === "colapso";
@@ -762,11 +788,20 @@ export const useControlTowerController = () => {
 
   /** Lógica de Ventana Móvil: Vuelos en curso o inminentes (ocultando cancelados) */
   const activeShipments = useMemo(() => {
-    if (!aircraft || aircraft.length === 0 || !currentEpochTime) return [];
-    const viewWindow = 2 * 3600 * 1000;
+    if (!aircraft || aircraft.length === 0 || !currentEpochTime) return []
+    
+    // VENTANA DE VISUALIZACIÓN: 2 horas a futuro.
+    // POLÍTICA DE PURGA: Mantener hasta 5 minutos después del aterrizaje para efectos visuales.
+    const viewWindowFuture = 2 * 3600 * 1000;
+    const purgeWindowPast = 5 * 60 * 1000;
+    
     return aircraft
       .filter((r) => r.status !== "cancelled")
-      .filter((r) => r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow)
+      .filter((r) => {
+          const isTooOld = r.arrivalTime < currentEpochTime - purgeWindowPast;
+          const isTooFarFuture = r.departureTime > currentEpochTime + viewWindowFuture;
+          return !isTooOld && !isTooFarFuture;
+      })
       .sort((a, b) => a.departureTime - b.departureTime);
   }, [aircraft, currentEpochTime]);
 
@@ -807,6 +842,56 @@ export const useControlTowerController = () => {
     return Array.from(byId.values());
   }, [activeShipments, aircraft]);
 
+  const [searchedShipment, setSearchedShipment] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const searchShipment = useCallback(async (id) => {
+    if (!id) return;
+    setIsSearching(true);
+    
+    // 1. Búsqueda Local (Caché activo)
+    const local = activeAircraftAll.find(a => a.id === id || String(a.lotId) === id);
+    if (local) {
+      setSelectedAircraftId(local.id);
+      setSearchedShipment({
+        id: local.id,
+        origin: local.from,
+        destination: local.to,
+        status: local.status,
+        departure: local.departureTime,
+        arrival: local.arrivalTime,
+        isLocal: true
+      });
+      setIsSearching(false);
+      togglePanel("shipmentDetail");
+      return;
+    }
+
+    // 2. Búsqueda en Servidor (Histórico/Deep Search)
+    if (!sessionId) {
+      setIsSearching(false);
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/v1/simulation/shipment/${sessionId}/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchedShipment({
+          ...data,
+          isLocal: false
+        });
+        togglePanel("shipmentDetail");
+      } else {
+        alert("Envío no encontrado en el historial de la sesión.");
+      }
+    } catch (err) {
+      console.error("[Tasf.B2B] Error en búsqueda profunda:", err);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [activeAircraftAll, sessionId, togglePanel]);
+
   const rankedAircraftBase = useMemo(() => {
     if (activeAircraftAll.length === 0) return [];
     return [...activeAircraftAll].sort((a, b) => {
@@ -846,6 +931,17 @@ export const useControlTowerController = () => {
     if (selected && !finalSelection.some((p) => p.id === selected.id)) {
       finalSelection.push(selected);
     }
+
+    // --- DIAGNOSTIC: Visual Lifecycle (Filter) ---
+    const activeIds = new Set(finalSelection.map(a => a.id));
+    const prevActiveIds = prevActiveIdsRef.current;
+    
+    prevActiveIds.forEach(id => {
+        if (!activeIds.has(id)) {
+             console.log(`[AIRCRAFT_REMOVE] (Visual/Filter) Flight=${id}`);
+        }
+    });
+    prevActiveIdsRef.current = activeIds;
 
     return finalSelection;
   }, [rankedAircraftBase, currentEpochTime, smoothSimTime, selectedAircraftId]);
@@ -1186,6 +1282,9 @@ export const useControlTowerController = () => {
     sessionId,
     isFluidMode,
     setIsFluidMode,
+    searchShipment,
+    searchedShipment,
+    isSearching,
     setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,
@@ -1207,6 +1306,5 @@ export const useControlTowerController = () => {
     setSimState,
     showAirportDetail,
     selectedAircraft,
-    selectedAirportMetrics,
   };
 };

@@ -19,11 +19,21 @@ El sistema adopta una arquitectura de monolito modular con comunicación en tiem
 
 *   **Frontend (Puerto 5173):** Desarrollado en React con Vite y Vanilla CSS. Utiliza visualización de mapas SVG para telemetría interactiva de vuelos, interpolación de tiempo real a 60 FPS para el movimiento de aeronaves y exportación estructurada de reportes finales en Markdown.
 *   **Backend (Puerto 8080):** Spring Boot 3.5 con Java 21 y base de datos embebida H2. Implementa un pool de ejecución asíncrono (`simulationExecutor`) para no bloquear el hilo de peticiones HTTP durante simulaciones de larga duración.
-*   **Comunicación:** Peticiones REST para operaciones de control (iniciar, pausar, resetear, cancelar) y canal WebSockets (STOMP) con fallback de HTTP Polling periódico para transmitir métricas en vivo.
+*   **Comunicación:** Peticiones REST para operaciones de control y canal **WebSockets (STOMP)** para transmitir telemetría en vivo. El sistema soporta **Sesiones Compartidas** mediante un `sessionId` persistente en la URL, permitiendo que múltiples navegadores visualicen la misma simulación de forma sincronizada.
 
 ---
 
-## 2. Lógica del Motor de Simulación (EventEngine)
+## 2. Gestión de Datos y Memoria (Modelo Híbrido)
+
+Para soportar simulaciones de larga duración (5 días) con datasets de +500,000 maletas, el sistema emplea una estrategia de tres capas:
+
+1.  **Telemetría Activa (WebSocket Snapshots):** El servidor envía snapshots inmutables (`MapSnapshot`) que contienen solo aeronaves en vuelo y estados de aeropuertos. Para optimizar el ancho de banda, se envían conteos de maletas (`totalBags`) en lugar de listas exhaustivas de IDs.
+2.  **Caché de Visualización (Frontend):** El cliente mantiene una ventana móvil de 2 horas de datos y aplica una **Política de Purga de 5 minutos**: cualquier aeronave o lote entregado es eliminado de la memoria de React tras 5 minutos para evitar el desbordamiento de RAM.
+3.  **Trazabilidad Profunda (REST On-Demand):** Si el usuario busca un ID que no está en el caché local (porque es histórico o muy futuro), el frontend dispara una consulta al endpoint `GET /shipment/{sessionId}/{shipmentId}`. El servidor busca en el historial completo de los reportes diarios (`SimulationDayReport`) para devolver la ruta completa.
+
+---
+
+## 3. Lógica del Motor de Simulación (EventEngine)
 
 La simulación es un motor de eventos de tiempo discreto (DES) que procesa cronológicamente un conjunto de eventos ordenados en una cola de prioridad.
 

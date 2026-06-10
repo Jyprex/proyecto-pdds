@@ -64,6 +64,9 @@ const App = () => {
     sessionId,
     isFluidMode,
     setIsFluidMode,
+    searchShipment,
+    searchedShipment,
+    isSearching,
     setSelectedAircraftId,
     setSelectedAlgorithm,
     setSimSpeed,
@@ -217,6 +220,8 @@ const App = () => {
         systemClock={summary.systemClock}
         selectedAlgorithm={selectedAlgorithm}
         onAlgorithmChange={setSelectedAlgorithm}
+        onSearch={searchShipment}
+        isSearching={isSearching}
       />
 
       <div className="ct-kpi-region">
@@ -269,7 +274,7 @@ const App = () => {
       )}
       {isWindowOpen("shipmentDetail") && (
         <DraggableWindow title="Envío y Despacho" onClose={() => handleToggleWindow("shipmentDetail")} initialPosition={{x: 140, y: 270}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "shipmentDetail"} onFocus={() => handleFocusWindow("shipmentDetail")}>
-          <ShipmentDetailPanel isVisible={true} onHide={() => handleToggleWindow("shipmentDetail")} />
+          <ShipmentDetailPanel isVisible={true} onHide={() => handleToggleWindow("shipmentDetail")} searchedShipment={searchedShipment} />
         </DraggableWindow>
       )}
       {isWindowOpen("reports") && (
