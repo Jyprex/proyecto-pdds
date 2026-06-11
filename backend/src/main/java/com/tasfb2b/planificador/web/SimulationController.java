@@ -14,6 +14,7 @@ import com.tasfb2b.planificador.service.SimulationProgressHolder;
 import com.tasfb2b.planificador.service.SimulationService;
 import com.tasfb2b.planificador.service.FlightCancellationService;
 import com.tasfb2b.envio.service.EnvioService;
+import com.tasfb2b.planificador.service.SimulationWsPublisher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -27,15 +28,6 @@ import java.util.UUID;
 
 /**
  * Controlador REST para la simulación multi-día de TASF.B2B.
- *
- * <p>Expone tres grupos de endpoints:
- * <ul>
- *   <li>POST /api/v1/simulation/run/{dias}          → simulación estándar</li>
- *   <li>POST /api/v1/simulation/run-collapse/{dias} → simulación con inyección de colapso</li>
- *   <li>GET  /api/v1/simulation/status/{id}         → estado y métricas en tiempo real</li>
- *   <li>POST /api/v1/simulation/export-excel/{id}   → exportación Excel</li>
- *   <li>GET  /api/v1/simulation/export/{id}         → exportación CSV (legado)</li>
- * </ul>
  */
 @RestController
 @RequestMapping("/api/v1/simulation")
@@ -48,13 +40,15 @@ public class SimulationController {
     private final SimulationExcelService     excelService;
     private final EnvioService               envioService;
     private final FlightCancellationService  flightCancellationService;
+    private final SimulationWsPublisher      wsPublisher;
 
     @PostMapping("/run/{dias}")
     public ResponseEntity<Map<String, String>> startSimulation(
             @PathVariable(required = false) Integer dias,
             @RequestParam(required = false, defaultValue = "ALNS") String algorithm,
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
+            @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
+            @RequestParam(required = false) String preCancelledFlightIds) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         String sessionId = UUID.randomUUID().toString();
@@ -67,7 +61,7 @@ public class SimulationController {
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setAlgorithm(algorithm);
         
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -85,10 +79,11 @@ public class SimulationController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false, defaultValue = "5.0") double stressFactor,
             @RequestParam(required = false, defaultValue = "NONE") String endCondition,
-            @RequestParam(required = false, defaultValue = "60") int playbackMinutes) {
+            @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
+            @RequestParam(required = false) String preCancelledFlightIds) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
-        double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); // clamp 1–10
+        double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); 
         String sessionId = UUID.randomUUID().toString();
 
         java.time.LocalDate fechaInicio = null;
@@ -110,7 +105,7 @@ public class SimulationController {
         session.setAlgorithm(algorithm);
         session.setEndCondition(cond);
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -137,14 +132,36 @@ public class SimulationController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/cancel-flight/{vueloId}")
+    public ResponseEntity<Map<String, String>> cancelFlightNoSession(
+            @PathVariable Long vueloId,
+            @RequestParam(required = false) String sessionId) {
+        return handleCancelFlight(vueloId, sessionId);
+    }
+
+    private ResponseEntity<Map<String, String>> handleCancelFlight(Long vueloId, String sessionId) {
+        try {
+            flightCancellationService.cancelarVuelo(vueloId, sessionId);
+            if (sessionId != null) {
+                SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
+                if (session != null) {
+                    wsPublisher.pushImmediate(sessionId, session);
+                }
+            }
+            return ResponseEntity.ok(Map.of(
+                    "status", "ok",
+                    "message", "Vuelo " + vueloId + " cancelado exitosamente"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "status", "error",
+                    "message", e.getMessage()
+            ));
+        }
+    }
+
     // ── GET /status/{sessionId} ─────────────────────────────────────────────
 
-    /**
-     * Retorna el estado actual de la simulación.
-     * Diseñado para ser consultado por el frontend cada 2 segundos (polling).
-     *
-     * @return 200 con SimulationStatusDTO | 404 si la sesión no existe
-     */
     @GetMapping("/status/{sessionId}")
     public ResponseEntity<SimulationStatusDTO> getStatus(
             @PathVariable String sessionId) {
@@ -156,7 +173,6 @@ public class SimulationController {
             return ResponseEntity.notFound().build();
         }
 
-        // Calcular ocupación global promedio
         double globalOccupancy = 0;
         if (session.getAirportLoads() != null && !session.getAirportLoads().isEmpty()) {
             globalOccupancy = session.getAirportLoads().values().stream()
@@ -165,7 +181,6 @@ public class SimulationController {
                     .orElse(0);
         }
 
-        // Serializar los reports diarios como lista de Maps para el JSON
         java.util.List<java.util.Map<String, Object>> reportsList = session.getReports().stream()
                 .map(r -> {
                     java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
@@ -209,7 +224,6 @@ public class SimulationController {
                 .errorMessage(session.getErrorMessage())
                 .reports(reportsList);
 
-        // Si la simulacion termino, incluir la demanda real por dia
         if ("DONE".equals(session.getStatus().name()) && session.getStartEpoch() != null) {
             try {
                 java.time.LocalDate inicio = java.time.Instant
@@ -228,11 +242,6 @@ public class SimulationController {
 
     // ── POST /export-excel/{sessionId} ─────────────────────────────────────
 
-    /**
-     * Genera y descarga un archivo Excel (.xlsx) con los resultados completos
-     * de la simulación: métricas por día, totales, promedios y fitness score.
-     * Reemplaza al endpoint CSV legacy (que permanece por compatibilidad).
-     */
     @PostMapping("/export-excel/{sessionId}")
     public ResponseEntity<byte[]> exportExcel(
             @PathVariable String sessionId,
@@ -250,8 +259,6 @@ public class SimulationController {
         }
 
         try {
-            // El startEpoch es el currentEpochTime del primer día (si lo tenemos)
-            // Fallback: epoch 2026-01-01 si no hay datos
             long startEpoch = session.getStartEpoch() != null
                     ? session.getStartEpoch()
                     : java.time.LocalDate.of(2026, 1, 1).atStartOfDay()
@@ -275,12 +282,6 @@ public class SimulationController {
     }
 
 
-    /**
-     * Genera y descarga un archivo CSV con los resultados de la simulación.
-     * El CSV incluye una fila por día simulado con todas las métricas clave.
-     *
-     * @return 200 con CSV descargable | 404 si la sesión no existe | 409 si aún está en curso
-     */
     @GetMapping("/export/{sessionId}")
     public ResponseEntity<byte[]> exportCsv(@PathVariable String sessionId) {
 
@@ -308,23 +309,15 @@ public class SimulationController {
                 .body(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
-    // ── CSV Builder ─────────────────────────────────────────────────────────
-
-    /**
-     * Construye el contenido CSV a partir de los reportes de la sesión.
-     * Formato: una fila por día simulado.
-     */
     private String buildCsv(String sessionId,
                              SimulationProgressHolder.SimulationSessionState session) {
 
         StringBuilder sb = new StringBuilder();
 
-        // Cabecera
         sb.append("sessionId,dayIndex,startTime,endTime,")
           .append("totalMaletas,malatetasAtendidas,slaPercent,")
           .append("airportSaturation,colapsed,collapseTime,pendingLots\n");
 
-        // Filas
         for (SimulationDayReport report : session.getReports()) {
             sb.append(sessionId).append(",")
               .append(report.getDayIndex()).append(",")
@@ -340,7 +333,6 @@ public class SimulationController {
               .append("\n");
         }
 
-        // Fila de totales / resumen
         if (!session.getReports().isEmpty()) {
             double avgSla = session.getReports().stream()
                     .mapToDouble(SimulationDayReport::getSlaPercent)
@@ -360,4 +352,3 @@ public class SimulationController {
         return sb.toString();
     }
 }
-

@@ -10,17 +10,6 @@ import java.util.concurrent.Executor;
 
 /**
  * Configuración de los pools de hilos para ejecución asíncrona.
- *
- * <p>{@code @EnableAsync} activa el soporte de {@code @Async} en toda la aplicación.
- *
- * <p>Pools:
- * <ul>
- *   <li>{@code simulationExecutor}: pool dedicado para las simulaciones completas
- *       (corePoolSize=2, maxPoolSize=4, queueCapacity=10).</li>
- *   <li>{@code replanExecutor}: pool dedicado para los replans ALNS del modo colapso
- *       (corePoolSize configurable, maxPoolSize = 2× core, queueCapacity=20).
- *       Mantiene el replan aislado del bucle principal de simulación.</li>
- * </ul>
  */
 @Configuration
 @EnableAsync
@@ -40,8 +29,7 @@ public class AsyncConfig {
     }
 
     /**
-     * Pool para replans ALNS paralelos del modo colapso
-     * (ver PLANES/PLAN_PERF_COLAPSO.md).
+     * Pool para replans ALNS paralelos del modo colapso.
      *
      * <p>Tamaño configurable vía {@code tasf.sim.replan.poolSize}
      * (default 4). {@code maxPoolSize = 2 × core}, {@code queueCapacity = 20}.
@@ -60,4 +48,3 @@ public class AsyncConfig {
         return executor;
     }
 }
-

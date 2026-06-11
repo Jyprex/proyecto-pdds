@@ -3,8 +3,7 @@ package com.tasfb2b.planificador.domain;
 /**
  * Condición de terminación explícita para el escenario de simulación de colapso.
  *
- * <p>Reemplaza el abort implícito basado en {@code Solution.esColapsada()}.
- * La simulación ahora termina solo cuando se cumple la condición elegida
+ * <p>La simulación termina solo cuando se cumple la condición elegida
  * por el operador al lanzar {@code POST /run-collapse/{dias}}.
  *
  * <p>Ver {@code PLANES/PLAN_COLAPSO_INFORMATIVO.md}.

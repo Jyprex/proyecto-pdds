@@ -8,6 +8,19 @@ import org.springframework.stereotype.Component;
 
 import java.util.*;
 
+/**
+ * Motor de eventos separado del SimulationRunner.
+ *
+ * <p>Genera la secuencia cronológica completa de eventos para un conjunto
+ * de rutas dentro de un período simulado. Incluye:
+ * <ul>
+ *   <li>{@code LOT_ARRIVAL} — llegada del lote al aeropuerto de origen</li>
+ *   <li>{@code FLIGHT_DEPARTURE} — despegue con carga</li>
+ *   <li>{@code FLIGHT_ARRIVAL} — aterrizaje en cada escala/destino</li>
+ *   <li>{@code STORAGE_RELEASE} — liberación del almacén tras 24h de permanencia</li>
+ *   <li>{@code BAGGAGE_PICKUP} — el cliente recoge sus maletas</li>
+ * </ul>
+ */
 @Component
 public class EventEngine {
 
@@ -84,11 +97,9 @@ public class EventEngine {
                         load
                 ));
             }
-            // ─────────────────────────────────────────────────────────────────
         }
 
         events.sort(Comparator.comparingLong(Event::getTime));
-
         return events;
     }
 

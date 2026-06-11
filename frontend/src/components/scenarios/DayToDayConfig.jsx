@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import FlightCancellationPanel from "./FlightCancellationPanel";
 
 // ── DayToDayConfig — Panel del escenario "Operación Día a Día" ──────────────
 // Muestra monitoreo en vivo y permite iniciar la simulación con la fecha real
@@ -15,9 +16,24 @@ function DayToDayConfig({
   liveStatus,
   onStartDayToDay,
   onReset,
+  sessionId,
 }) {
   // ── Todos los hooks PRIMERO (antes de cualquier return condicional) ─────────
   const [activeSection, setActiveSection] = useState("envios");
+  const [preCancelledFlightIds, setPreCancelledFlightIds] = useState([]);
+  const [tempPreCancelId, setTempPreCancelId] = useState("");
+
+  const handleAddPreCancel = () => {
+    const id = parseInt(tempPreCancelId.trim(), 10);
+    if (!isNaN(id) && !preCancelledFlightIds.includes(id)) {
+      setPreCancelledFlightIds([...preCancelledFlightIds, id]);
+    }
+    setTempPreCancelId("");
+  };
+
+  const handleRemovePreCancel = (idToRemove) => {
+    setPreCancelledFlightIds(preCancelledFlightIds.filter(id => id !== idToRemove));
+  };
 
   const todayStr = useMemo(() => {
     const d = new Date();
@@ -132,7 +148,7 @@ function DayToDayConfig({
             <button
               id="dtd-btn-start"
               type="button"
-              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1)}
+              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1, preCancelledFlightIds)}
               style={{
                 width: "100%", padding: "12px 0", borderRadius: 8, border: "none",
                 background: "linear-gradient(135deg, #10b981, #059669)",
@@ -164,7 +180,10 @@ function DayToDayConfig({
             <button
               id="dtd-btn-reset"
               type="button"
-              onClick={() => onReset && onReset()}
+              onClick={() => {
+                setPreCancelledFlightIds([]);
+                if (onReset) onReset();
+              }}
               style={{
                 display: "block", width: "100%", marginTop: 8,
                 padding: "8px 0", borderRadius: 7,
@@ -304,19 +323,175 @@ function DayToDayConfig({
         {/* ── SECCIÓN VUELOS ───────────────────────────────────────────────── */}
         {activeSection === "vuelos" && (
           <div className="ct-config-section">
-            <p className="ct-config-section__title">CANCELAR VUELO</p>
-            <p className="ct-config-hint">
-              Seleccione un vuelo en curso para simular cancelación. Las maletas afectadas serán replanificadas.
-            </p>
-            <div className="ct-cancel-list">
-              {["IAD → LHR", "CDG → DEL", "PEK → HND"].map((ruta, i) => (
-                <div key={i} className="ct-cancel-item">
-                  <span>{ruta}</span>
-                  <span>{[42, 38, 25][i]} maletas</span>
-                  <button type="button" className="ct-cancel-btn">Cancelar</button>
+            {/* Si no está corriendo la simulación, configurar cancelaciones previas */}
+            {!isRunning && !isCompleted ? (
+              <div style={{
+                background: 'rgba(15, 23, 42, 0.85)',
+                backdropFilter: 'blur(12px)',
+                borderRadius: '12px',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                padding: '14px 16px',
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  marginBottom: '10px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#818cf8',
+                  letterSpacing: '0.5px',
+                }}>
+                  ⚙️ CONFIGURAR CANCELACIONES PREVIAS
                 </div>
-              ))}
-            </div>
+                <p style={{ fontSize: '11px', color: '#64748b', margin: '0 0 12px 0', lineHeight: '1.4' }}>
+                  Define qué vuelos iniciarán cancelados desde el primer ciclo de la simulación.
+                </p>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '14px' }}>
+                  <input
+                    type="number"
+                    placeholder="ID de vuelo a pre-cancelar"
+                    value={tempPreCancelId}
+                    onChange={(e) => setTempPreCancelId(e.target.value)}
+                    style={{
+                      flex: 1,
+                      background: 'rgba(30, 41, 59, 0.8)',
+                      border: '1px solid rgba(100, 116, 139, 0.4)',
+                      borderRadius: '8px',
+                      padding: '8px 12px',
+                      color: '#e2e8f0',
+                      fontSize: '13px',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    onClick={handleAddPreCancel}
+                    disabled={!tempPreCancelId}
+                    style={{
+                      background: !tempPreCancelId
+                        ? 'rgba(100, 116, 139, 0.4)'
+                        : 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '8px 16px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: !tempPreCancelId ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.2s ease',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    ➕ Agregar
+                  </button>
+                </div>
+
+                {preCancelledFlightIds.length > 0 ? (
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
+                      Lista de vuelos a pre-cancelar:
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {preCancelledFlightIds.map(id => (
+                        <div
+                          key={`pre-${id}`}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            background: 'rgba(239, 68, 68, 0.15)',
+                            border: '1px solid rgba(239, 68, 68, 0.3)',
+                            borderRadius: '20px',
+                            padding: '4px 10px',
+                            fontSize: '11px',
+                            color: '#ef4444',
+                            fontWeight: 700,
+                          }}
+                        >
+                          <span>Vuelo {id}</span>
+                          <button
+                            onClick={() => handleRemovePreCancel(id)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              padding: 0,
+                              fontSize: '12px',
+                              lineHeight: 1,
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setPreCancelledFlightIds([])}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#64748b',
+                        fontSize: '10px',
+                        cursor: 'pointer',
+                        marginTop: '10px',
+                        padding: 0,
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      Limpiar lista
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '11px', color: '#64748b', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>
+                    Ningún vuelo configurado para pre-cancelar.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                {/* Si la simulación está corriendo o completada, mostramos panel interactivo en curso */}
+                <FlightCancellationPanel
+                  sessionId={sessionId}
+                  isRunning={isRunning}
+                />
+                
+                {/* Si hubo pre-cancelados, mostrar el listado como referencia de lectura */}
+                {preCancelledFlightIds.length > 0 && (
+                  <div style={{
+                    marginTop: '10px',
+                    background: 'rgba(15, 23, 42, 0.5)',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    padding: '12px 14px',
+                  }}>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', marginBottom: '8px' }}>
+                      📋 Vuelos pre-cancelados al inicio:
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {preCancelledFlightIds.map(id => (
+                        <span
+                          key={`pre-run-${id}`}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.06)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: '20px',
+                            padding: '3px 8px',
+                            fontSize: '10px',
+                            color: '#94a3b8',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Vuelo {id}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

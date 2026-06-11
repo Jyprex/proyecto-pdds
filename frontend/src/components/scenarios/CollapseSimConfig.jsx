@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react'
+import FlightCancellationPanel from './FlightCancellationPanel'
 
 
 // Fecha mínima = hoy, máxima = 31 dic 2026
 
-function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChange, onStart, liveStatus, onReset }) {
+function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChange, onStart, liveStatus, onReset, sessionId, simState }) {
   const [activeSection, setActiveSection] = useState('config')
   const [isStarting, setIsStarting] = useState(false)
   const [startDate, setStartDate] = useState('2026-04-09')
@@ -185,31 +186,6 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
               </div>
             </div>
 
-            {/* ── Algoritmo ─────────────────────────────────────────────── */}
-            {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
-            <div className="ct-config-section">
-              <p className="ct-config-section__title">⚙️ ALGORITMO DE RESPUESTA</p>
-              <div style={{ background: 'rgba(15,23,42,0.5)', borderRadius: 10, padding: '10px 12px', marginTop: 6 }}>
-                {[
-                  { val: 'alns', label: 'ALNS — Recomendado ★', sub: 'Rescata vuelos cancelados en ~6.5 s', color: '#818cf8' },
-                ].map(opt => (
-                  <label key={opt.val} className="ct-algorithm-option" style={{ marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
-                    <input
-                      type="radio" name="algo-collapse" value={opt.val}
-                      checked={selectedAlgorithm === opt.val}
-                      onChange={() => onAlgorithmChange(opt.val)}
-                      style={{ marginTop: 3, accentColor: opt.color }}
-                    />
-                    <div>
-                      <strong style={{ color: selectedAlgorithm === opt.val ? opt.color : '#e2e8f0', fontSize: 12 }}>{opt.label}</strong>
-                      <span style={{ display: 'block', fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{opt.sub}</span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-            */}
-
             {/* ── Resumen de lo que pasará ──────────────────────────────── */}
             <div style={{
               background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
@@ -338,6 +314,12 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
                 ))}
               </div>
             )}
+
+            {/* Panel de cancelación manual de vuelos (solo visible durante simulación) */}
+            <FlightCancellationPanel
+              sessionId={sessionId}
+              isRunning={simState === 'running'}
+            />
           </div>
         )}
 

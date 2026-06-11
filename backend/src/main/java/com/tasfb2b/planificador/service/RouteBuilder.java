@@ -2,7 +2,6 @@ package com.tasfb2b.planificador.service;
 
 import com.tasfb2b.aeropuerto.domain.Aeropuerto;
 import com.tasfb2b.planificador.domain.Route;
-import com.tasfb2b.planificador.domain.RoutePool;
 import com.tasfb2b.superlote.domain.SuperLot;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import com.tasfb2b.planificador.strategy.NetworkAdapter;
@@ -14,9 +13,15 @@ import java.util.*;
 public class RouteBuilder {
 
     private final NetworkAdapter network;
+    private final RoutePool routePool;
 
-    public RouteBuilder(NetworkAdapter network) {
+    public RouteBuilder(NetworkAdapter network, RoutePool routePool) {
         this.network = network;
+        this.routePool = routePool;
+    }
+
+    public RoutePool getRoutePool() {
+        return routePool;
     }
 
     public Route build(SuperLot lot,
@@ -35,15 +40,15 @@ public class RouteBuilder {
                 : network.findBestRoute(origen, destino, lot, capacidadVuelo);
 
         if (flights == null || flights.isEmpty()) {
-            Route route = RoutePool.borrow();
-            route.setLot(lot);
-            route.setHops(List.of());
-            route.setFlights(List.of());
-            route.setDemandaTotal(lot.getTotalMaletas());
-            route.setCapacidadAsignada(0);
-            route.setArrivalTime(Long.MAX_VALUE);
-            route.setDeadline(lot.getDeadline());
-            return route;
+            Route empty = routePool.borrow();
+            empty.setLot(lot);
+            empty.setHops(List.of());
+            empty.setFlights(List.of());
+            empty.setDemandaTotal(lot.getTotalMaletas());
+            empty.setCapacidadAsignada(0);
+            empty.setArrivalTime(Long.MAX_VALUE);
+            empty.setDeadline(lot.getDeadline());
+            return empty;
         }
 
         // ─────────────────────────────────────────────
@@ -83,7 +88,7 @@ public class RouteBuilder {
         }
         hops.add(destino.getIcaoCode());
 
-        Route route = RoutePool.borrow();
+        Route route = routePool.borrow();
         route.setLot(lot);
         route.setHops(hops);
         route.setFlights(flights);
@@ -128,7 +133,7 @@ public class RouteBuilder {
                 .min()
                 .orElse(0);
 
-        Route backup = RoutePool.borrow();
+        Route backup = routePool.borrow();
         backup.setLot(lot);
         backup.setHops(hops);
         backup.setFlights(flights);

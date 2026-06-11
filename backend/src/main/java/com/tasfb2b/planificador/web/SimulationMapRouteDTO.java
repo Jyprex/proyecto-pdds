@@ -5,6 +5,9 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/**
+ * DTO tipado para cada segmento de ruta activa en el mapa.
+ */
 @Data
 @Builder
 @NoArgsConstructor

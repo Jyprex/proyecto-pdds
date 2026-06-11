@@ -60,7 +60,6 @@ const App = () => {
     sessionId,
     isFluidMode,
     setIsFluidMode,
-    isBuffering,
     targetPlaybackMinutes,
     setTargetPlaybackMinutes,
     setSelectedAircraftId,
@@ -98,39 +97,6 @@ const App = () => {
     <div
       className={`control-tower ${isCollapseScenario ? "control-tower--collapse" : ""}`}
     >
-      {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
-      <button
-        id="btn-experiment-nav"
-        onClick={() => navigate('/experiment')}
-        title="Ir al módulo de Experimentación Numérica"
-        style={{
-          position: 'fixed', top: 12, right: 16, zIndex: 9999,
-          background: 'linear-gradient(90deg, #7c3aed, #4f46e5)',
-          color: 'white', border: 'none', borderRadius: 8,
-          padding: '7px 14px', cursor: 'pointer',
-          fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
-          boxShadow: '0 4px 15px rgba(124,58,237,0.4)',
-        }}
-      >
-        🧪 Experimentación Numérica
-      </button>
-
-      <button
-        onClick={() => setIsFluidMode(!isFluidMode)}
-        title="Alternar entre modo rápido (original) y modo fluido (60 FPS - detallado)"
-        style={{
-          position: 'fixed', top: 12, right: 260, zIndex: 9999,
-          background: isFluidMode ? 'linear-gradient(90deg, #10b981, #059669)' : 'linear-gradient(90deg, #6b7280, #4b5563)',
-          color: 'white', border: 'none', borderRadius: 8,
-          padding: '7px 14px', cursor: 'pointer',
-          fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
-          boxShadow: isFluidMode ? '0 4px 15px rgba(16, 185, 129, 0.4)' : '0 4px 15px rgba(107, 114, 128, 0.4)',
-        }}
-      >
-        {isFluidMode ? "✨ Modo Fluido (60 FPS) ON" : "⚡ Modo Rápido (Pruebas) ON"}
-      </button>
-      */}
-
       {(simState === "completed" || liveStatus?.status === "DONE") && (
         <button
           onClick={() => {
@@ -217,13 +183,14 @@ const App = () => {
             liveStatus={liveStatus}
             onStartDayToDay={startDayToDaySimulation}
             onReset={resetSimulation}
+            sessionId={sessionId}
           />
           <PeriodSimConfig
             isOpen={isScenarioConfigOpen && activeTab === "periodo"}
             onClose={toggleScenarioConfig}
             selectedAlgorithm={selectedAlgorithm}
             onAlgorithmChange={setSelectedAlgorithm}
-            onStart={(dias, startDate) => startDayToDaySimulation(startDate, dias)}
+            onStart={(dias, startDate, preCancelledIds) => startDayToDaySimulation(startDate, dias, preCancelledIds)}
             liveStatus={liveStatus}
             simState={simState}
             sessionId={sessionId}
@@ -241,6 +208,8 @@ const App = () => {
             onStart={startCollapseSimulation}
             liveStatus={liveStatus}
             onReset={resetSimulation}
+            sessionId={sessionId}
+            simState={simState}
           />
 
           <div className="ct-floating-rail ct-floating-rail--left">
@@ -292,14 +261,6 @@ const App = () => {
                 airportRows={activeAirportRows}
                 onHide={() => togglePanel("occupancy")}
               />
-              {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
-              <AlgorithmComparisonPanel
-                isVisible={panelVisibility.comparison}
-                onHide={() => togglePanel("comparison")}
-                sessionId={sessionId}
-                comparisonData={comparisonData}
-              />
-              */}
               <ShipmentDetailPanel
                 isVisible={panelVisibility.shipmentDetail}
                 onHide={() => togglePanel("shipmentDetail")}
@@ -335,7 +296,7 @@ const App = () => {
         <p>LATENCIA DE RED: {summary.networkLatency}</p>
         {isCollapseScenario ? (
           <p className="ct-footer-collapse-badge">
-            ⚠ SISTEMA EN COLAPSO — 14/17 almacenes saturados
+            ⚠ SISTEMA EN COLAPSO
           </p>
         ) : (
           <p className="ct-footer-active">

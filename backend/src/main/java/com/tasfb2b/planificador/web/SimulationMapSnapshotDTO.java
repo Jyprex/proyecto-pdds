@@ -7,6 +7,9 @@ import lombok.NoArgsConstructor;
 
 import java.util.List;
 
+/**
+ * DTO tipado para el snapshot del mapa enviado por WebSocket.
+ */
 @Data
 @Builder
 @NoArgsConstructor

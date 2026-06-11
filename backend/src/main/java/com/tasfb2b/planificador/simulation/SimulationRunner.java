@@ -11,12 +11,28 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Ejecuta la simulación basada en eventos sobre un conjunto de rutas.
+ *
+ * <p>Soporta dos modos de operación:
+ * <ul>
+ *   <li>{@link #run}: one-shot completo (para HGA/ALNS fitness evaluation)</li>
+ *   <li>{@link #advanceTo}: incremental (para micro-batching en SimulationService)</li>
+ * </ul>
+ */
 @Component
 @RequiredArgsConstructor
 public class SimulationRunner {
 
     private final EventEngine engine;
 
+    /**
+     * Simulación one-shot: crea un estado nuevo, genera todos los eventos
+     * y los aplica secuencialmente. Usado para evaluación de fitness en HGA/ALNS.
+     *
+     * <p>Nota: el colapso YA NO aborta la simulación (colapso informativo).
+     * Todos los eventos se procesan hasta el final para obtener métricas completas.
+     */
     public SimulationState run(List<Route> routes,
                                Map<String, Aeropuerto> airports,
                                long startTime,
@@ -36,103 +52,70 @@ public class SimulationRunner {
 
         long t0 = System.nanoTime();
         List<Event> events = engine.buildEvents(routes, dayStartEpochMs);
-        long t1 = System.nanoTime();
-        events.sort((a, b) -> Long.compare(a.getTime(), b.getTime()));
-        long t2 = System.nanoTime();
+        long buildNanos = System.nanoTime() - t0;
+        state.setBuildEventsTimeNanos(buildNanos);
 
+        long t1 = System.nanoTime();
+        int applied = 0;
         for (Event e : events) {
             state.apply(e, airports);
+            applied++;
         }
-        long t3 = System.nanoTime();
-        
-        state.setEventCounts(events.size(), events.size());
-        state.setBuildEventsTimeNanos(t1 - t0 + (t2 - t1)); // Incluye ordenamiento
-        state.setApplyEventsTimeNanos(t3 - t2);
+        long applyNanos = System.nanoTime() - t1;
+        state.setApplyEventsTimeNanos(applyNanos);
+        state.setEventCounts(events.size(), applied);
 
         return state;
     }
 
     /**
-     * Avanza el estado de la simulación de forma incremental.
-     * En lugar de reconstruir desde cero, aplica eventos que caen en la nueva ventana de tiempo.
+     * Simulación incremental: avanza un estado EXISTENTE hasta {@code untilTime},
+     * registrando los vuelos de las rutas nuevas y aplicando solo eventos
+     * dentro de la ventana temporal {@code [state.currentTime, untilTime)}.
+     *
+     * <p>Usado por el micro-batching de SimulationService para avanzar
+     * ciclo a ciclo sin reconstruir el estado completo.
+     *
+     * @param state      estado mutable existente (persistente entre ciclos)
+     * @param allRoutes  TODAS las rutas conocidas hasta ahora (master solution)
+     * @param airports   mapa de aeropuertos
+     * @param dayStart   epoch del inicio del día actual (para EventEngine)
+     * @param untilTime  epoch hasta dónde avanzar
      */
     public void advanceTo(SimulationState state,
-                          List<Route> routes,
+                          List<Route> allRoutes,
                           Map<String, Aeropuerto> airports,
-                          long dayStartEpochMs,
-                          long endTime) {
+                          long dayStart,
+                          long untilTime) {
 
-        // Registrar nuevos vuelos descubiertos en las rutas (para track de capacidad)
-        List<Vuelo> vuelos = routes.stream()
-                .flatMap(r -> r.getFlights().stream())
-                .distinct()
-                .toList();
-        state.registerFlights(vuelos);
-
-        long t0 = System.nanoTime();
-        List<Event> events = engine.buildEvents(routes, dayStartEpochMs);
-        long t1 = System.nanoTime();
-        events.sort((a, b) -> Long.compare(a.getTime(), b.getTime()));
-        long t2 = System.nanoTime();
-
-        long lastProcessedTime = state.getCurrentTime();
-        int applied = 0;
-        for (Event e : events) {
-            // Aplicar solo eventos que ocurren DESPUÉS del último tiempo procesado
-            // y HASTA el tiempo final solicitado.
-            if (e.getTime() > lastProcessedTime && e.getTime() <= endTime) {
-                state.apply(e, airports);
-                applied++;
+        // Registrar vuelos de rutas nuevas (si los hay)
+        for (Route r : allRoutes) {
+            if (r.getFlights() != null) {
+                state.registerFlights(r.getFlights());
             }
         }
-        long t3 = System.nanoTime();
-
-        // Si no hubo eventos, avanzar el reloj manualmente para mantener sincronía
-        if (state.getCurrentTime() < endTime) {
-            state.setCurrentTime(endTime);
-        }
-
-        state.setEventCounts(events.size(), applied);
-        state.setBuildEventsTimeNanos(t1 - t0 + (t2 - t1));
-        state.setApplyEventsTimeNanos(t3 - t2);
-    }
-
-    public SimulationState runUntil(List<Route> routes,
-                                    Map<String, Aeropuerto> airports,
-                                    long startTime,
-                                    long dayStartEpochMs,
-                                    long endTime) {
-
-        List<Vuelo> vuelos = routes.stream()
-                .flatMap(r -> r.getFlights().stream())
-                .distinct()
-                .toList();
-
-        SimulationState state =
-                new SimulationState(
-                        new ArrayList<>(airports.values()),
-                        vuelos,
-                        startTime
-                );
 
         long t0 = System.nanoTime();
-        List<Event> events = engine.buildEvents(routes, dayStartEpochMs);
-        long t1 = System.nanoTime();
-        events.sort((a, b) -> Long.compare(a.getTime(), b.getTime()));
-        long t2 = System.nanoTime();
+        List<Event> events = engine.buildEvents(allRoutes, dayStart);
+        long buildNanos = System.nanoTime() - t0;
+        state.setBuildEventsTimeNanos(buildNanos);
 
+        long t1 = System.nanoTime();
+        int total = events.size();
         int applied = 0;
+
         for (Event e : events) {
-            if (e.getTime() > endTime) break;
+            // Solo aplicar eventos que están DENTRO de la ventana temporal
+            if (e.getTime() < state.getCurrentTime()) continue;
+            if (e.getTime() >= untilTime) break;
+
             state.apply(e, airports);
             applied++;
         }
-        long t3 = System.nanoTime();
-        
-        state.setEventCounts(events.size(), applied);
-        state.setBuildEventsTimeNanos(t1 - t0 + (t2 - t1));
-        state.setApplyEventsTimeNanos(t3 - t2);
 
-        return state;
+        long applyNanos = System.nanoTime() - t1;
+        state.setApplyEventsTimeNanos(applyNanos);
+        state.setEventCounts(total, applied);
+        state.setCurrentTime(untilTime);
     }
 }

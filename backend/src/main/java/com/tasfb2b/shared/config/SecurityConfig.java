@@ -43,10 +43,6 @@ public class SecurityConfig {
 
     /**
      * Política CORS: configurable por properties.
-     *
-     * - En dev, normalmente se usa el proxy de Vite (/api -> localhost:8080) y CORS no es necesario.
-     * - Si se consume el backend directamente desde el navegador, configurar:
-     *   app.cors.allowed-origins=http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {

@@ -158,6 +158,8 @@ public class ALNSPlannerService {
 
         if (iterState != null) tracker.setSaturationLevel(computeSaturationLevel(iterState, airportMap));
 
+        RoutePool pool = routeBuilder.getRoutePool();
+
         while (System.currentTimeMillis() - start < windowMs) {
             int q = Math.max(1, (int) (current.size() * DESTROY_FRACTION));
             List<Route> candidatePartial = new ArrayList<>(current);
@@ -218,7 +220,7 @@ public class ALNSPlannerService {
             if (!moveAccepted) {
                 List<Route> rejected = new ArrayList<>(candidate);
                 rejected.removeAll(candidatePartial);
-                for (Route r : rejected) com.tasfb2b.planificador.domain.RoutePool.recycle(r);
+                pool.recycleAll(rejected);
             }
 
             tracker.update(reward);

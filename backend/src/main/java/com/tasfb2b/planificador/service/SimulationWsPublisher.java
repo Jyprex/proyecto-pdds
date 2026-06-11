@@ -88,8 +88,8 @@ public class SimulationWsPublisher {
         long tEnd = System.currentTimeMillis();
         int routesCount = (map.getActiveRoutes() != null) ? map.getActiveRoutes().size() : 0;
         
-        System.out.printf("[PUBLISH] snapshotTime: %s | generatedAt: %d | publishedAt: %d | publishDelayMs: %d | Routes: %d%n", 
-                        map.getSimulatedTime(), tStart, tEnd, (tEnd - tStart), routesCount);
+        // Log de monitoreo interno (opcional)
+        // System.out.printf("[PUBLISH] snapshotTime: %s | publishDelayMs: %d | Routes: %d%n", map.getSimulatedTime(), (tEnd - tStart), routesCount);
     }
 
     private String topic(String sessionId, String channel) {
@@ -108,10 +108,9 @@ public class SimulationWsPublisher {
                     .build();
         }
 
-        // Fallback: Leemos la referencia VOLATILE una sola vez (Snapshot local consistente)
+        // Fallback: Leemos la referencia VOLATILE una sola vez
         SimulationProgressHolder.MapSnapshot snap = session.getMapSnapshot();
         if (snap == null) {
-            // Fallback si aún no hay primer snapshot procesado
             return SimulationMapSnapshotDTO.builder()
                     .sessionId(session.getSessionId())
                     .status(session.getStatus().name())
@@ -161,10 +160,10 @@ public class SimulationWsPublisher {
                     .rescuedFlights(frame.rescuedFlights())
                     .errorMessage(frame.errorMessage())
                     .startEpoch(frame.startEpoch())
+                    .algorithm(frame.algorithm())
                     .build();
         }
 
-        // Fallback legado
         return SimulationKpiSnapshotDTO.builder()
                 .sessionId(session.getSessionId())
                 .status(session.getStatus().name())
@@ -182,6 +181,7 @@ public class SimulationWsPublisher {
                 .rescuedFlights(session.getRescuedFlights())
                 .errorMessage(session.getErrorMessage())
                 .startEpoch(session.getStartEpoch())
+                .algorithm(session.getAlgorithm())
                 .build();
     }
 
@@ -215,13 +215,6 @@ public class SimulationWsPublisher {
             return DEFAULT_ROUTE_LIMIT;
         }
         return Math.min(limit, 600);
-    }
-
-    private Integer asInt(Object value) {
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        return null;
     }
 
     private Long asLong(Object value) {

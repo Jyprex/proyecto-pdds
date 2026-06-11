@@ -167,4 +167,26 @@ public class EnvioService {
                         java.util.TreeMap::new
                 ));
     }
+
+    /**
+     * Carga envíos de UN SOLO DÍA desde los archivos planos.
+     * Wrapper de {@link #cargarPorFecha} para sliding window.
+     */
+    public void cargarPorDia(LocalDate dia, String dataPath) {
+        cargarPorFecha(dia, dia, dataPath);
+    }
+
+    /**
+     * Purga envíos anteriores a la fecha dada de la BD H2 para liberar heap.
+     * Usado por la sliding window para evitar acumulación de datos en simulaciones largas.
+     *
+     * @param antes fecha (exclusiva); se eliminan envíos con fecha < antes
+     */
+    @Transactional
+    public void purgarAntesDe(LocalDate antes) {
+        long deleted = envioRepo.deleteByFechaBefore(antes);
+        if (deleted > 0) {
+            log.info("[SlidingWindow] Purgados {} envíos anteriores a {}", deleted, antes);
+        }
+    }
 }

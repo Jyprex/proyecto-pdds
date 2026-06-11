@@ -6,6 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.util.Map;
 
+/**
+ * DTO tipado para el snapshot de KPIs enviado por WebSocket.
+ */
 @Data
 @Builder
 @NoArgsConstructor
@@ -28,4 +31,5 @@ public class SimulationKpiSnapshotDTO {
     private Integer rescuedFlights;
     private String errorMessage;
     private Long startEpoch;
+    private String algorithm;
 }
