@@ -753,15 +753,22 @@ const viewWindow = 12 * 3600 * 1000;
     if (routes.length === 0) return []
     const byId = new Map()
     routes.forEach((r) => {
-      const next = { ...r, status: r.status ?? "normal" }
-      const prev = byId.get(next.id)
-      if (!prev) { byId.set(next.id, next); return; }
-      const nextP = STATUS_PRIORITY[next.status] ?? 0
-      const prevP = STATUS_PRIORITY[prev.status] ?? 0
-      if (nextP > prevP || (nextP === prevP && next.capacityPercent > prev.capacityPercent)) {
-        byId.set(next.id, next)
+      const next = { 
+        ...r, 
+        status: r.status ?? "normal",
+        capacityPercent: r.capacityPercent ?? 0 
+      };
+      const prev = byId.get(next.id);
+      if (!prev) { 
+        byId.set(next.id, next); 
+        return; 
       }
-    })
+      const nextP = STATUS_PRIORITY[next.status] ?? 0;
+      const prevP = STATUS_PRIORITY[prev.status] ?? 0;
+      if (nextP > prevP || (nextP === prevP && next.capacityPercent > prev.capacityPercent)) {
+        byId.set(next.id, next);
+      }
+    });
     return Array.from(byId.values())
   }, [aircraft])
 
