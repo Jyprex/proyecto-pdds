@@ -834,6 +834,8 @@ export const useControlTowerController = () => {
         arrivalTime: r.arrivalTime,
         capacityPercent: r.capacityPercent ?? 0,
         progress: r.progress,
+        ocupacionReal: r.ocupacionReal,
+        capacidadMax: r.capacidadMax,
       };
       const prev = byId.get(next.id);
       if (!prev) {

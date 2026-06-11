@@ -384,7 +384,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {filteredWarehouses.map(wh => {
                 const metrics = airportMetrics[wh.icao] || {};
-                const pct = metrics.capacity ? ((metrics.load / metrics.capacity) * 100).toFixed(1) : 0;
+                const pct = metrics.occupancy ?? 0;
                 const semaforo = getLevelColor(pct);
                 const isExpanded = expandedWh === wh.icao;
                 const isFocused = focusedEntity?.type === 'airport' && focusedEntity?.id === wh.icao;
@@ -416,7 +416,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '14px', fontWeight: 'bold', color: semaforo }}>{pct}%</div>
-                        <div style={{ fontSize: '10px', color: '#94a3b8' }}>{metrics.load || 0} / {metrics.capacity || 0} stock</div>
+                        <div style={{ fontSize: '10px', color: '#94a3b8' }}>{metrics.storedBags ?? 0} / {metrics.warehouseCapacity ?? 0} stock</div>
                       </div>
                     </div>
 
@@ -431,7 +431,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                               onClick={(e) => { e.stopPropagation(); handleSelectUT(f); }}
                             >
                               <span>✈ Vuelo {fId} ({f.from})</span>
-                              <span style={{ color: '#10b981' }}>+{f.ocupacionReal || '?'} maletas</span>
+                              <span style={{ color: '#10b981' }}>+{f.ocupacionReal ?? '?'} maletas</span>
                             </div>
                           );
                         }) : (
@@ -446,7 +446,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                               onClick={(e) => { e.stopPropagation(); handleSelectUT(f); }}
                             >
                               <span>✈ Vuelo {fId} (→{f.to})</span>
-                              <span style={{ color: '#f59e0b' }}>-{f.ocupacionReal || '?'} maletas</span>
+                              <span style={{ color: '#f59e0b' }}>-{f.ocupacionReal ?? '?'} maletas</span>
                             </div>
                           );
                         }) : (
