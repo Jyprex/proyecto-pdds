@@ -120,12 +120,6 @@ const App = () => {
   const [mapZoom, setMapZoom] = useState(1);
   const [mapCenter, setMapCenter] = useState([0, 20]);
 
-  const handleZoomIn = () => setMapZoom((z) => Math.min(z * 1.5, 8));
-  const handleZoomOut = () => setMapZoom((z) => Math.max(z / 1.5, 1));
-  const handleResetMap = () => {
-    setMapZoom(1);
-    setMapCenter([0, 20]);
-  };
 
   // Estados para los paneles de reporte ejecutivo y totales consolidados
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -279,13 +273,28 @@ const App = () => {
       )}
       {isWindowOpen("reports") && (
         <DraggableWindow title="Reportes y Exportación" onClose={() => handleToggleWindow("reports")} initialPosition={{x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "reports"} onFocus={() => handleFocusWindow("reports")}>
-          <ReportsPanel />
+          <ReportsPanel 
+            sessionId={sessionId}
+            selectedAlgorithm={selectedAlgorithm}
+            exportSimulationExcel={exportSimulationExcel}
+            exportDetailedSimulationReport={exportDetailedSimulationReport}
+          />
         </DraggableWindow>
       )}
 
       {isWindowOpen("airportConfig") && (
         <DraggableWindow title="Configuración de Almacenes" onClose={() => handleToggleWindow("airportConfig")} initialPosition={{x: 200, y: 150}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "airportConfig"} onFocus={() => handleFocusWindow("airportConfig")}>
           <AirportConfigPanel />
+        </DraggableWindow>
+      )}
+
+      {isWindowOpen("entities") && (
+        <DraggableWindow title="Monitoreo de Vuelos y Almacenes" onClose={() => handleToggleWindow("entities")} initialPosition={{x: window.innerWidth - 420, y: 120}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "entities"} onFocus={() => handleFocusWindow("entities")}>
+          <EntitiesListPanel 
+            activeAircraft={activeAircraft} 
+            airports={AIRPORTS} 
+            airportMetrics={activeMetrics} 
+          />
         </DraggableWindow>
       )}
 
@@ -383,13 +392,6 @@ const App = () => {
               onClose={hideAirportDetail}
             />
           </div>
-
-          <div className="ct-side-controls" aria-label="Controles del mapa">
-            <button type="button" onClick={handleZoomIn} title="Acercar">+</button>
-            <button type="button" onClick={handleZoomOut} title="Alejar">-</button>
-            <button type="button" onClick={handleResetMap} title="Restablecer vista">◎</button>
-            <button type="button" title="Mover mapa (Arrastrar)">✋</button>
-          </div>
         </section>
       </main>
 
@@ -398,6 +400,7 @@ const App = () => {
         isScenarioConfigOpen={isScenarioConfigOpen}
         panelVisibility={{
           telemetry: isWindowOpen("telemetry"),
+          entities: isWindowOpen("entities"),
           occupancy: isWindowOpen("occupancy"),
           transitInventory: isWindowOpen("transitInventory"),
           comparison: isWindowOpen("comparison"),
@@ -481,87 +484,7 @@ const App = () => {
             )}
           </div>
 
-          {/* Accordion 2: Consolidado de Métricas */}
-          <div style={{
-            border: "1px solid rgba(16, 185, 129, 0.3)",
-            borderRadius: "8px",
-            background: "rgba(15, 23, 42, 0.6)",
-            overflow: "hidden"
-          }}>
-            <button
-              onClick={() => setIsTotalsOpen(!isTotalsOpen)}
-              style={{
-                width: "100%",
-                padding: "12px 16px",
-                background: "rgba(30, 41, 59, 0.5)",
-                border: "none",
-                color: "#6ee7b7",
-                fontWeight: "bold",
-                textAlign: "left",
-                cursor: "pointer",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center"
-              }}
-            >
-              <span>📈 CONSOLIDADO GENERAL Y MÉTRICAS TOTALES</span>
-              <span style={{ fontSize: "10px" }}>{isTotalsOpen ? "▲ OCULTAR" : "▼ EXTENDER"}</span>
-            </button>
-            {isTotalsOpen && (
-              <div style={{ padding: "16px", background: "rgba(15, 23, 42, 0.8)" }}>
-                <div style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-                  gap: "12px"
-                }}>
-                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "6px", padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: "10px", color: "#64748b", textTransform: "uppercase" }}>SLA Final</div>
-                    <div style={{ fontSize: "20px", fontWeight: "bold", color: "#10b981", marginTop: "4px" }}>
-                      {liveStatus?.slaPercent != null ? `${liveStatus.slaPercent.toFixed(2)}%` : "0.00%"}
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "6px", padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: "10px", color: "#64748b", textTransform: "uppercase" }}>Total Envíos</div>
-                    <div style={{ fontSize: "20px", fontWeight: "bold", color: "#60a5fa", marginTop: "4px" }}>
-                      {((liveStatus?.totalAttended ?? 0) + (liveStatus?.totalMissed ?? 0)).toLocaleString("es-PE")}
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "6px", padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: "10px", color: "#64748b", textTransform: "uppercase" }}>Atendidas</div>
-                    <div style={{ fontSize: "20px", fontWeight: "bold", color: "#34d399", marginTop: "4px" }}>
-                      {(liveStatus?.totalAttended ?? 0).toLocaleString("es-PE")}
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "6px", padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: "10px", color: "#64748b", textTransform: "uppercase" }}>Perdidas (ECAP)</div>
-                    <div style={{ fontSize: "20px", fontWeight: "bold", color: "#f43f5e", marginTop: "4px" }}>
-                      {(liveStatus?.totalMissed ?? 0).toLocaleString("es-PE")}
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "6px", padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: "10px", color: "#64748b", textTransform: "uppercase" }}>Vuelos Rescatados</div>
-                    <div style={{ fontSize: "20px", fontWeight: "bold", color: "#3b82f6", marginTop: "4px" }}>
-                      {liveStatus?.rescuedFlights ?? 0}
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "6px", padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: "10px", color: "#64748b", textTransform: "uppercase" }}>Nodos Críticos</div>
-                    <div style={{ fontSize: "20px", fontWeight: "bold", color: "#fbbf24", marginTop: "4px" }}>
-                      {liveStatus?.criticalNodes ?? 0}
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "6px", padding: "10px", textAlign: "center" }}>
-                    <div style={{ fontSize: "10px", color: "#64748b", textTransform: "uppercase" }}>Algoritmo</div>
-                    <div style={{ fontSize: "18px", fontWeight: "bold", color: "#a78bfa", marginTop: "6px" }}>
-                      {selectedAlgorithm?.toUpperCase() || "ALNS"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Accordion 3: Paneles Secundarios de Análisis */}
+          {/* Accordion 2: Consola de Eventos (Logs) */}
           <div style={{
             border: "1px solid rgba(96, 165, 250, 0.3)",
             borderRadius: "8px",
@@ -584,48 +507,42 @@ const App = () => {
                 alignItems: "center"
               }}
             >
-              <span>📊 PANELES SECUNDARIOS DE ANÁLISIS (TELEMETRÍA, TOP AEROPUERTOS, LOGS)</span>
+              <span>🖥️ CONSOLA DE EVENTOS (LOGS)</span>
               <span style={{ fontSize: "10px" }}>{isSecondaryPanelsOpen ? "▲ OCULTAR" : "▼ EXTENDER"}</span>
             </button>
             {isSecondaryPanelsOpen && (
-              <div style={{ padding: "16px", background: "rgba(15, 23, 42, 0.8)", display: "flex", flexWrap: "wrap", gap: "16px" }}>
-                {eventLog && eventLog.length > 0 && (
-                  <aside className="ct-panel ct-panel--event-log" style={{ maxHeight: '250px', overflowY: 'auto', background: 'rgba(15, 23, 42, 0.85)', minWidth: "300px", flex: "1 1 300px" }}>
-                    <div className="ct-panel-header"><p>LOG DE EVENTOS</p></div>
+              <div style={{ padding: "16px", background: "rgba(15, 23, 42, 0.8)" }}>
+                {eventLog && eventLog.length > 0 ? (
+                  <div className="ct-panel ct-panel--event-log" style={{ maxHeight: '200px', overflowY: 'auto', background: 'rgba(15, 23, 42, 0.85)', width: "100%", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                    <div className="ct-panel-header" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "8px 12px" }}>
+                      <p style={{ margin: 0, fontSize: "11px", fontWeight: "bold", color: "#38bdf8" }}>BITÁCORA DE OPERACIONES</p>
+                    </div>
                     <div style={{ padding: '0.75rem', fontSize: '11px', fontFamily: 'monospace', color: '#9ca3af', display: 'flex', flexDirection: 'column-reverse' }}>
                       {eventLog.map((log, i) => (
-                        <div key={i} style={{ marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>
+                        <div key={i} style={{ marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '4px' }}>
                           {log.toString().replace(/vuelo-(\d+)(-\d+)?/gi, (match, id) => `Vuelo ${id}`)}
                         </div>
                       ))}
                     </div>
-                  </aside>
+                  </div>
+                ) : (
+                  <div style={{ color: "#64748b", fontSize: "12px", fontStyle: "italic" }}>Esperando eventos de simulación...</div>
                 )}
-                <EntitiesListPanel 
-                  activeAircraft={activeAircraft} 
-                  airports={AIRPORTS} 
-                  airportMetrics={activeMetrics} 
-                />
               </div>
             )}
           </div>
         </div>
       )}
 
-      <footer
-        className={`ct-footer ${isCollapseScenario ? "ct-footer--collapse" : ""}`}
-      >
-        <p>HORA DEL SISTEMA: {summary.systemClock}</p>
-        <p>CAPACIDAD GLOBAL: {summary.globalCapacity}</p>
-        <p>LATENCIA DE RED: {summary.networkLatency}</p>
-        {isCollapseScenario ? (
-          <p className="ct-footer-collapse-badge">
-            ⚠ SISTEMA EN COLAPSO — 14/17 almacenes saturados
-          </p>
-        ) : (
-          <p className="ct-footer-active">
-            {summary.flightsInCourse.value} VUELOS EN CURSO
-          </p>
+      <footer className="ct-footer-minimal">
+        <span style={{ opacity: 0.4 }}>TASFB2B Control Tower</span>
+        <span style={{ marginLeft: 'auto', color: summary.networkLatency === 'OK' ? '#10b981' : '#f59e0b' }}>
+          ● LATENCIA: {summary.networkLatency}
+        </span>
+        {isCollapseScenario && (
+          <span className="ct-footer-collapse-badge" style={{ marginLeft: 16 }}>
+            ⚠ MODO CRISIS ACTIVO
+          </span>
         )}
       </footer>
     </div>

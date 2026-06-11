@@ -515,28 +515,7 @@ function DayToDayConfig({
         {/* ── SECCIÓN CONFIG ───────────────────────────────────────────────── */}
         {activeSection === "config" && (
           <div className="ct-config-section">
-            <p className="ct-config-section__title">ALGORITMO PLANIFICADOR</p>
-            <div className="ct-algorithm-selector">
-              {[{ val: "hga", label: "Algoritmo A — HGA", sub: "Hybrid Genetic Algorithm" },
-                { val: "alns", label: "Algoritmo B — ALNS", sub: "Adaptive Large Neighborhood Search" }
-              ].map(opt => (
-                <label key={opt.val} className="ct-algorithm-option">
-                  <input
-                    type="radio"
-                    name="algorithm-dtd"
-                    value={opt.val}
-                    checked={selectedAlgorithm === opt.val}
-                    onChange={() => onAlgorithmChange(opt.val)}
-                  />
-                  <div>
-                    <strong>{opt.label}</strong>
-                    <span>{opt.sub}</span>
-                  </div>
-                </label>
-              ))}
-            </div>
-
-            <p className="ct-config-section__title" style={{ marginTop: 16 }}>🚦 SEMÁFORO DE MALETAS</p>
+            <p className="ct-config-section__title">🚦 SEMÁFORO DE MALETAS</p>
             <div className="ct-sla-legend">
               {[
                 { cls: "green",  label: "Verde: <70% del plazo" },

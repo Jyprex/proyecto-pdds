@@ -4,6 +4,64 @@ import { interpolateCoordinates } from "../../data/airportsData";
 
 const GEO_URL = "/world-110m.json";
 
+const LEGEND_ITEMS = [
+  { color: '#10b981', label: 'Nodo Estable (<70%)' },
+  { color: '#f59e0b', label: 'Saturación Media (70-90%)' },
+  { color: '#ef4444', label: 'Saturación Crítica (>90%)' },
+  { color: '#3b82f6', label: 'Vuelo / UT en curso' },
+  { color: '#f97316', label: 'Vuelo Crítico (carga alta)' },
+  { color: '#6b7280', label: 'Cancelado' },
+  { color: '#818cf8', label: 'Rescatado (ALNS)' },
+  { color: 'rgba(255,255,255,0.25)', label: 'Completado (fade-out)' },
+];
+
+const LegendButton = () => {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div style={{ position: 'absolute', bottom: 36, left: 62, zIndex: 200 }}>
+      <button
+        className="map-legend-btn"
+        style={{ position: 'static' }}
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        aria-label="Ver leyenda del mapa"
+        title="Leyenda"
+      >
+        ⓘ
+      </button>
+      {visible && (
+        <div className="map-legend-popup" style={{ bottom: 40, left: 0 }}>
+          <p>Leyenda Operativa</p>
+          {LEGEND_ITEMS.map(item => (
+            <div key={item.label} className="legend-row">
+              <span className="legend-dot" style={{ background: item.color }} />
+              {item.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MapZoomControls = ({ zoom, center, onMoveEnd }) => (
+  <div className="map-zoom-controls">
+    <button
+      title="Acercar"
+      onClick={() => onMoveEnd({ zoom: Math.min(zoom + 0.5, 8), coordinates: center })}
+    >+</button>
+    <button
+      title="Alejar"
+      onClick={() => onMoveEnd({ zoom: Math.max(zoom - 0.5, 1), coordinates: center })}
+    >−</button>
+    <button
+      title="Centrar vista"
+      onClick={() => onMoveEnd({ zoom: 1, coordinates: [0, 20] })}
+    >◎</button>
+  </div>
+);
+
+
 const PROJECTION_CONFIG = {
   rotate: [-20, 0, 0],
   scale: 220,
@@ -113,6 +171,12 @@ const WorldMap = ({
         onAircraftSelect(null);
       }}
     >
+      {/* ── Botón Flotante de Leyenda ( ⓘ ) ────────────────────────────────── */}
+      <LegendButton />
+
+      {/* ── Controles de Zoom Dark Mode ─────────────────────────────────────── */}
+      <MapZoomControls zoom={zoom} center={center} onMoveEnd={onMoveEnd} />
+
       {/* Floating clock overlay on the map */}
       {systemClock && systemClock !== "--:--:--" && systemClock !== "--:--" && (
         <div style={{

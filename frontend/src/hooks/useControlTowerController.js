@@ -725,7 +725,11 @@ export const useControlTowerController = () => {
                   totalDays: data.totalDays,
                   isCollapseMode: data.isCollapseMode,
                   errorMessage: data.errorMessage,
-                  startEpoch: data.startEpoch || prev.startEpoch
+                  startEpoch: data.startEpoch || prev.startEpoch,
+                  totalAttended: data.totalAttended ?? prev.totalAttended,
+                  totalMissed: data.totalMissed ?? prev.totalMissed,
+                  slaFinal: data.slaFinal ?? prev.slaFinal,
+                  reports: data.reports ?? prev.reports,
               }));
 
               if (data.status === 'DONE') {
@@ -1102,7 +1106,9 @@ export const useControlTowerController = () => {
           key: "flights",
           title: "Vuelos en curso",
           value: aircraft.filter(r => r.status !== "cancelled").length ?? 0,
-          subtitle: `Día ${meta.currentDay} de simulación`,
+          subtitle: isCollapseScenario 
+            ? `Rescatados: ${kpis.rescuedFlights ?? 0}` 
+            : `Día ${meta.currentDay} de simulación`,
           status: "green",
         },
         {
@@ -1124,7 +1130,9 @@ export const useControlTowerController = () => {
           key: "sla",
           title: "Entregas a tiempo (SLA)",
           value: `${kpis.slaPercent?.toFixed(1) ?? 0}%`,
-          subtitle: "Maletas atendidas / demanda total",
+          subtitle: (meta.totalAttended > 0 || meta.totalMissed > 0)
+            ? `Atendidas: ${meta.totalAttended.toLocaleString("es-PE")} | Perdidas: ${meta.totalMissed.toLocaleString("es-PE")}`
+            : "Maletas atendidas / demanda total",
           status: kpis.slaPercent >= 90 ? "green"
             : kpis.slaPercent >= 70 ? "amber" : "red",
         },

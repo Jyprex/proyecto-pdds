@@ -1,17 +1,24 @@
 import React, { useState } from "react";
 
-const ReportsPanel = () => {
+const ReportsPanel = ({
+  sessionId,
+  selectedAlgorithm = "alns",
+  exportSimulationExcel = () => {},
+  exportDetailedSimulationReport = () => {},
+}) => {
   const [activeTab, setActiveTab] = useState("ejecutivo");
 
   const downloadExecutiveReport = () => {
-    // Aquí podrías agregar la lógica real de descarga del MD
-    alert("Iniciando descarga del Reporte Ejecutivo .md...");
+    if (!sessionId) return;
+    exportDetailedSimulationReport(sessionId);
   };
 
   const downloadConsolidated = () => {
-    // Lógica para exportar consolidado
-    alert("Iniciando descarga del Consolidado General...");
+    if (!sessionId) return;
+    exportSimulationExcel(sessionId, selectedAlgorithm);
   };
+
+  const hasNoSession = !sessionId;
 
   return (
     <div className="ct-panel-content" style={{ padding: "16px", minWidth: "300px" }}>
@@ -42,6 +49,22 @@ const ReportsPanel = () => {
         </button>
       </div>
 
+      {/* Alerta de sesión inactiva */}
+      {hasNoSession && (
+        <div style={{
+          padding: "10px 12px",
+          borderRadius: "6px",
+          background: "rgba(239, 68, 68, 0.1)",
+          border: "1px solid rgba(239, 68, 68, 0.2)",
+          color: "#f87171",
+          fontSize: "11px",
+          lineHeight: "1.4",
+          marginBottom: "16px"
+        }}>
+          ⚠️ <strong>Sesión Inactiva:</strong> Inicie un escenario desde el menú de configuración (⚙) para habilitar las descargas de reportes reales del backend.
+        </div>
+      )}
+
       {/* Contenido de la pestaña activa */}
       {activeTab === "ejecutivo" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -51,11 +74,17 @@ const ReportsPanel = () => {
           </p>
           <button 
             onClick={downloadExecutiveReport}
+            disabled={hasNoSession}
             style={{
               padding: "10px", borderRadius: "8px", border: "none",
-              background: "linear-gradient(90deg, #db2777, #be185d)", color: "white",
-              fontWeight: "bold", fontSize: "13px", cursor: "pointer",
-              boxShadow: "0 4px 15px rgba(219, 39, 119, 0.3)"
+              background: hasNoSession 
+                ? "rgba(255,255,255,0.08)" 
+                : "linear-gradient(90deg, #db2777, #be185d)",
+              color: hasNoSession ? "#64748b" : "white",
+              fontWeight: "bold", fontSize: "13px", 
+              cursor: hasNoSession ? "not-allowed" : "pointer",
+              boxShadow: hasNoSession ? "none" : "0 4px 15px rgba(219, 39, 119, 0.3)",
+              transition: "all 0.2s"
             }}
           >
             📝 Descargar .MD
@@ -71,11 +100,17 @@ const ReportsPanel = () => {
           </p>
           <button 
             onClick={downloadConsolidated}
+            disabled={hasNoSession}
             style={{
               padding: "10px", borderRadius: "8px", border: "none",
-              background: "linear-gradient(90deg, #059669, #047857)", color: "white",
-              fontWeight: "bold", fontSize: "13px", cursor: "pointer",
-              boxShadow: "0 4px 15px rgba(5, 150, 105, 0.3)"
+              background: hasNoSession 
+                ? "rgba(255,255,255,0.08)" 
+                : "linear-gradient(90deg, #059669, #047857)",
+              color: hasNoSession ? "#64748b" : "white",
+              fontWeight: "bold", fontSize: "13px", 
+              cursor: hasNoSession ? "not-allowed" : "pointer",
+              boxShadow: hasNoSession ? "none" : "0 4px 15px rgba(5, 150, 105, 0.3)",
+              transition: "all 0.2s"
             }}
           >
             📊 Descargar CSV / Excel
