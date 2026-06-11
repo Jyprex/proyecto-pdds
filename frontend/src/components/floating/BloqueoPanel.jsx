@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSelectionBridge } from '../../hooks/useSelectionBridge';
 
 const AVERIA_TIPOS = [
-  { value: 1, label: 'Tipo 1 — Capacidad al 50%', desc: 'El almacén del nodo opera al 50% de su capacidad máxima' },
-  { value: 2, label: 'Tipo 2 — Cierre de Origen', desc: 'Cancela todos los vuelos que salen del nodo durante el período' },
-  { value: 3, label: 'Tipo 3 — Demora de Tránsito', desc: 'Duplica el tiempo de tránsito del tramo afectado' },
-  { value: 4, label: 'Tipo 4 — Corte Total de Tramo', desc: 'Bloquea completamente el tramo origen→destino' },
+  { value: 1, label: 'Tipo 1 — Capacidad al 50%', desc: 'El almacén del nodo opera al 50% de su capacidad máxima', color: '#f59e0b' },
+  { value: 2, label: 'Tipo 2 — Cierre de Origen', desc: 'Cancela todos los vuelos que salen del nodo durante el período', color: '#f97316' },
+  { value: 3, label: 'Tipo 3 — Demora de Tránsito', desc: 'Duplica el tiempo de tránsito del tramo afectado', color: '#ef4444' },
+  { value: 4, label: 'Tipo 4 — Corte Total de Tramo', desc: 'Bloquea completamente el tramo origen→destino', color: '#1e1b4b' },
 ];
 
 const fieldStyle = {
@@ -30,8 +31,8 @@ const labelStyle = {
 const TAB_COLORS = { TRAMO: '#f59e0b', NODO: '#3b82f6', AVERIA: '#ef4444' };
 const TAB_ICONS  = { TRAMO: '🔒', NODO: '🏚️', AVERIA: '⚠️' };
 
-/** B05/B06/B07-B10: Panel unificado de Bloqueos y Averías */
-const BloqueoPanel = () => {
+/** B05/B06/B07-B10: Panel unificado de Bloqueos y Averías con vinculación al mapa */
+const BloqueoPanel = ({ activeAircraft = [] }) => {
   const [activeTab, setActiveTab] = useState('TRAMO');
   const [bloqueos, setBloqueos] = useState([]);
   const [form, setForm] = useState({
@@ -46,6 +47,14 @@ const BloqueoPanel = () => {
   });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [expandedBloqueo, setExpandedBloqueo] = useState(null);
+
+  // ── Selection Bridge para interacción con el mapa ────────────────────────
+  const {
+    setExceptionHighlight,
+    dispatchMapCommand,
+    setFocusedEntity,
+  } = useSelectionBridge();
 
   const load = useCallback(async () => {
     try {
@@ -107,6 +116,58 @@ const BloqueoPanel = () => {
     await fetch(`/api/v1/bloqueos/${id}/desactivar`, { method: 'PATCH' });
     await load();
   };
+
+  // ── Paso 5: Enfocar bloqueo en el mapa ──────────────────────────────────
+  const handleFocusBloqueo = useCallback((bloqueo) => {
+    // 1. Enviar highlight de excepción al mapa
+    setExceptionHighlight({
+      type: bloqueo.tipo,
+      origenIcao: bloqueo.origenIcao,
+      destinoIcao: bloqueo.destinoIcao || null,
+      averiaType: bloqueo.averiaType || null,
+      ts: Date.now(),
+    });
+
+    // 2. Hacer flyTo al nodo de origen
+    // Necesitamos las coordenadas — las obtenemos del lookup global
+    import('../../data/airportsData').then(({ AIRPORT_BY_ICAO }) => {
+      const airport = AIRPORT_BY_ICAO[bloqueo.origenIcao];
+      if (airport) {
+        dispatchMapCommand('flyTo', {
+          coordinates: airport.coordinates,
+          zoom: 4,
+          targetId: bloqueo.origenIcao,
+        });
+      }
+    });
+
+    // 3. Expandir para mostrar vuelos afectados
+    setExpandedBloqueo(expandedBloqueo === bloqueo.id ? null : bloqueo.id);
+  }, [setExceptionHighlight, dispatchMapCommand, expandedBloqueo]);
+
+  // ── Paso 5: Vuelos afectados por un bloqueo ─────────────────────────────
+  const getAffectedFlights = useCallback((bloqueo) => {
+    if (!activeAircraft || activeAircraft.length === 0) return [];
+    return activeAircraft.filter(f => {
+      if (f.status === 'cancelled') return false;
+      if (bloqueo.tipo === 'TRAMO') {
+        return f.from === bloqueo.origenIcao && f.to === bloqueo.destinoIcao;
+      }
+      if (bloqueo.tipo === 'NODO') {
+        return f.from === bloqueo.origenIcao || f.to === bloqueo.origenIcao;
+      }
+      if (bloqueo.tipo === 'AVERIA') {
+        if (parseInt(bloqueo.averiaType) === 2) {
+          return f.from === bloqueo.origenIcao; // Cierre de origen
+        }
+        if (parseInt(bloqueo.averiaType) === 4 && bloqueo.destinoIcao) {
+          return f.from === bloqueo.origenIcao && f.to === bloqueo.destinoIcao;
+        }
+        return f.from === bloqueo.origenIcao || f.to === bloqueo.origenIcao;
+      }
+      return false;
+    });
+  }, [activeAircraft]);
 
   const filteredBloqueos = bloqueos.filter(b => b.tipo === activeTab && b.activo);
   const color = TAB_COLORS[activeTab];
@@ -209,41 +270,103 @@ const BloqueoPanel = () => {
         </button>
       </div>
 
-      {/* Lista de bloqueos activos */}
+      {/* Lista de bloqueos activos con interacción al mapa */}
       <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '6px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
         {activeTab}S ACTIVOS ({filteredBloqueos.length})
       </div>
-      <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+      <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
         {filteredBloqueos.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '20px', color: '#475569', fontSize: '12px' }}>
             Sin bloqueos de tipo {activeTab} activos
           </div>
         ) : (
-          filteredBloqueos.map(b => (
-            <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '8px 10px', borderRadius: '6px', marginBottom: '4px',
-              background: 'rgba(255,255,255,0.04)', border: `1px solid ${color}20` }}>
-              <div>
-                <span style={{ fontWeight: 'bold', color, fontSize: '12px' }}>
-                  {b.origenIcao}{b.destinoIcao ? ` → ${b.destinoIcao}` : ''}
-                  {b.averiaType ? ` · T${b.averiaType}` : ''}
-                </span>
-                <div style={{ fontSize: '10px', color: '#64748b' }}>
-                  {new Date(b.inicio).toLocaleDateString()} → {new Date(b.fin).toLocaleDateString()}
+          filteredBloqueos.map(b => {
+            const isExpanded = expandedBloqueo === b.id;
+            const affectedFlights = isExpanded ? getAffectedFlights(b) : [];
+            const averiaColor = b.averiaType
+              ? AVERIA_TIPOS.find(t => t.value === parseInt(b.averiaType))?.color || color
+              : color;
+
+            return (
+              <div key={b.id} style={{
+                borderRadius: '6px', marginBottom: '4px',
+                background: 'rgba(255,255,255,0.04)', border: `1px solid ${averiaColor}30`,
+                overflow: 'hidden',
+              }}>
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '8px 10px', cursor: 'pointer' }}
+                  onClick={() => handleFocusBloqueo(b)}
+                >
+                  <div>
+                    <span style={{ fontWeight: 'bold', color: averiaColor, fontSize: '12px' }}>
+                      {b.origenIcao}{b.destinoIcao ? ` → ${b.destinoIcao}` : ''}
+                      {b.averiaType ? ` · T${b.averiaType}` : ''}
+                    </span>
+                    <div style={{ fontSize: '10px', color: '#64748b' }}>
+                      {new Date(b.inicio).toLocaleDateString()} → {new Date(b.fin).toLocaleDateString()}
+                    </div>
+                    {b.descripcion && <div style={{ fontSize: '10px', color: '#94a3b8', fontStyle: 'italic' }}>{b.descripcion}</div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '9px', color: '#64748b' }}>📍 Ver en mapa</span>
+                    <button onClick={(e) => { e.stopPropagation(); handleDesactivar(b.id); }}
+                      style={{ padding: '3px 8px', borderRadius: '5px', border: '1px solid rgba(239,68,68,0.3)',
+                        background: 'rgba(239,68,68,0.1)', color: '#fca5a5', fontSize: '11px', cursor: 'pointer' }}>
+                      ✕
+                    </button>
+                  </div>
                 </div>
-                {b.descripcion && <div style={{ fontSize: '10px', color: '#94a3b8', fontStyle: 'italic' }}>{b.descripcion}</div>}
+
+                {/* Paso 5: Lista de vuelos afectados */}
+                {isExpanded && (
+                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: '8px 10px', borderTop: `1px solid ${averiaColor}20` }}>
+                    <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 'bold', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      ✈ Vuelos afectados ({affectedFlights.length})
+                    </div>
+                    {affectedFlights.length > 0 ? affectedFlights.slice(0, 8).map(f => {
+                      const fId = f.id?.toString().replace("vuelo-", "").split("-")[0];
+                      return (
+                        <div
+                          key={f.id}
+                          style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', padding: '3px 0', color: '#cbd5e1', cursor: 'pointer', borderBottom: '1px dashed rgba(255,255,255,0.05)' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFocusedEntity('flight', f.id, 'panel');
+                          }}
+                        >
+                          <span>Vuelo {fId}: {f.from} → {f.to}</span>
+                          <span style={{ color: statusColor(f.status), textTransform: 'uppercase', fontWeight: 'bold' }}>{f.status}</span>
+                        </div>
+                      );
+                    }) : (
+                      <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic' }}>
+                        No hay vuelos activos en este tramo/nodo en este momento.
+                      </div>
+                    )}
+                    {affectedFlights.length > 8 && (
+                      <div style={{ fontSize: '9px', color: '#475569', marginTop: '4px' }}>
+                        ... y {affectedFlights.length - 8} más
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <button onClick={() => handleDesactivar(b.id)}
-                style={{ padding: '3px 8px', borderRadius: '5px', border: '1px solid rgba(239,68,68,0.3)',
-                  background: 'rgba(239,68,68,0.1)', color: '#fca5a5', fontSize: '11px', cursor: 'pointer' }}>
-                ✕
-              </button>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>
   );
+};
+
+const statusColor = (status) => {
+  switch (status) {
+    case 'cancelled': return '#ef4444';
+    case 'critical': return '#f59e0b';
+    case 'rescued': return '#3b82f6';
+    default: return '#10b981';
+  }
 };
 
 export default BloqueoPanel;

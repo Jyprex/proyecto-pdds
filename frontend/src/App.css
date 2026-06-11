@@ -2807,3 +2807,25 @@
   0% { opacity: 0.8; }
   100% { opacity: 0; }
 }
+
+/* ── Paso 5: Excepción pulsante (bloqueos/averías) ──────────────────────── */
+@keyframes ct-exception-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.15); }
+}
+
+/* ── Paso 4: Track & Trace ruta pulsante ────────────────────────────────── */
+@keyframes ct-tracked-route-pulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Paso 3: Highlight temporal de entidad en panel ─────────────────────── */
+.ct-entity-highlighted {
+  animation: ct-entity-highlight-flash 0.5s ease-in-out 3;
+}
+
+@keyframes ct-entity-highlight-flash {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 12px rgba(96, 165, 250, 0.6), inset 0 0 8px rgba(96, 165, 250, 0.15); }
+}

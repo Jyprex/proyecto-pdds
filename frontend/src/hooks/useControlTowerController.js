@@ -561,6 +561,10 @@ export const useControlTowerController = () => {
           snap = { epoch };
           snapshotBufferRef.current.push(snap);
           snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
+          // Paso 9: Guardia de memoria — máximo 30 snapshots en buffer
+          if (snapshotBufferRef.current.length > 30) {
+            snapshotBufferRef.current = snapshotBufferRef.current.slice(-20);
+          }
         }
         
         if (type === 'snapshot') {
@@ -630,7 +634,11 @@ export const useControlTowerController = () => {
           const envelope = JSON.parse(msg.body);
           const logEntry = envelope?.data;
           if (!logEntry) return;
-          setLogs((prev) => [...prev, logEntry]);
+          setLogs((prev) => {
+            const next = [...prev, logEntry];
+            // Paso 9: Sliding window — máximo 200 entradas
+            return next.length > 200 ? next.slice(-150) : next;
+          });
         } catch (err) {
           console.error('Error parsing eventLog:', err);
         }
@@ -849,6 +857,9 @@ export const useControlTowerController = () => {
   const [searchedShipment, setSearchedShipment] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
 
+  // Paso 4: Callback para Track & Trace — se invoca desde App.jsx con el bridge
+  const [trackedRouteData, setTrackedRouteData] = useState(null);
+
   const searchShipment = useCallback(async (id) => {
     if (!id) return;
     setIsSearching(true);
@@ -865,6 +876,11 @@ export const useControlTowerController = () => {
         departure: local.departureTime,
         arrival: local.arrivalTime,
         isLocal: true
+      });
+      // Paso 4: Crear ruta de un solo hop para Track & Trace
+      setTrackedRouteData({
+        shipmentId: local.id,
+        hops: [{ from: local.from, to: local.to, flightId: local.id, status: local.status }]
       });
       setIsSearching(false);
       togglePanel("shipmentDetail");
@@ -885,6 +901,24 @@ export const useControlTowerController = () => {
           ...data,
           isLocal: false
         });
+        // Paso 4: Crear ruta multi-hop si el servidor devuelve hops
+        if (data.route && data.route.length > 0) {
+          setTrackedRouteData({
+            shipmentId: id,
+            hops: data.route.map(hop => ({
+              from: hop.from,
+              to: hop.to,
+              flightId: hop.id || hop.flightId,
+              status: hop.status || 'normal',
+            }))
+          });
+        } else {
+          // Fallback: ruta simple si no hay hops detallados
+          setTrackedRouteData({
+            shipmentId: id,
+            hops: [{ from: data.origin, to: data.destination, flightId: id, status: data.status || 'normal' }]
+          });
+        }
         togglePanel("shipmentDetail");
       } else {
         alert("Envío no encontrado en el historial de la sesión.");
@@ -1314,5 +1348,6 @@ export const useControlTowerController = () => {
     setSimState,
     showAirportDetail,
     selectedAircraft,
+    trackedRouteData,
   };
 };

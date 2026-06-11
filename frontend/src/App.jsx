@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useSelectionBridge } from "./hooks/useSelectionBridge";
 import { useNavigate } from "react-router-dom";
 import WorldMap from "./components/map/WorldMap";
 import AirportDetailPanel from "./components/controlTower/AirportDetailPanel";
@@ -87,7 +88,16 @@ const App = () => {
     toggleKpiStrip,
     togglePanel,
     toggleScenarioConfig,
+    trackedRouteData,
   } = useControlTowerController();
+
+  // ── Paso 4: Sincronizar Track & Trace con el SelectionBridge ──
+  const { setTrackedRoute } = useSelectionBridge();
+  React.useEffect(() => {
+    if (trackedRouteData) {
+      setTrackedRoute(trackedRouteData);
+    }
+  }, [trackedRouteData, setTrackedRoute]);
 
   // ── Lógica FIFO de Paneles (Draggable Windows) ──
   const [maxWindows, setMaxWindows] = useState(1);
@@ -300,7 +310,7 @@ const App = () => {
 
       {isWindowOpen("bloqueos") && (
         <DraggableWindow title="Gestión de Bloqueos y Averías" onClose={() => handleToggleWindow("bloqueos")} initialPosition={{x: 240, y: 180}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "bloqueos"} onFocus={() => handleFocusWindow("bloqueos")}>
-          <BloqueoPanel />
+          <BloqueoPanel activeAircraft={activeAircraft} />
         </DraggableWindow>
       )}
 

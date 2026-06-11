@@ -1,6 +1,7 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { ComposableMap, Geographies, Geography, Marker, Line, ZoomableGroup } from "react-simple-maps";
-import { interpolateCoordinates } from "../../data/airportsData";
+import { interpolateCoordinates, AIRPORT_BY_ICAO } from "../../data/airportsData";
+import { useSelectionBridge } from "../../hooks/useSelectionBridge";
 
 const GEO_URL = "/world-110m.json";
 
@@ -13,6 +14,7 @@ const LEGEND_ITEMS = [
   { color: '#6b7280', label: 'Cancelado' },
   { color: '#818cf8', label: 'Rescatado (ALNS)' },
   { color: 'rgba(255,255,255,0.25)', label: 'Completado (fade-out)' },
+  { color: '#a78bfa', label: 'Ruta rastreada (Track & Trace)', style: 'dashed' },
 ];
 
 const LegendButton = () => {
@@ -34,7 +36,7 @@ const LegendButton = () => {
           <p>Leyenda Operativa</p>
           {LEGEND_ITEMS.map(item => (
             <div key={item.label} className="legend-row">
-              <span className="legend-dot" style={{ background: item.color }} />
+              <span className="legend-dot" style={{ background: item.color, borderStyle: item.style === 'dashed' ? 'dashed' : 'solid' }} />
               {item.label}
             </div>
           ))}
@@ -68,13 +70,19 @@ const PROJECTION_CONFIG = {
   center: [15, 10],
 };
 
+// Constante para el máximo de vuelos completados en fade-out
+const MAX_COMPLETED_PLANES = 50;
+
 /**
- * useSmoothProgress — Interpola suavemente el progress de cada avión.
- *
  * WorldMap — Componente raíz del mapa interactivo.
  *
- * Utiliza transiciones CSS (GPU) en los Markers para interpolación lineal fluida,
- * eliminando tirones causados por recálculos de React a 60fps.
+ * Soporta:
+ * - Vinculación bidireccional Panel↔Mapa via SelectionBridge
+ * - Estela progresiva (trail) detrás del avión
+ * - Track & Trace con ruta multi-hop
+ * - Highlights de excepciones (bloqueos/averías)
+ * - Filtros visuales por semáforo
+ * - Aviones en tierra diferenciados
  */
 const WorldMap = ({
   airports = [],
@@ -93,10 +101,28 @@ const WorldMap = ({
   onMoveEnd = () => {},
   systemClock = "--:--:--",
 }) => {
+  // ── Selection Bridge ─────────────────────────────────────────────────────
+  const {
+    focusedEntity,
+    setFocusedEntity,
+    mapCommand,
+    clearMapCommand,
+    trackedRoute,
+    clearTrackedRoute,
+    exceptionHighlight,
+    clearExceptionHighlight,
+    activeFilters,
+  } = useSelectionBridge();
+
   // Estados para Tooltip de Aviones y Desvanecimiento de líneas
   const [selectedPlane, setSelectedPlane] = useState(null);
-  const [completedPlanes, setCompletedPlanes] = useState([]);
+  const completedPlanesRef = useRef([]);
+  const [completedPlanesVersion, setCompletedPlanesVersion] = useState(0);
   const prevActivePlanesRef = useRef([]);
+
+  // ── Highlight pulsante temporal ──────────────────────────────────────────
+  const [highlightedId, setHighlightedId] = useState(null);
+  const highlightTimerRef = useRef(null);
 
   // Detectar vuelos completados para desvanecimiento
   useEffect(() => {
@@ -108,23 +134,29 @@ const WorldMap = ({
     
     if (newlyCompleted.length > 0) {
       const now = Date.now();
-      setCompletedPlanes(prev => [
-        ...prev,
-        ...newlyCompleted.map(p => ({ ...p, completedAt: now }))
-      ]);
+      const newEntries = newlyCompleted.map(p => ({ ...p, completedAt: now }));
+      completedPlanesRef.current = [
+        ...completedPlanesRef.current,
+        ...newEntries,
+      ].slice(-MAX_COMPLETED_PLANES); // Guardia de memoria: máximo 50
+      setCompletedPlanesVersion(v => v + 1);
     }
     
     prevActivePlanesRef.current = activeAircraft;
   }, [activeAircraft]);
 
-  // Limpiar vuelos desvanecidos después de 3 segundos
+  // Limpiar vuelos desvanecidos después de 2 segundos (más agresivo que antes)
   useEffect(() => {
-    const interval = setInterval(() => {
+    const timer = setTimeout(() => {
       const now = Date.now();
-      setCompletedPlanes(prev => prev.filter(p => now - p.completedAt < 3000));
-    }, 500);
-    return () => clearInterval(interval);
-  }, []);
+      const before = completedPlanesRef.current.length;
+      completedPlanesRef.current = completedPlanesRef.current.filter(p => now - p.completedAt < 2000);
+      if (completedPlanesRef.current.length !== before) {
+        setCompletedPlanesVersion(v => v + 1);
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [completedPlanesVersion]);
 
   // Mantener actualizado el avión seleccionado en tooltip
   useEffect(() => {
@@ -133,13 +165,44 @@ const WorldMap = ({
       if (current) {
         setSelectedPlane(current);
       } else {
-        const completed = completedPlanes.find(p => p.id === selectedPlane.id);
+        const completed = completedPlanesRef.current.find(p => p.id === selectedPlane.id);
         if (!completed) {
           setSelectedPlane(null);
         }
       }
     }
-  }, [activeAircraft, completedPlanes, selectedPlane]);
+  }, [activeAircraft, completedPlanesVersion, selectedPlane]);
+
+  // ── Paso 2: Responder a mapCommands del bridge ───────────────────────────
+  useEffect(() => {
+    if (!mapCommand) return;
+    const { action, payload } = mapCommand;
+
+    if (action === 'flyTo' && payload.coordinates) {
+      onMoveEnd({
+        zoom: payload.zoom || 4,
+        coordinates: payload.coordinates,
+      });
+      if (payload.targetId) {
+        setHighlightedId(payload.targetId);
+        clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = setTimeout(() => setHighlightedId(null), 3000);
+      }
+    }
+
+    if (action === 'highlight' && payload.targetId) {
+      setHighlightedId(payload.targetId);
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightedId(null), 3000);
+    }
+
+    clearMapCommand();
+  }, [mapCommand, clearMapCommand, onMoveEnd]);
+
+  // Cleanup del timer de highlight
+  useEffect(() => {
+    return () => clearTimeout(highlightTimerRef.current);
+  }, []);
 
   const getStrokeColor = (status) => {
     switch (status) {
@@ -161,6 +224,30 @@ const WorldMap = ({
     }
   };
 
+  // ── Paso 6: Función para determinar si un aeropuerto pasa el filtro ─────
+  const airportPassesFilter = useCallback((airportIcao) => {
+    if (!activeFilters.semaphoreLevel) return true;
+    const metrics = activeMetrics[airportIcao];
+    const level = metrics?.level ?? "green";
+    return level === activeFilters.semaphoreLevel;
+  }, [activeFilters.semaphoreLevel, activeMetrics]);
+
+  const flightPassesFilter = useCallback((status) => {
+    if (!activeFilters.flightStatus) return true;
+    return status === activeFilters.flightStatus;
+  }, [activeFilters.flightStatus]);
+
+  // ── Paso 5: Colores de avería por tipo ──────────────────────────────────
+  const getAveriaColor = (averiaType) => {
+    switch (parseInt(averiaType)) {
+      case 1: return '#f59e0b'; // Amarillo — Capacidad 50%
+      case 2: return '#f97316'; // Naranja — Cierre de origen
+      case 3: return '#ef4444'; // Rojo — Demora de tránsito
+      case 4: return '#1e1b4b'; // Oscuro — Corte total
+      default: return '#ef4444';
+    }
+  };
+
   return (
     <div 
       className="ct-world-map" 
@@ -176,6 +263,40 @@ const WorldMap = ({
 
       {/* ── Controles de Zoom Dark Mode ─────────────────────────────────────── */}
       <MapZoomControls zoom={zoom} center={center} onMoveEnd={onMoveEnd} />
+
+      {/* ── Botón Limpiar Ruta Rastreada ────────────────────────────────────── */}
+      {trackedRoute && (
+        <button
+          onClick={(e) => { e.stopPropagation(); clearTrackedRoute(); }}
+          style={{
+            position: 'absolute', bottom: 36, right: 20, zIndex: 200,
+            background: 'rgba(167, 139, 250, 0.2)', border: '1px solid rgba(167, 139, 250, 0.5)',
+            borderRadius: '8px', padding: '6px 14px', color: '#a78bfa',
+            fontSize: '11px', fontWeight: 'bold', cursor: 'pointer',
+            backdropFilter: 'blur(6px)',
+          }}
+          title="Limpiar ruta rastreada del mapa"
+        >
+          ✕ Limpiar ruta rastreada
+        </button>
+      )}
+
+      {/* ── Botón Limpiar Highlight de Excepción ───────────────────────────── */}
+      {exceptionHighlight && (
+        <button
+          onClick={(e) => { e.stopPropagation(); clearExceptionHighlight(); }}
+          style={{
+            position: 'absolute', bottom: 70, right: 20, zIndex: 200,
+            background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.5)',
+            borderRadius: '8px', padding: '6px 14px', color: '#fca5a5',
+            fontSize: '11px', fontWeight: 'bold', cursor: 'pointer',
+            backdropFilter: 'blur(6px)',
+          }}
+          title="Limpiar highlight de excepción"
+        >
+          ✕ Limpiar excepción
+        </button>
+      )}
 
       {/* Floating clock overlay on the map */}
       {systemClock && systemClock !== "--:--:--" && systemClock !== "--:--" && (
@@ -241,7 +362,112 @@ const WorldMap = ({
             />
           )}
 
-          {/* ── Lógica de atenuación (Focus) ── */}
+          {/* ── Paso 4: Track & Trace — Ruta multi-hop ─────────────────────── */}
+          {trackedRoute && trackedRoute.hops && trackedRoute.hops.map((hop, idx) => {
+            const from = airportByIcao[hop.from] || AIRPORT_BY_ICAO[hop.from];
+            const to = airportByIcao[hop.to] || AIRPORT_BY_ICAO[hop.to];
+            if (!from || !to) return null;
+            return (
+              <Line
+                key={`track-${trackedRoute.shipmentId}-${idx}`}
+                from={from.coordinates}
+                to={to.coordinates}
+                stroke="#a78bfa"
+                strokeWidth={3}
+                strokeDasharray="8 4"
+                style={{
+                  filter: "drop-shadow(0 0 4px #a78bfa)",
+                  opacity: 0.9,
+                  animation: "ct-tracked-route-pulse 2s infinite ease-in-out",
+                }}
+                strokeLinecap="round"
+              />
+            );
+          })}
+
+          {/* ── Paso 4: Markers de parada intermedios para Track & Trace ──── */}
+          {trackedRoute && trackedRoute.hops && trackedRoute.hops.map((hop, idx) => {
+            const airport = airportByIcao[hop.from] || AIRPORT_BY_ICAO[hop.from];
+            if (!airport) return null;
+            return (
+              <Marker key={`track-stop-${idx}`} coordinates={airport.coordinates}>
+                <circle r={6} fill="rgba(167, 139, 250, 0.3)" stroke="#a78bfa" strokeWidth={2} />
+                <text y={-10} textAnchor="middle" style={{ fontSize: '8px', fill: '#a78bfa', fontWeight: 'bold' }}>
+                  {idx + 1}
+                </text>
+              </Marker>
+            );
+          })}
+          {/* Marker final del Track & Trace */}
+          {trackedRoute && trackedRoute.hops && trackedRoute.hops.length > 0 && (() => {
+            const lastHop = trackedRoute.hops[trackedRoute.hops.length - 1];
+            const airport = airportByIcao[lastHop.to] || AIRPORT_BY_ICAO[lastHop.to];
+            if (!airport) return null;
+            return (
+              <Marker coordinates={airport.coordinates}>
+                <circle r={6} fill="rgba(167, 139, 250, 0.3)" stroke="#a78bfa" strokeWidth={2} />
+                <text y={-10} textAnchor="middle" style={{ fontSize: '8px', fill: '#a78bfa', fontWeight: 'bold' }}>
+                  🏁
+                </text>
+              </Marker>
+            );
+          })()}
+
+          {/* ── Paso 5: Highlight de Excepciones (bloqueos/averías) ──────── */}
+          {exceptionHighlight && (() => {
+            const exColor = exceptionHighlight.type === 'AVERIA'
+              ? getAveriaColor(exceptionHighlight.averiaType)
+              : '#ef4444';
+
+            if (exceptionHighlight.type === 'TRAMO' && exceptionHighlight.origenIcao && exceptionHighlight.destinoIcao) {
+              const from = airportByIcao[exceptionHighlight.origenIcao] || AIRPORT_BY_ICAO[exceptionHighlight.origenIcao];
+              const to = airportByIcao[exceptionHighlight.destinoIcao] || AIRPORT_BY_ICAO[exceptionHighlight.destinoIcao];
+              if (from && to) {
+                return (
+                  <Line
+                    from={from.coordinates}
+                    to={to.coordinates}
+                    stroke={exColor}
+                    strokeWidth={4}
+                    strokeDasharray="6 3"
+                    style={{
+                      filter: `drop-shadow(0 0 8px ${exColor})`,
+                      animation: "ct-exception-pulse 1.5s 3 ease-in-out",
+                      opacity: 0.95,
+                    }}
+                    strokeLinecap="round"
+                  />
+                );
+              }
+            }
+
+            if ((exceptionHighlight.type === 'NODO' || exceptionHighlight.type === 'AVERIA') && exceptionHighlight.origenIcao) {
+              const airport = airportByIcao[exceptionHighlight.origenIcao] || AIRPORT_BY_ICAO[exceptionHighlight.origenIcao];
+              if (airport) {
+                return (
+                  <Marker coordinates={airport.coordinates}>
+                    <circle
+                      r={18}
+                      fill="transparent"
+                      stroke={exColor}
+                      strokeWidth={3}
+                      style={{
+                        animation: "ct-exception-pulse 1.5s 3 ease-in-out",
+                        filter: `drop-shadow(0 0 10px ${exColor})`,
+                      }}
+                    />
+                    <text y={28} textAnchor="middle" style={{ fontSize: '9px', fill: exColor, fontWeight: 'bold' }}>
+                      {exceptionHighlight.type === 'AVERIA' ? `⚠ T${exceptionHighlight.averiaType}` : '🚫 BLOQUEADO'}
+                    </text>
+                  </Marker>
+                );
+              }
+            }
+
+            return null;
+          })()}
+
+          {/* ── Lógica de atenuación (Focus) + Filtros + Estela ── */}
           {(() => {
             const hasSelection = selectedAircraftId != null || selectedPlane != null;
             const isPlaneSelected = (planeId) => selectedAircraftId === planeId || (selectedPlane?.id === planeId);
@@ -249,24 +475,47 @@ const WorldMap = ({
 
             return (
               <>
-                {/* ── Arcos de vuelos en tránsito (Activos - Líneas Neón de Alto Contraste) ── */}
+                {/* ── Paso 7: Arcos de vuelos con ESTELA progresiva ─────────── */}
                 {activeAircraft.map((plane) => {
                   const from = airportByIcao[plane.from];
                   const to   = airportByIcao[plane.to];
                   if (!from || !to) return null;
+
+                  // Paso 6: Filtro visual
+                  const passesFilter = flightPassesFilter(plane.status);
                   const strokeColor = getStrokeColor(plane.status);
                   const isSelected = isPlaneSelected(plane.id);
+                  const isHighlighted = highlightedId === plane.id;
+                  const progress = plane.progress ?? 0;
+
+                  // ── Paso 7: Estela progresiva ──
+                  // La línea se dibuja desde el origen hasta la posición actual del avión,
+                  // y se desvanece detrás.
+                  const pathLength = 1000;
+                  const trailPct = 0.20; // 20% del arco como estela visible
+                  const drawnLength = progress * pathLength;
+                  const trailLength = trailPct * pathLength;
+                  
+                  // Calcular dasharray: segmento visible = min(drawnLength, trailLength), luego gap largo
+                  const visibleSegment = Math.min(drawnLength, trailLength);
+                  const dashArray = `${visibleSegment} ${pathLength}`;
+                  const dashOffset = -drawnLength + visibleSegment;
+
                   return (
                     <Line
                       key={`arc-${plane.id}`}
                       from={from.coordinates}
                       to={to.coordinates}
                       stroke={strokeColor}
-                      strokeWidth={isSelected ? 3.5 : 2.5}
+                      strokeWidth={isSelected || isHighlighted ? 3.5 : 2.5}
+                      strokeDasharray={dashArray}
+                      strokeDashoffset={dashOffset}
                       style={{
-                        filter: isSelected ? `drop-shadow(0 0 6px ${strokeColor})` : `drop-shadow(0 0 2px ${strokeColor})`,
-                        opacity: getOpacity(plane.id, 0.85),
-                        transition: "opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease",
+                        filter: isSelected || isHighlighted
+                          ? `drop-shadow(0 0 6px ${strokeColor})`
+                          : `drop-shadow(0 0 2px ${strokeColor})`,
+                        opacity: passesFilter ? getOpacity(plane.id, 0.85) : 0.08,
+                        transition: "opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease, stroke-dashoffset 1s linear, stroke-dasharray 1s linear",
                         cursor: "pointer"
                       }}
                       strokeLinecap="round"
@@ -274,13 +523,15 @@ const WorldMap = ({
                         e.stopPropagation();
                         setSelectedPlane(plane);
                         onAircraftSelect(plane.id);
+                        // Paso 3: Notificar al bridge (Mapa→Panel)
+                        setFocusedEntity('flight', plane.id, 'map');
                       }}
                     />
                   );
                 })}
 
                 {/* ── Arcos de vuelos recién finalizados (Desvanecimiento automático) ── */}
-                {completedPlanes.map((plane) => {
+                {completedPlanesRef.current.map((plane) => {
                   const from = airportByIcao[plane.from];
                   const to   = airportByIcao[plane.to];
                   if (!from || !to) return null;
@@ -294,7 +545,7 @@ const WorldMap = ({
                       strokeWidth={2}
                       style={{
                         filter: `drop-shadow(0 0 3px ${strokeColor})`,
-                        animation: "ct-fade-out-line 3s forwards ease-out",
+                        animation: "ct-fade-out-line 2s forwards ease-out",
                         strokeDasharray: "4 4",
                         opacity: getOpacity(plane.id, 1)
                       }}
@@ -303,7 +554,7 @@ const WorldMap = ({
                   );
                 })}
 
-                {/* ── Aviones con movimiento suavizado e Interactivo (onClick) ── */}
+                {/* ── Paso 8: Aviones con movimiento suavizado + diferenciación en tierra ── */}
                 {activeAircraft.map((plane) => {
                   const from = airportByIcao[plane.from];
                   const to   = airportByIcao[plane.to];
@@ -315,12 +566,28 @@ const WorldMap = ({
                   const isCancelled= plane.status === "cancelled";
                   const isRescued  = plane.status === "rescued";
                   const isSelected = isPlaneSelected(plane.id);
+                  const isHighlighted = highlightedId === plane.id;
+                  const passesFilter = flightPassesFilter(plane.status);
+
+                  // ── Paso 8: Determinar si está en tierra ──
+                  const isOnGround = progress <= 0.01 || progress >= 0.99;
+                  const isPreDeparture = progress <= 0.01;
+                  const isPostArrival = progress >= 0.99;
+
                   const dx = to.coordinates[0] - from.coordinates[0];
-                  // Y en SVG está invertido respecto a latitud
                   const dy = to.coordinates[1] - from.coordinates[1];
-                  // Ángulo de rotación: el caracter '✈' apunta hacia arriba/derecha, se debe ajustar si es necesario.
-                  // Se suma 45 o 90 grados dependiendo de la fuente, probaremos sumando 45 grados por defecto.
                   const angle = Math.atan2(-dy, dx) * (180 / Math.PI) + 45;
+
+                  // Ícono según estado
+                  let planeIcon = "✈";
+                  let planeSize = "15px";
+                  if (isBlocked || isCancelled) {
+                    planeIcon = "✖";
+                    planeSize = "12px";
+                  } else if (isOnGround) {
+                    planeIcon = isPreDeparture ? "⏳" : "🛬";
+                    planeSize = "10px";
+                  }
 
                   return (
                     <Marker
@@ -330,7 +597,7 @@ const WorldMap = ({
                     >
                       <g
                         className={`ct-aircraft-pin ct-aircraft-pin--${plane.status} ${
-                          isSelected ? "ct-aircraft-pin--selected" : ""
+                          isSelected || isHighlighted ? "ct-aircraft-pin--selected" : ""
                         }`}
                         role="button"
                         tabIndex={0}
@@ -339,25 +606,36 @@ const WorldMap = ({
                           e.stopPropagation();
                           setSelectedPlane(plane);
                           onAircraftSelect(plane.id);
+                          // Paso 3: Notificar al bridge (Mapa→Panel)
+                          setFocusedEntity('flight', plane.id, 'map');
                         }}
                         onKeyDown={(e) => e.key === "Enter" && onAircraftSelect(plane.id)}
                         style={{ 
                           cursor: "pointer", 
                           color: isCancelled ? "#ef4444" : isRescued ? "#3b82f6" : undefined,
-                          opacity: getOpacity(plane.id, 1),
+                          opacity: passesFilter ? getOpacity(plane.id, 1) : 0.08,
                           transition: "opacity 0.3s ease, color 0.3s ease"
                         }}
                       >
-                        <circle r={isSelected ? 13 : 10} fill="rgba(15, 23, 42, 0.4)" stroke={getStrokeColor(plane.status)} strokeWidth={isSelected ? 2 : 1} style={{ transition: "all 0.3s ease" }} />
+                        <circle
+                          r={isSelected || isHighlighted ? 13 : isOnGround ? 6 : 10}
+                          fill={isOnGround ? "rgba(100,116,139,0.25)" : "rgba(15, 23, 42, 0.4)"}
+                          stroke={isHighlighted ? "#facc15" : getStrokeColor(plane.status)}
+                          strokeWidth={isSelected || isHighlighted ? 2.5 : 1}
+                          style={{
+                            transition: "all 0.3s ease",
+                            animation: isHighlighted ? "ct-exception-pulse 1s 3 ease-in-out" : undefined,
+                          }}
+                        />
                         <text
                           textAnchor="middle"
                           dominantBaseline="central"
                           className={isBlocked ? "ct-aircraft-pin__blocked" : "ct-aircraft-pin__icon"}
                           y={0}
-                          transform={isBlocked || isCancelled ? "" : `rotate(${angle})`}
-                          style={{ fontSize: isBlocked || isCancelled ? "12px" : "15px", fill: "currentColor", transition: "font-size 0.3s ease" }}
+                          transform={isBlocked || isCancelled || isOnGround ? "" : `rotate(${angle})`}
+                          style={{ fontSize: planeSize, fill: "currentColor", transition: "font-size 0.3s ease" }}
                         >
-                          {isBlocked ? "✖" : isCancelled ? "✖" : "✈"}
+                          {planeIcon}
                         </text>
                       </g>
                     </Marker>
@@ -375,22 +653,40 @@ const WorldMap = ({
             const isSelected = selectedAirportCode === airport.icao;
             const stockBags  = metrics?.load ?? 0;
             const maxCap     = metrics?.capacity ?? "—";
+            const isHighlighted = highlightedId === airport.icao;
+            const passesFilter = airportPassesFilter(airport.icao);
 
             return (
               <Marker key={airport.icao} coordinates={airport.coordinates}>
                 <g
                   className={`ct-airport-marker ct-airport-marker--${level} ${
                     isSaturated ? "ct-airport-marker--saturated" : ""
-                  } ${isSelected ? "ct-airport-marker--selected" : ""}`}
+                  } ${isSelected || isHighlighted ? "ct-airport-marker--selected" : ""}`}
                   role="button"
                   tabIndex={0}
                   aria-label={`Aeropuerto ${airport.icao}`}
                   title={`Aeropuerto ${airport.icao}\nStock: ${stockBags} maletas / Capacidad: ${maxCap}`}
-                  onClick={() => onAirportSelect(airport.icao)}
+                  onClick={() => {
+                    onAirportSelect(airport.icao);
+                    // Paso 3: Notificar al bridge (Mapa→Panel)
+                    setFocusedEntity('airport', airport.icao, 'map');
+                  }}
                   onKeyDown={(e) => e.key === "Enter" && onAirportSelect(airport.icao)}
-                  style={{ cursor: "pointer" }}
+                  style={{
+                    cursor: "pointer",
+                    opacity: passesFilter ? 1 : 0.1,
+                    transition: "opacity 0.3s ease",
+                    pointerEvents: passesFilter ? "auto" : "none",
+                  }}
                 >
-                  <circle r={isSaturated ? 11 : 8} className="ct-airport-marker__ring" />
+                  <circle
+                    r={isSaturated ? 11 : isHighlighted ? 12 : 8}
+                    className="ct-airport-marker__ring"
+                    style={{
+                      animation: isHighlighted ? "ct-exception-pulse 1s 3 ease-in-out" : undefined,
+                      stroke: isHighlighted ? "#facc15" : undefined,
+                    }}
+                  />
                   <circle r={isSaturated ? 6 : 4.5} className="ct-airport-marker__dot" />
                   <text y={-13} textAnchor="middle" className="ct-airport-marker__label">
                     {airport.icao}
@@ -411,8 +707,6 @@ const WorldMap = ({
             const progress = selectedPlane.progress ?? 0;
             const position = interpolateCoordinates(from, to, progress);
             
-            // Opción 1: Detección de bordes dinámica usando latitud.
-            // Si la latitud es muy al sur (menor a -20), dibujamos el Tooltip hacia arriba en lugar de hacia abajo.
             const isNearBottomEdge = position[1] < -20;
             const tooltipY = isNearBottomEdge ? 20 : -55;
 
