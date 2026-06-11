@@ -50,10 +50,29 @@ export const useControlTowerController = () => {
   const [selectedAlgorithm, setSelectedAlgorithm] = useState("alns");
   const [simState, setSimState] = useState("idle");
   const [simSpeed, setSimSpeed] = useState(1);
-
-  const [sessionId, setSessionId] = useState(null);
   const [isFluidMode, setIsFluidMode] = useState(false);
   const [targetPlaybackMinutes, setTargetPlaybackMinutes] = useState(30);
+
+  const [sessionId, setSessionId] = useState(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("session");
+    }
+    return null;
+  });
+
+  // Actualizar URL cuando cambia el sessionId
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location);
+      if (sessionId) {
+        url.searchParams.set("session", sessionId);
+      } else {
+        url.searchParams.delete("session");
+      }
+      window.history.replaceState({}, "", url);
+    }
+  }, [sessionId]);
 
   /** Fase 1: Atomización del Estado para optimización de rendimiento */
   const [meta, setMeta] = useState({
@@ -68,6 +87,8 @@ export const useControlTowerController = () => {
   });
   const [airportLoads, setAirportLoads] = useState({});
   const [aircraft, setAircraft] = useState([]);
+  const prevAircraftRef = useRef([]);
+  const prevActiveIdsRef = useRef(new Set());
   const [clock, setClock] = useState({ simulatedTime: "--:--", currentEpochTime: 0 });
   const [smoothSimTime, setSmoothSimTime] = useState(0);
   const smoothSimTimeRef = useRef(0);
@@ -77,7 +98,7 @@ export const useControlTowerController = () => {
 
   // ── BUFFER DE SNAPSHOTS PARA SIMULACIÓN FLUIDA ────────────────────────────
   const snapshotBufferRef = useRef([]);
-  const BUFFER_MIN_SIZE = 1; 
+  const BUFFER_MIN_SIZE = 1;
 
   /** Reconstrucción de liveStatus para compatibilidad con App.jsx y otros componentes */
   const liveStatus = useMemo(() => {
@@ -334,7 +355,7 @@ export const useControlTowerController = () => {
     }
   }, [sessionId]);
 
-  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = []) => {
+  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = [], startTime = "00:00") => {
     try {
       setSimState("running");
       setAircraft([]);
@@ -345,8 +366,24 @@ export const useControlTowerController = () => {
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
+const startEpoch = new Date(`${startDate}T${startTime}:00`).getTime();
+      setMeta({
+        status: "RUNNING",
+        percent: 0,
+        currentDay: 1,
+        totalDays: dias,
+        isCollapseMode: false,
+        errorMessage: null,
+        algorithm: selectedAlgorithm || "hga",
+        startEpoch: startEpoch,
+        totalAttended: 0,
+        totalMissed: 0,
+        slaFinal: 0,
+        reports: []
+      });
+
       const preCancelStr = preCancelledIds.length > 0 ? preCancelledIds.join(",") : "";
-      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}`;
+      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}&startTime=${startTime}`;
       const res = await apiFetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
@@ -359,7 +396,7 @@ export const useControlTowerController = () => {
     }
   }, [selectedAlgorithm, targetPlaybackMinutes]);
 
-  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5) => {
+  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5, startTime = "00:00") => {
     try {
       setSimState("running");
       setAircraft([]);
@@ -370,10 +407,28 @@ export const useControlTowerController = () => {
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
+const resolvedDate = startDate || "2026-04-09";
+      const startEpoch = new Date(`${resolvedDate}T${startTime}:00`).getTime();
+      setMeta({
+        status: "RUNNING",
+        percent: 0,
+        currentDay: 1,
+        totalDays: dias,
+        isCollapseMode: true,
+        errorMessage: null,
+        algorithm: selectedAlgorithm || "hga",
+        startEpoch: startEpoch,
+        totalAttended: 0,
+        totalMissed: 0,
+        slaFinal: 0,
+        reports: []
+      });
+
       const dateParam = startDate ? `&startDate=${startDate}` : "";
       const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
+      const timeParam   = startTime    ? `&startTime=${startTime}`       : "";
       const res = await apiFetch(
-        `/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}&playbackMinutes=${targetPlaybackMinutes}`,
+`/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}${timeParam}&playbackMinutes=${targetPlaybackMinutes}`,
         { method: "POST" }
       );
 
@@ -381,6 +436,7 @@ export const useControlTowerController = () => {
 
       const data = await res.json();
       setSessionId(data.sessionId);
+console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()} | estrés ×${stressFactor} | hora ${startTime}`);
     } catch (err) {
       console.error("[Tasf.B2B] Error al iniciar simulación de colapso:", err);
       setSimState("idle");
@@ -525,6 +581,28 @@ export const useControlTowerController = () => {
   }, [selectedAlgorithm]);
 
 
+const exportDetailedSimulationReport = useCallback(async (sid) => {
+    if (!sid) return;
+    try {
+      const res = await apiFetch(`/api/v1/simulation/export-details/${sid}`);
+      if (!res.ok) throw new Error(`Error al exportar reporte detallado: ${res.status}`);
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `ReporteDetalladoVuelos_${sid.substring(0, 8)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[Tasf.B2B] Error al exportar Reporte Detallado:", err);
+    }
+  }, []);
+
+  /**
+   * Conexión WebSocket / STOMP
+   */
   useEffect(() => {
     if (!sessionId) return
 
@@ -561,7 +639,7 @@ export const useControlTowerController = () => {
         if (epoch < maxEpochReceived - 60000) return;
         if (epoch > maxEpochReceived) maxEpochReceived = epoch;
 
-        let f = pendingBySeq.get(seq);
+let f = pendingBySeq.get(seq);
         if (!f) {
           f = { seq, epoch };
           pendingBySeq.set(seq, f);
@@ -608,11 +686,22 @@ export const useControlTowerController = () => {
 
       client.subscribe(`/topic/sim/${sessionId}/eventLog`, (msg) => {
         try {
-          const envelope = JSON.parse(msg.body)
-          if (envelope?.data) setLogs(prev => [...prev, envelope.data])
-        } catch (err) { console.error('Error parsing eventLog:', err) }
-      })
+const envelope = JSON.parse(msg.body);
+          const logEntry = envelope?.data;
+          if (!logEntry) return;
+          setLogs((prev) => {
+            const next = [...prev, logEntry];
+            return next.length > 200 ? next.slice(-150) : next;
+          });
+        } catch (err) {
+          console.error('Error parsing eventLog:', err);
+        }
+      });
     }
+
+    client.onStompError = (frame) => {
+      console.warn('[Tasf.B2B] STOMP error:', frame?.headers?.message, frame?.body);
+    };
 
     client.onWebSocketError = (err) => {
       console.warn('[Tasf.B2B] WS error:', err)
@@ -622,8 +711,12 @@ export const useControlTowerController = () => {
     return () => client.deactivate()
   }, [sessionId])
 
-  const airportByCode = AIRPORT_BY_ICAO
+  const airportByCode = AIRPORT_BY_ICAO;
 
+  /**
+   * Métricas de aeropuerto: si hay datos live del backend (airportLoads),
+   * se construyen desde ahí. Si no, arranca limpio.
+   */
   const activeMetrics = useMemo(() => {
     if (airportLoads && Object.keys(airportLoads).length > 0) {
       return buildAirportMetrics(AIRPORTS, airportLoads);
@@ -648,9 +741,9 @@ export const useControlTowerController = () => {
 
   const activeShipments = useMemo(() => {
     if (!aircraft || aircraft.length === 0 || !currentEpochTime) return []
-    const viewWindow = 12 * 3600 * 1000 
+const viewWindow = 12 * 3600 * 1000;
     return aircraft
-      .filter((r) => r.status !== "cancelled") 
+      .filter((r) => r.status !== "cancelled")
       .filter((r) => r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow)
       .sort((a, b) => a.departureTime - b.departureTime)
   }, [aircraft, currentEpochTime])
@@ -671,6 +764,82 @@ export const useControlTowerController = () => {
     })
     return Array.from(byId.values())
   }, [aircraft])
+
+  const [searchedShipment, setSearchedShipment] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Paso 4: Callback para Track & Trace — se invoca desde App.jsx con el bridge
+  const [trackedRouteData, setTrackedRouteData] = useState(null);
+
+  const searchShipment = useCallback(async (id) => {
+    if (!id) return;
+    setIsSearching(true);
+    
+    // 1. Búsqueda Local (Caché activo)
+    const local = activeAircraftAll.find(a => a.id === id || String(a.lotId) === id);
+    if (local) {
+      setSelectedAircraftId(local.id);
+      setSearchedShipment({
+        id: local.id,
+        origin: local.from,
+        destination: local.to,
+        status: local.status,
+        departure: local.departureTime,
+        arrival: local.arrivalTime,
+        isLocal: true
+      });
+      // Paso 4: Crear ruta de un solo hop para Track & Trace
+      setTrackedRouteData({
+        shipmentId: local.id,
+        hops: [{ from: local.from, to: local.to, flightId: local.id, status: local.status }]
+      });
+      setIsSearching(false);
+      togglePanel("shipmentDetail");
+      return;
+    }
+
+    // 2. Búsqueda en Servidor (Histórico/Deep Search)
+    if (!sessionId) {
+      setIsSearching(false);
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/v1/simulation/shipment/${sessionId}/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchedShipment({
+          ...data,
+          isLocal: false
+        });
+        // Paso 4: Crear ruta multi-hop si el servidor devuelve hops
+        if (data.route && data.route.length > 0) {
+          setTrackedRouteData({
+            shipmentId: id,
+            hops: data.route.map(hop => ({
+              from: hop.from,
+              to: hop.to,
+              flightId: hop.id || hop.flightId,
+              status: hop.status || 'normal',
+            }))
+          });
+        } else {
+          // Fallback: ruta simple si no hay hops detallados
+          setTrackedRouteData({
+            shipmentId: id,
+            hops: [{ from: data.origin, to: data.destination, flightId: id, status: data.status || 'normal' }]
+          });
+        }
+        togglePanel("shipmentDetail");
+      } else {
+        alert("Envío no encontrado en el historial de la sesión.");
+      }
+    } catch (err) {
+      console.error("[Tasf.B2B] Error en búsqueda profunda:", err);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [activeAircraftAll, sessionId, togglePanel]);
 
   const rankedAircraftBase = useMemo(() => {
     if (activeAircraftAll.length === 0) return [];
@@ -698,7 +867,20 @@ export const useControlTowerController = () => {
     const combined = [...inAir, ...onGround];
     const budget = Math.max(0, MAX_MAP_ROUTES - (selected ? 1 : 0));
     const finalSelection = combined.slice(0, budget);
-    if (selected && !finalSelection.some((p) => p.id === selected.id)) finalSelection.push(selected);
+if (selected && !finalSelection.some((p) => p.id === selected.id)) {
+      finalSelection.push(selected);
+    }
+
+    // --- DIAGNOSTIC: Visual Lifecycle (Filter) ---
+    const activeIds = new Set(finalSelection.map(a => a.id));
+    const prevActiveIds = prevActiveIdsRef.current;
+    
+    prevActiveIds.forEach(id => {
+        if (!activeIds.has(id)) {
+             console.log(`[AIRCRAFT_REMOVE] (Visual/Filter) Flight=${id}`);
+        }
+    });
+    prevActiveIdsRef.current = activeIds;
     return finalSelection;
   }, [rankedAircraftBase, currentEpochTime, smoothSimTime, selectedAircraftId]);
 
@@ -794,13 +976,72 @@ export const useControlTowerController = () => {
   const kpiCards = useMemo(() => {
     if (sessionId && meta.status !== "idle") {
       const progressPercent = meta.percent ?? 0;
-      const dayLabel = meta.totalDays ? `Día ${meta.currentDay} / ${meta.totalDays}` : "Iniciando...";
+      const dayLabel = meta.totalDays
+        ? `Día ${meta.currentDay} / ${meta.totalDays}`
+        : "Iniciando...";
+
+      let fleetLoad = 0;
+      let fleetCap = 0;
+      aircraft.forEach(p => {
+        if (p.status !== "cancelled") {
+          fleetLoad += p.ocupacionReal || 0;
+          fleetCap += p.capacidadMax || 0;
+        }
+      });
+      const fleetOccupancyPct = fleetCap > 0 ? (fleetLoad / fleetCap) * 100 : 0;
+
       return [
-        { key: "flights", title: "Vuelos en curso", value: aircraft.filter(r => r.status !== "cancelled").length ?? 0, subtitle: `Día ${meta.currentDay}`, status: "green" },
-        { key: "occupancy", title: "Ocupación global", value: `${globalOccupancyCalculated.toFixed(1)}%`, subtitle: "Promedio red", status: globalOccupancyCalculated >= 90 ? "red" : globalOccupancyCalculated >= 70 ? "amber" : "green" },
-        { key: "sla", title: "SLA", value: `${kpis.slaPercent?.toFixed(1) ?? 0}%`, subtitle: "Cumplimiento", status: kpis.slaPercent >= 90 ? "green" : kpis.slaPercent >= 70 ? "amber" : "red" },
-        { key: "critical", title: "Nodos críticos", value: kpis.criticalNodes ?? 0, subtitle: "> 90% ocupación", status: kpis.criticalNodes > 5 ? "red" : kpis.criticalNodes > 2 ? "amber" : "green" },
-        { key: "progress", title: "Progreso", value: `${dayLabel} · ${progressPercent}%`, subtitle: meta.status === "DONE" ? "✓ Completado" : "En ejecución...", status: meta.status === "FAILED" ? "red" : meta.status === "DONE" ? "green" : "amber", progress: progressPercent },
+        {
+          key: "flights",
+          title: "Vuelos en curso",
+          value: aircraft.filter(r => r.status !== "cancelled").length ?? 0,
+          subtitle: isCollapseScenario 
+            ? `Rescatados: ${kpis.rescuedFlights ?? 0}` 
+            : `Día ${meta.currentDay} de simulación`,
+          status: "green",
+        },
+        {
+          key: "fleetOccupancy",
+          title: "Ocupación global flota (UT)",
+          value: `${fleetOccupancyPct.toFixed(1)}%`,
+          subtitle: "Carga total / Capacidad máxima",
+          status: fleetOccupancyPct >= 90 ? "red" : fleetOccupancyPct >= 70 ? "amber" : "green",
+        },
+        {
+          key: "occupancy",
+          title: "Ocupación global almacenes",
+          value: `${globalOccupancyCalculated.toFixed(1)}%`,
+          subtitle: "Promedio red · datos reales",
+          status: globalOccupancyCalculated >= 90 ? "red"
+            : globalOccupancyCalculated >= 70 ? "amber" : "green",
+        },
+        {
+          key: "sla",
+          title: "Entregas a tiempo (SLA)",
+          value: `${kpis.slaPercent?.toFixed(1) ?? 0}%`,
+          subtitle: (meta.totalAttended > 0 || meta.totalMissed > 0)
+            ? `Atendidas: ${meta.totalAttended.toLocaleString("es-PE")} | Perdidas: ${meta.totalMissed.toLocaleString("es-PE")}`
+            : "Maletas atendidas / demanda total",
+          status: kpis.slaPercent >= 90 ? "green"
+            : kpis.slaPercent >= 70 ? "amber" : "red",
+        },
+        {
+          key: "critical",
+          title: "Nodos críticos",
+          value: kpis.criticalNodes ?? 0,
+          subtitle: "Almacenes con ocupación > 90%",
+          status: kpis.criticalNodes > 5 ? "red"
+            : kpis.criticalNodes > 2 ? "amber" : "green",
+        },
+        {
+          key: "progress",
+          title: "Progreso simulación",
+          value: `${dayLabel} · ${progressPercent}%`,
+          subtitle: meta.status === "DONE" ? "✓ Completado" : "En ejecución...",
+          status: meta.status === "FAILED" ? "red"
+            : meta.status === "DONE" ? "green" : "amber",
+          progress: progressPercent,
+        },
       ];
     }
     return [
@@ -846,20 +1087,67 @@ export const useControlTowerController = () => {
   }, [isKpiCollapsed]);
 
   return {
-    activeAircraft, activeAirportRows, activeMetrics, activeTab, airportByCode,
-    airportNodes: AIRPORT_NODES, comparisonData, elapsedOperationTime, eventLog,
-    currentEpochTime, totalBagsWaiting, activeShipments,
-    handleSelectAircraft, handleTabChange, hideAirportDetail, isAirportDetailOpen,
-    isCollapseScenario, isDockCollapsed, isKpiCollapsed, isScenarioConfigOpen,
-    isSimScenario, kpiCards, liveStatus, panelVisibility,
-    selectedAircraft, selectedAircraftId, selectedAirportCode, selectedAirport,
-    selectedAirportLevel, selectedAirportMetrics, selectedAlgorithm,
-    selectedFromAirport, selectedToAirport, sessionId,
-    isFluidMode, setIsFluidMode, targetPlaybackMinutes, setTargetPlaybackMinutes,
-    setSelectedAircraftId, setSelectedAlgorithm, setSimSpeed, simSpeed, simState,
-    startSimulation, startDayToDaySimulation, startCollapseSimulation,
-    exportSimulationExcel, exportSimulationReportMd, resetSimulation,
-    summary, tabs: SCENARIO_TABS, toggleDock, toggleKpiStrip, togglePanel,
-    toggleScenarioConfig, setSimState, showAirportDetail, cancelFlight
+activeAircraft,
+    activeAirportRows,
+    activeMetrics,
+    activeTab,
+    airportByCode,
+    airportNodes: AIRPORT_NODES,
+    comparisonData,
+    elapsedOperationTime,
+    eventLog,
+    currentEpochTime,
+    totalBagsWaiting,
+    activeShipments,
+    handleTabChange,
+    hideAirportDetail,
+    isAirportDetailOpen,
+    isCollapseScenario,
+    isDockCollapsed,
+    isKpiCollapsed,
+    isScenarioConfigOpen,
+    isSimScenario,
+    kpiCards,
+    liveStatus,
+    panelVisibility,
+    selectedAircraftId,
+    selectedAirportCode,
+    selectedAirport,
+    selectedAirportLevel,
+    selectedAlgorithm,
+    selectedFromAirport,
+    selectedToAirport,
+    sessionId,
+    isFluidMode,
+    setIsFluidMode,
+    searchShipment,
+    searchedShipment,
+    isSearching,
+    setSelectedAircraftId,
+    setSelectedAlgorithm,
+    setSimSpeed,
+    simSpeed,
+    simState,
+    startSimulation,
+    startDayToDaySimulation,
+    startCollapseSimulation,
+    exportSimulationExcel,
+    exportSimulationReportMd,
+    exportDetailedSimulationReport,
+    resetSimulation,
+    summary,
+    tabs: SCENARIO_TABS,
+    toggleDock,
+    toggleKpiStrip,
+    togglePanel,
+    toggleScenarioConfig,
+    setSimState,
+    showAirportDetail,
+    selectedAircraft,
+    trackedRouteData,
+    targetPlaybackMinutes,
+    setTargetPlaybackMinutes,
+    cancelFlight,
+    handleSelectAircraft
   };
 };

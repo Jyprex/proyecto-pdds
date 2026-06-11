@@ -34,4 +34,11 @@ public class AeropuertoController {
     public void eliminar(@PathVariable Long id) {
         service.eliminar(id);
     }
+
+    /** B02: Actualizar atributos de un almacén/aeropuerto */
+    @PutMapping("/{id}")
+    public AeropuertoResponse actualizar(@PathVariable Long id,
+                                          @Valid @RequestBody AeropuertoRequest request) {
+        return service.actualizar(id, request);
+    }
 }

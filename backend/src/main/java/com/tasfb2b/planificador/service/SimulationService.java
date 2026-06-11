@@ -21,6 +21,7 @@ import com.tasfb2b.envio.service.EnvioService;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import com.tasfb2b.vuelo.repository.VueloRepository;
 import com.tasfb2b.planificador.strategy.NetworkAdapter;
+import com.tasfb2b.bloqueo.service.BloqueoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -32,6 +33,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
@@ -64,6 +66,10 @@ public class SimulationService {
         private final SimulationWsPublisher wsPublisher;
         private final CollapseHelper collapseHelper;
         private final NetworkAdapter networkAdapter;
+        private final BloqueoService bloqueoService;
+
+        // -- DIAGNOSTIC STATE --
+        private final ConcurrentHashMap<String, Map<String, String>> prevRoutesBySession = new ConcurrentHashMap<>();
 
         @Value("${tasf.data.path}")
         private String dataPath;
@@ -93,7 +99,7 @@ public class SimulationService {
          * Inicia la simulación en el pool {@code simulationExecutor}.
          */
         @Async("simulationExecutor")
-        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds) {
+        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds, String startTime) {
                 SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
                 if (session == null) return;
                 
@@ -105,7 +111,7 @@ public class SimulationService {
                         session.setStartEpoch(startEpochMs);
 
                         List<SimulationDayReport> reports = runFullSimulation(
-                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds);
+                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime);
                         session.getReports().addAll(reports);
 
                         int totalAttended = reports.stream().mapToInt(SimulationDayReport::getMalatetasAtendidas).sum();
@@ -149,7 +155,8 @@ public class SimulationService {
                         String algorithm,
                         LocalDate fechaInicio,
                         int playbackMinutes,
-                        String preCancelledFlightIds) {
+                        String preCancelledFlightIds,
+                        String startTimeStr) {
 
                 // Parsear pre-cancelaciones (ej: 5:2, 12, 15:all)
                 List<PreCancellation> preCancellations = new ArrayList<>();
@@ -196,7 +203,8 @@ public class SimulationService {
                 SimulationState globalState = new SimulationState(
                         new ArrayList<>(airportMap.values()),
                         todosLosVuelos,
-                        startTime
+                        startTime,
+                        bloqueoService
                 );
                 
                 PriorityQueue<com.tasfb2b.planificador.domain.Event> globalEventQueue = 
@@ -205,7 +213,11 @@ public class SimulationService {
                 long totalFlightLegs = 0;
                 long totalRoutesWithFlights = 0;
 
-                int cyclesPerDay = 1440 / saMinutes;
+int cyclesPerDay = 1440 / saMinutes;
+                
+                // Estado global persistente multi-día
+                Solution masterSolution = new Solution();
+                masterSolution.setRoutes(new ArrayList<>());
                 boolean hubsReduced = false;
                 Set<Long> processedCancelledFlightIds = new HashSet<>();
 
@@ -262,6 +274,16 @@ public class SimulationService {
                         int totalMaletasDia = 0;
                         int maletasEntregadasAlEmpezarDia = globalState.getMaletasEntregadas();
                         
+                        int startCycle = 0;
+                        if (day == 0 && startTimeStr != null && startTimeStr.contains(":")) {
+                                try {
+                                        String[] parts = startTimeStr.split(":");
+                                        int targetHour = Integer.parseInt(parts[0].trim());
+                                        int targetMin = Integer.parseInt(parts[1].trim());
+                                        startCycle = (targetHour * 60 + targetMin) / saMinutes;
+                                } catch (Exception ignored) {}
+                        }
+
                         for (int cycle = 0; cycle < cyclesPerDay; cycle++) {
                                 long currentSimTime = currentTime + ((long) cycle * saMinutes * 60_000L);
                                 long nextSimTime = currentSimTime + (saMinutes * 60_000L);
@@ -321,6 +343,8 @@ public class SimulationService {
                                 // ── ALNS STATE-AWARE: Inyectamos el estado actual de la red ──
                                 Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS, 
                                         globalState.getCapacidadVuelo(), globalState.getCargaAeropuerto());
+                                
+                                masterSolution.getRoutes().addAll(sol.getRoutes());
                                 
                                 totalMaletasDia += lotesVentana.stream().mapToInt(SuperLot::getTotalMaletas).sum();
                                 malatetasAtendidasDia += sol.getRoutes().stream().mapToInt(Route::getCapacidadAsignada).sum();
@@ -397,7 +421,11 @@ public class SimulationService {
                                         long adjustedSleep = Math.max(0, sleepPerMicroStep - workTimeMs);
 
                                         try {
-                                                if (adjustedSleep > 0) Thread.sleep(adjustedSleep);
+                                                if (day == 0 && cycle < startCycle) {
+                                                        // Fast-forward (no sleep)
+                                                } else {
+                                                        if (adjustedSleep > 0) Thread.sleep(adjustedSleep);
+                                                }
                                         } catch (InterruptedException e) {
                                                 Thread.currentThread().interrupt();
                                                 return history;
@@ -412,7 +440,12 @@ public class SimulationService {
                         report.setDayIndex(day);
                         report.setStartTime(currentTime);
                         report.setEndTime(currentTime + 24L * 60 * 60 * 1000);
-                        report.setRoutes(List.of()); 
+final long dayStartTimeVal = currentTime;
+                        List<Route> dayRoutes = masterSolution.getRoutes().stream()
+                                .filter(r -> r.getLot().getReadyTime() >= dayStartTimeVal
+                                        && r.getLot().getReadyTime() < (dayStartTimeVal + 24L * 60 * 60 * 1000))
+                                .collect(Collectors.toList());
+                        report.setRoutes(dayRoutes);
                         report.setColapsed(globalState.isColapsado());
                         report.setAirportSaturation(globalState.getSaturacionAeropuerto());
                         report.setCollapseTime(globalState.isColapsado() ? globalState.getCurrentTime() : -1L);
@@ -495,7 +528,20 @@ public class SimulationService {
                                 long arrEpoch = v.getArrivalEpoch(baseTime);
                                 routeTime = arrEpoch;
 
-                                if (currentSimTime < depEpoch || currentSimTime >= arrEpoch) continue;
+                                if (currentSimTime < depEpoch) {
+                                        if (i == 0) {
+                                            // Aún no despega el primer tramo
+                                        } else {
+                                            // Layover: Ya aterrizó de un tramo anterior pero no despega el siguiente
+                                            System.out.printf("[LAYOVER_DIAG] Time=%s Flight=%s Shipment=%s At=%s NextDep=%s%n",
+                                                simulatedTime, v.getId(), r.getLot().getId(), v.getOrigen().getIcaoCode(), new Date(depEpoch));
+                                        }
+                                        continue;
+                                }
+                                // No mantener segmentos tras aterrizar para evitar solapamiento visual.
+                                if (currentSimTime >= arrEpoch) {
+                                        continue;
+                                }
 
                                 String mapKey = v.getId() + "-" + depEpoch;
                                 vuelosFisicos.computeIfAbsent(mapKey, k -> {
@@ -521,14 +567,30 @@ public class SimulationService {
                 }
 
                 List<Map<String, Object>> activeRoutes = new ArrayList<>();
+                Map<String, String> currentRouteStructure = new HashMap<>();
+                Map<String, String> prevRoutes = prevRoutesBySession.getOrDefault(session.getSessionId(), Collections.emptyMap());
+
                 for (Map<String, Object> avion : vuelosFisicos.values()) {
+                        String id = (String) avion.get("id");
+                        String from = (String) avion.get("from");
+                        String to = (String) avion.get("to");
+                        String routeStr = from + "->" + to;
+                        currentRouteStructure.put(id, routeStr);
+
+                        if (prevRoutes.containsKey(id) && !prevRoutes.get(id).equals(routeStr)) {
+                            System.out.printf("[ROUTE_CHANGE] Time=%s Flight=%s PreviousRoute=%s CurrentRoute=%s%n",
+                                    simulatedTime, id, prevRoutes.get(id), routeStr);
+                        }
+
                         int ocupacion = (int) avion.get("ocupacionReal");
                         int max = (int) avion.get("capacidadMax");
-                        avion.put("capacityPercent", Math.min(100.0, (ocupacion * 100.0) / Math.max(1, max)));
+double capacityPercent = (ocupacion * 100.0) / Math.max(1, max);
+                        avion.put("capacityPercent", Math.min(100.0, capacityPercent));
                         avion.remove("ocupacionReal");
                         avion.remove("capacidadMax");
                         activeRoutes.add(avion);
                 }
+                prevRoutesBySession.put(session.getSessionId(), currentRouteStructure);
 
                 session.setActiveRoutes(activeRoutes);
                 session.setMapSnapshot(new SimulationProgressHolder.MapSnapshot(currentSimTime, simulatedTime, new ArrayList<>(activeRoutes)));

@@ -29,12 +29,16 @@ function PeriodSimConfig({
   setTargetPlaybackMinutes,
   onExportExcel,
   onExportMd,
+  onExportDetails,
   onReset,           // () => void — reinicia simState a idle
 }) {
   // ── Todos los hooks PRIMERO ───────────────────────────────────────────────
   const [day,        setDay]        = useState(1);
   const [month,      setMonth]      = useState(1);
   const [year,       setYear]       = useState(2026);
+  const [startTime,  setStartTime]  = useState("00:00");
+  const [destroyFraction, setDestroyFraction] = useState(20);
+  const [mutationRate, setMutationRate] = useState(15);
   const [isStarting, setIsStarting] = useState(false);
   const [preCancelledFlights, setPreCancelledFlights] = useState([]);
   const [tempFlightId, setTempFlightId] = useState("");
@@ -111,7 +115,7 @@ function PeriodSimConfig({
   const handleStart = async () => {
     if (!onStart) return;
     setIsStarting(true);
-    await onStart(DIAS_SIMULACION, startDate, preCancelledFlights);
+    await onStart(DIAS_SIMULACION, startDate, preCancelledFlights, startTime);
     setIsStarting(false);
   };
 
@@ -125,7 +129,7 @@ function PeriodSimConfig({
           <p className="ct-scenario-config__label">ESCENARIO ACTIVO</p>
           <h3 className="ct-scenario-config__title">Simulación de Periodo</h3>
         </div>
-        <button type="button" className="ct-scenario-config__close" onClick={onClose}>✕</button>
+          <button type="button" className="ct-scenario-config__close" onClick={onClose}>✕</button>
       </div>
 
       <div className="ct-scenario-config__body">
@@ -181,7 +185,27 @@ function PeriodSimConfig({
               </p>
             </div>
 
-            {/* Período de simulación — fijo en 5 */}
+{/* Hora de inicio */}
+            <div className="ct-config-section">
+              <p className="ct-config-section__title">🕒 HORA DE INICIO</p>
+              <div style={{ marginTop: 8 }}>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={e => setStartTime(e.target.value)}
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    padding: '8px 10px', borderRadius: 7,
+                    background: '#f8fafc', border: '1px solid rgba(79,70,229,0.45)',
+                    color: '#1e293b', fontSize: 14, fontWeight: 600,
+                    colorScheme: 'light',
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Número de días — fijo en 5 */}
+
             <div className="ct-config-section">
               <p className="ct-config-section__title">🗓 PERÍODO DE SIMULACIÓN</p>
               <div style={{
@@ -253,6 +277,55 @@ function PeriodSimConfig({
               </div>
             </div>
             */}
+
+            {/* Parámetros Avanzados del Algoritmo */}
+            <div className="ct-config-section" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 12 }}>
+              <p className="ct-config-section__title">⚙️ PARÁMETROS DEL ALGORITMO</p>
+              
+              {selectedAlgorithm === "alns" ? (
+                <div style={{ background: "rgba(99,102,241,0.05)", borderRadius: 8, padding: "12px", marginTop: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Fracción de Destrucción (Destroy %)</span>
+                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#818cf8" }}>{destroyFraction}%</span>
+                  </div>
+                  <input
+                    type="range" min="10" max="40" step="5"
+                    value={destroyFraction}
+                    onChange={e => setDestroyFraction(Number(e.target.value))}
+                    style={{ width: "100%", accentColor: "#818cf8" }}
+                  />
+                  <p style={{ fontSize: 10, color: "#64748b", margin: "6px 0 0 0" }}>
+                    Porcentaje de la solución que se destruye y reconstruye en cada iteración del vecindario.
+                  </p>
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 8, paddingTop: 8, fontSize: 10, color: "#94a3b8" }}>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Criterio de Parada:</strong> Tiempo límite (6.5 segundos Sa)</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Enfriamiento (Cooling Rate):</strong> 0.997 (Enfriamiento Simulado)</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Tamaño Segmento:</strong> 100 iteraciones (Actualización de pesos)</p>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ background: "rgba(100,116,139,0.05)", borderRadius: 8, padding: "12px", marginTop: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Tasa de Mutación (Mutation Rate)</span>
+                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#94a3b8" }}>{mutationRate}%</span>
+                  </div>
+                  <input
+                    type="range" min="5" max="30" step="5"
+                    value={mutationRate}
+                    onChange={e => setMutationRate(Number(e.target.value))}
+                    style={{ width: "100%", accentColor: "#94a3b8" }}
+                  />
+                  <p style={{ fontSize: 10, color: "#64748b", margin: "6px 0 0 0" }}>
+                    Probabilidad de aplicar mutación de intercambio a los descendientes de la población.
+                  </p>
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 8, paddingTop: 8, fontSize: 10, color: "#94a3b8" }}>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Criterio de Parada:</strong> Tiempo límite (6.5 segundos Sa)</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Tamaño Población:</strong> 50 individuos</p>
+                    <p style={{ margin: "2px 0" }}>▸ <strong>Elite:</strong> 5 mejores individuos (Preservación directa)</p>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Configurar pre-cancelaciones */}
             <div className="ct-config-section" style={{
@@ -618,9 +691,21 @@ function PeriodSimConfig({
                   📝 Exportar Reporte (.md)
                 </button>
               )}
+              {onExportDetails && (
+                <button id="period-btn-export-details" type="button"
+                  onClick={() => onExportDetails(sessionId)}
+                  style={{
+                    padding: "11px 0", borderRadius: 8, border: "none",
+                    background: "linear-gradient(135deg, #0f172a, #1e293b)",
+                    color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                    boxShadow: "0 4px 15px rgba(15, 23, 42, 0.35)",
+                  }}
+                >
+                  ✈️ Reporte Detallado de Vuelos
+                </button>
+              )}
               <button id="period-btn-new" type="button"
                 onClick={() => {
-                  setPreCancelledFlights([]);
                   if (onReset) onReset();
                 }}
                 style={{

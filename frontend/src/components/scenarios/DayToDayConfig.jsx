@@ -47,6 +47,7 @@ function DayToDayConfig({
   }, []);
 
   const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [startTime, setStartTime] = useState("00:00");
 
   // ── Early return DESPUÉS de todos los hooks ───────────────────────────────
   if (!isOpen) return null;
@@ -111,7 +112,7 @@ function DayToDayConfig({
                       ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })
                       : '—'}
                   </p>
-                  <p style={{ margin: 0, fontSize: 10, color: '#64748b' }}>Día a simular (1 día)</p>
+                  <p style={{ margin: 0, fontSize: 10, color: '#64748b' }}>Día de Monitoreo Activo</p>
                 </div>
               </div>
               <input
@@ -145,10 +146,28 @@ function DayToDayConfig({
               </div>
             </div>
 
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 4, textTransform: 'uppercase' }}>
+                Seleccionar hora de inyección:
+              </label>
+              <input
+                type="time"
+                value={startTime}
+                onChange={e => setStartTime(e.target.value)}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '8px 10px', borderRadius: 7,
+                  background: '#f8fafc', border: '1px solid rgba(79,70,229,0.45)',
+                  color: '#1e293b', fontSize: 14, fontWeight: 600,
+                  colorScheme: 'light',
+                }}
+              />
+            </div>
+
             <button
               id="dtd-btn-start"
               type="button"
-              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1, preCancelledFlightIds)}
+              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1, preCancelledFlightIds, startTime)}
               style={{
                 width: "100%", padding: "12px 0", borderRadius: 8, border: "none",
                 background: "linear-gradient(135deg, #10b981, #059669)",
@@ -157,13 +176,13 @@ function DayToDayConfig({
                 letterSpacing: 0.5,
               }}
             >
-              ▶ INICIAR OPERACIÓN
+              📡 CONECTAR Y MONITOREAR EN VIVO
             </button>
           </>
         ) : isRunning ? (
           <div style={{ textAlign: "center", padding: "8px 0" }}>
             <span style={{ color: "#10b981", fontSize: 13, fontWeight: 700 }}>
-              ● EN OPERACIÓN — Día {liveStatus?.currentDay ?? 1}
+              📡 TRANSMITIENDO EN VIVO — Día {liveStatus?.currentDay ?? 1}
             </span>
             <div style={{ height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 4, marginTop: 8 }}>
               <div style={{
@@ -176,12 +195,11 @@ function DayToDayConfig({
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "6px 0" }}>
-            <span style={{ color: "#34d399", fontSize: 12, fontWeight: 700 }}>✓ Operación completada</span>
+            <span style={{ color: "#34d399", fontSize: 12, fontWeight: 700 }}>✓ Monitoreo finalizado</span>
             <button
               id="dtd-btn-reset"
               type="button"
               onClick={() => {
-                setPreCancelledFlightIds([]);
                 if (onReset) onReset();
               }}
               style={{
@@ -192,7 +210,7 @@ function DayToDayConfig({
                 fontWeight: 600, fontSize: 12, cursor: "pointer",
               }}
             >
-              ↩ Nueva operación
+              ↩ Reiniciar conexión
             </button>
           </div>
         )}
@@ -230,7 +248,7 @@ function DayToDayConfig({
                   return (
                     <div key={`s-${s.id}`} className="ct-shipment-item">
                       <div className="ct-shipment-item__header">
-                        <strong>Vuelo {s.id}</strong>
+                        <strong>Vuelo {s.id.toString().replace("vuelo-", "").split("-")[0]}</strong>
                         <span className="ct-sla-dot" style={{ background: dot }} title={s.status} />
                       </div>
                       <p className="ct-shipment-item__route">{s.from} → {s.to} · {depFmt}</p>
@@ -498,30 +516,8 @@ function DayToDayConfig({
         {/* ── SECCIÓN CONFIG ───────────────────────────────────────────────── */}
         {activeSection === "config" && (
           <div className="ct-config-section">
-            {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
-            <p className="ct-config-section__title">ALGORITMO PLANIFICADOR</p>
-            <div className="ct-algorithm-selector">
-              {[
-                { val: "alns", label: "Algoritmo único — ALNS", sub: "Adaptive Large Neighborhood Search" }
-              ].map(opt => (
-                <label key={opt.val} className="ct-algorithm-option">
-                  <input
-                    type="radio"
-                    name="algorithm-dtd"
-                    value={opt.val}
-                    checked={selectedAlgorithm === opt.val}
-                    onChange={() => onAlgorithmChange(opt.val)}
-                  />
-                  <div>
-                    <strong>{opt.label}</strong>
-                    <span>{opt.sub}</span>
-                  </div>
-                </label>
-              ))}
-            </div>
-            */}
+<p className="ct-config-section__title">🚦 SEMÁFORO DE MALETAS</p>
 
-            <p className="ct-config-section__title" style={{ marginTop: 16 }}>🚦 SEMÁFORO DE MALETAS</p>
             <div className="ct-sla-legend">
               {[
                 { cls: "green",  label: "Verde: <70% del plazo" },

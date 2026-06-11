@@ -22,4 +22,6 @@ public class SimulationMapRouteDTO {
     private Long departureTime;
     private Long arrivalTime;
     private Double capacityPercent;
+    private Integer ocupacionReal;
+    private Integer capacidadMax;
 }

@@ -25,7 +25,10 @@ public class AeropuertoMapper {
                 entity.getCity(),
                 entity.getCountry(),
                 entity.getContinent(),
-                entity.getStorageCapacity()
+                entity.getStorageCapacity(),
+                entity.getGmtOffset(),
+                entity.getLatitude(),
+                entity.getLongitude()
         );
     }
 }
