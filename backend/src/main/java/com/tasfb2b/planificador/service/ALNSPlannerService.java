@@ -238,8 +238,11 @@ public class ALNSPlannerService {
                                              Map<String, Aeropuerto> airportMap,
                                              Map<String, Integer> baseAirportLoad,
                                              Map<Long, Integer> baseFlightCapacity) {
+        // Remanentes/Cancelados have higher priority (Integer.MAX_VALUE or higher than usual).
+        // So we sort by descending priority, then by deadline.
         return lots.stream()
-                .sorted(Comparator.comparingLong(SuperLot::getDeadline))
+                .sorted(Comparator.comparingInt(SuperLot::getPriority).reversed()
+                                  .thenComparingLong(SuperLot::getDeadline))
                 .map(lot -> routeBuilder.build(lot, airportMap, baseAirportLoad, baseFlightCapacity))
                 .collect(Collectors.toList());
     }

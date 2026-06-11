@@ -146,8 +146,8 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   padding: 8px 12px;
-  background: linear-gradient(180deg, #12273d, #0d2134);
-  border-bottom: 1px solid #1f3a53;
+  background: linear-gradient(180deg, rgba(9, 29, 49, 0.98), rgba(6, 22, 38, 0.98));
+  border-bottom: 1px solid #1e3f5f;
 }
 
 .ct-kpi-strip--collapsed {
@@ -170,8 +170,8 @@
   display: flex;
   justify-content: flex-end;
   padding: 6px 12px 8px;
-  background: linear-gradient(180deg, #12273d, #0d2134);
-  border-bottom: 1px solid #1f3a53;
+  background: linear-gradient(180deg, rgba(9, 29, 49, 0.98), rgba(6, 22, 38, 0.98));
+  border-bottom: 1px solid #1e3f5f;
   z-index: 8;
   transition: padding 0.2s ease;
 }
@@ -2830,4 +2830,33 @@
 @keyframes ct-entity-highlight-flash {
   0%, 100% { box-shadow: none; }
   50% { box-shadow: 0 0 12px rgba(96, 165, 250, 0.6), inset 0 0 8px rgba(96, 165, 250, 0.15); }
+}
+
+/* ── Nested panel removal (inside DraggableWindow) ── */
+.draggable-content-wrapper .ct-panel {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: #f8fafc !important;
+}
+
+.draggable-content-wrapper .ct-metrics-grid span,
+.draggable-content-wrapper .ct-average {
+  color: #94a3b8 !important;
+}
+
+.draggable-content-wrapper .ct-metrics-grid strong,
+.draggable-content-wrapper .ct-average strong,
+.draggable-content-wrapper .ct-panel p {
+  color: #f8fafc !important;
+}
+
+.draggable-content-wrapper .ct-panel-header {
+  display: none !important;
+}
+
+.ct-header form input::placeholder {
+  color: #cbd5e1 !important;
+  opacity: 1;
 }

@@ -15,4 +15,7 @@ public interface VueloRepository extends JpaRepository<Vuelo, Long> {
 
     @Query("select v from Vuelo v join fetch v.origen join fetch v.destino where v.id in :ids")
     List<Vuelo> findAllByIdWithAirports(@Param("ids") List<Long> ids);
+
+    @Query("select v from Vuelo v join fetch v.origen join fetch v.destino")
+    List<Vuelo> findAllWithAirports();
 }

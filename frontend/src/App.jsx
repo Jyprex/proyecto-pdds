@@ -301,6 +301,18 @@ targetPlaybackMinutes,
               ⚠️ MODO CRISIS: RESILIENCIA ALNS ACTIVA ⚠️
             </div>
           )}
+
+          {/* Indicador de carga inicial (algoritmo y datos txt) */}
+          {simState === "running" && (!liveStatus?.interpolatedTime || liveStatus.interpolatedTime === 0) && (
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(15, 23, 42, 0.90)', padding: '24px 36px', borderRadius: '16px', border: '1px solid rgba(56, 189, 248, 0.4)', color: 'white', textAlign: 'center', zIndex: 100, backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}>
+              <div style={{ width: '40px', height: '40px', border: '4px solid rgba(56, 189, 248, 0.2)', borderTop: '4px solid #38bdf8', borderRadius: '50%', animation: 'ct-spin 1s linear infinite' }}></div>
+              <div>
+                <div style={{ fontWeight: 'bold', fontSize: '16px', color: '#38bdf8', letterSpacing: '1px', marginBottom: '6px' }}>INICIALIZANDO SIMULACIÓN</div>
+                <div style={{ fontSize: '13px', color: '#94a3b8', maxWidth: '280px', lineHeight: '1.4' }}>Cargando datos de archivos y ejecutando primera planificación...</div>
+              </div>
+            </div>
+          )}
+
           <WorldMap
             airports={airportNodes}
             activeMetrics={activeMetrics}
@@ -366,18 +378,7 @@ currentEpochTime={liveStatus?.interpolatedTime || currentEpochTime}
             simState={simState}
           />
 
-<div className="ct-floating-rail ct-floating-rail--left">
-            <TelemetryPanel
-              isVisible={panelVisibility.telemetry}
-              summary={summary}
-              elapsedOperationTime={elapsedOperationTime}
-              onHide={() => togglePanel("telemetry")}
-            />
-            <TransitInventoryPanel
-              isVisible={panelVisibility.transitInventory}
-              transitByContinent={summary.transitByContinent}
-              onHide={() => togglePanel("transitInventory")}
-            />
+          <div className="ct-floating-rail ct-floating-rail--left">
             <FlightCancellationPanel
               isVisible={panelVisibility.cancellation}
               onHide={() => togglePanel("cancellation")}

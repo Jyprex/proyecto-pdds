@@ -99,17 +99,20 @@ public class SimulationWsPublisher {
     }
 
     private void instrumentSnapshot(String sessionId, SimulationMapSnapshotDTO map) {
+        // --- DIAGNOSTIC INSTRUMENTATION REMOVED ---
+        // Los logs [SNAPSHOT_DIAG], [TRACK_FLIGHT], y [IDENTITY_DIAG]
+        // fueron comentados o eliminados para evitar spam en la consola
+        // durante simulaciones largas.
+        /*
         List<SimulationMapRouteDTO> routesRaw = map.getActiveRoutes();
         final List<SimulationMapRouteDTO> routes = (routesRaw == null) ? Collections.emptyList() : routesRaw;
 
         Set<String> currentIds = routes.stream().map(SimulationMapRouteDTO::getId).collect(Collectors.toSet());
         
-        // 1. Backend - Continuidad de vuelos [SNAPSHOT_DIAG]
         System.out.printf("[SNAPSHOT_DIAG] Time=%s Flights=%d Ids=%s%n", 
             map.getSimulatedTime(), routes.size(), 
             routes.stream().limit(10).map(SimulationMapRouteDTO::getId).collect(Collectors.joining(",")));
 
-        // 1. Backend - Continuidad de vuelos [TRACK_FLIGHT]
         List<String> tracked = trackedBySession.get(sessionId);
         if (tracked == null || tracked.isEmpty()) {
             tracked = routes.stream().limit(5).map(SimulationMapRouteDTO::getId).collect(Collectors.toList());
@@ -129,7 +132,6 @@ public class SimulationWsPublisher {
             }
         }
 
-        // 2. Backend - Estabilidad de identidad [IDENTITY_DIAG]
         Set<String> prevIds = prevIdsBySession.getOrDefault(sessionId, Collections.emptySet());
         Set<String> added = new HashSet<>(currentIds);
         added.removeAll(prevIds);
@@ -147,6 +149,7 @@ public class SimulationWsPublisher {
         }
 
         prevIdsBySession.put(sessionId, currentIds);
+        */
     }
 
     private String topic(String sessionId, String channel) {

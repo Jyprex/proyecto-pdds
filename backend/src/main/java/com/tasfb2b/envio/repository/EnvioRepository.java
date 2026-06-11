@@ -67,9 +67,7 @@ public interface EnvioRepository extends CrudRepository<Envio, Long> {
     Set<String> findCodigosByOrigenIcao(@Param("icao") String icao);
 
     /** Elimina envíos con fecha anterior a la dada (sliding window para liberar heap). */
-    @org.springframework.data.jpa.repository.Modifying
-    @Query("DELETE FROM Envio e WHERE e.fecha < :antes")
-    long deleteByFechaBefore(@Param("antes") java.time.LocalDate antes);
+    
 
     interface DailyTotal {
         java.time.LocalDate getFecha();

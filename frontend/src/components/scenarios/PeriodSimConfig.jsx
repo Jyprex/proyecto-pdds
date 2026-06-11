@@ -553,6 +553,8 @@ function PeriodSimConfig({
                   ["Ocupación global", `${liveStatus?.globalOccupancy?.toFixed(1) ?? 0}%`],
                   ["Nodos críticos",   liveStatus?.criticalNodes ?? 0],
                   ["Vuelos activos",   liveStatus?.activeRoutes?.length ?? 0],
+                  ["Salto Algoritmo (Sa)", `${liveStatus?.saMinutes ?? 10} min`],
+                  ["Latencia ALNS (Ta)", `${liveStatus?.taMs ?? 0} ms`],
                 ].map(([label, val]) => (
                   <div key={label} className="ct-progress-detail__item">
                     <span>{label}</span><strong>{val}</strong>

@@ -85,9 +85,6 @@ const MapBackground = React.memo(({ isCollapseScenario }) => (
   </Geographies>
 ));
 
-// Constante para el máximo de vuelos completados en fade-out
-const MAX_COMPLETED_PLANES = 50;
-
 /**
  * WorldMap — Componente raíz del mapa interactivo.
  *
@@ -131,47 +128,10 @@ currentEpochTime = 0,
     activeFilters,
   } = useSelectionBridge();
 
-  // Estados para Tooltip de Aviones y Desvanecimiento de líneas
+  // Estados para Tooltip de Aviones
   const [selectedPlane, setSelectedPlane] = useState(null);
-  const completedPlanesRef = useRef([]);
-  const [completedPlanesVersion, setCompletedPlanesVersion] = useState(0);
-  const prevActivePlanesRef = useRef([]);
-
-  // ── Highlight pulsante temporal ──────────────────────────────────────────
   const [highlightedId, setHighlightedId] = useState(null);
   const highlightTimerRef = useRef(null);
-
-  // Detectar vuelos completados para desvanecimiento
-  useEffect(() => {
-    const prevPlanes = prevActivePlanesRef.current;
-    const currentIds = new Set(activeAircraft.map(p => p.id));
-    
-    const newlyCompleted = prevPlanes.filter(p => !currentIds.has(p.id));
-    
-    if (newlyCompleted.length > 0) {
-      const now = Date.now();
-      const newEntries = newlyCompleted.map(p => ({ ...p, completedAt: now }));
-      completedPlanesRef.current = [
-        ...completedPlanesRef.current,
-        ...newEntries,
-      ].slice(-MAX_COMPLETED_PLANES);
-      setCompletedPlanesVersion(v => v + 1);
-    }
-    
-    prevActivePlanesRef.current = activeAircraft;
-  }, [activeAircraft]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const now = Date.now();
-      const before = completedPlanesRef.current.length;
-      completedPlanesRef.current = completedPlanesRef.current.filter(p => now - p.completedAt < 2000);
-      if (completedPlanesRef.current.length !== before) {
-        setCompletedPlanesVersion(v => v + 1);
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [completedPlanesVersion]);
 
   useEffect(() => {
     if (selectedPlane) {
@@ -179,13 +139,10 @@ currentEpochTime = 0,
       if (current) {
         setSelectedPlane(current);
       } else {
-        const completed = completedPlanesRef.current.find(p => p.id === selectedPlane.id);
-        if (!completed) {
-          setSelectedPlane(null);
-        }
+        setSelectedPlane(null);
       }
     }
-  }, [activeAircraft, completedPlanesVersion, selectedPlane]);
+  }, [activeAircraft, selectedPlane]);
 
   useEffect(() => {
     if (!mapCommand) return;
@@ -347,13 +304,7 @@ currentEpochTime = 0,
           
           <MapBackground isCollapseScenario={isCollapseScenario} />
 
-          <FlightLayer
-            activeAircraft={activeAircraft}
-            airportByIcao={airportByIcao}
-            selectedAircraftId={selectedAircraftId}
-            onAircraftSelect={onAircraftSelect}
-            currentEpochTime={currentEpochTime}
-          />
+
 
 {/* ── Ruta seleccionada ──────────────────────────────────────────── */}
           {selectedFromAirport && selectedToAirport && (
@@ -495,33 +446,24 @@ currentEpochTime = 0,
                   const progress = plane.progress ?? 0;
 
                   // ── Paso 7: Estela progresiva ──
-                  // La línea se dibuja desde el origen hasta la posición actual del avión,
-                  // y se desvanece detrás.
-                  const pathLength = 1000;
-                  const trailPct = 0.20; // 20% del arco como estela visible
-                  const drawnLength = progress * pathLength;
-                  const trailLength = trailPct * pathLength;
-                  
-                  // Calcular dasharray: segmento visible = min(drawnLength, trailLength), luego gap largo
-                  const visibleSegment = Math.min(drawnLength, trailLength);
-                  const dashArray = `${visibleSegment} ${pathLength}`;
-                  const dashOffset = -drawnLength + visibleSegment;
+                  // Calculamos la posición real geográficamente para evitar desfases.
+                  const trailStartProgress = Math.max(0, progress - 0.2);
+                  const trailStartPos = interpolateCoordinates(from, to, trailStartProgress);
+                  const trailEndPos = interpolateCoordinates(from, to, progress);
 
                   return (
                     <Line
                       key={`arc-${plane.id}`}
-                      from={from.coordinates}
-                      to={to.coordinates}
+                      from={trailStartPos}
+                      to={trailEndPos}
                       stroke={strokeColor}
                       strokeWidth={isSelected || isHighlighted ? 3.5 : 2.5}
-                      strokeDasharray={dashArray}
-                      strokeDashoffset={dashOffset}
                       style={{
                         filter: isSelected || isHighlighted
                           ? `drop-shadow(0 0 6px ${strokeColor})`
                           : `drop-shadow(0 0 2px ${strokeColor})`,
                         opacity: passesFilter ? getOpacity(plane.id, 0.85) : 0.08,
-                        transition: "opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease, stroke-dashoffset 1s linear, stroke-dasharray 1s linear",
+                        transition: "opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease",
                         cursor: "pointer"
                       }}
                       strokeLinecap="round"
@@ -536,29 +478,7 @@ currentEpochTime = 0,
                   );
                 })}
 
-                {/* ── Arcos de vuelos recién finalizados (Desvanecimiento automático) ── */}
-                {completedPlanesRef.current.map((plane) => {
-                  const from = airportByIcao[plane.from];
-                  const to   = airportByIcao[plane.to];
-                  if (!from || !to) return null;
-                  const strokeColor = getStrokeColor(plane.status);
-                  return (
-                    <Line
-                      key={`arc-completed-${plane.id}-${plane.completedAt}`}
-                      from={from.coordinates}
-                      to={to.coordinates}
-                      stroke={strokeColor}
-                      strokeWidth={2}
-                      style={{
-                        filter: `drop-shadow(0 0 3px ${strokeColor})`,
-                        animation: "ct-fade-out-line 2s forwards ease-out",
-                        strokeDasharray: "4 4",
-                        opacity: getOpacity(plane.id, 1)
-                      }}
-                      strokeLinecap="round"
-                    />
-                  );
-                })}
+
 
                 {/* ── Paso 8: Aviones con movimiento suavizado + diferenciación en tierra ── */}
                 {activeAircraft.map((plane) => {

@@ -187,7 +187,7 @@ public class SimulationService {
                 Map<String, Aeropuerto> airportMap = airportRepo.findAll().stream()
                                 .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
 
-                List<Vuelo> todosLosVuelos = vueloRepo.findAll();
+                List<Vuelo> todosLosVuelos = vueloRepo.findAllWithAirports();
                 todosLosVuelos.forEach(v -> {
                     v.getOrigen().getIcaoCode();
                     v.getDestino().getIcaoCode();
@@ -284,12 +284,26 @@ int cyclesPerDay = 1440 / saMinutes;
                                 } catch (Exception ignored) {}
                         }
 
-                        for (int cycle = 0; cycle < cyclesPerDay; cycle++) {
-                                long currentSimTime = currentTime + ((long) cycle * saMinutes * 60_000L);
-                                long nextSimTime = currentSimTime + (saMinutes * 60_000L);
+                        int currentSimMinuteOfDay = 0;
 
-                                int simHour   = (cycle * saMinutes) / 60;
-                                int simMinute = (cycle * saMinutes) % 60;
+                        while (currentSimMinuteOfDay < 1440) {
+                                double currentSaturation = globalState.getSaturacionAeropuerto();
+                                int currentSa = saMinutes;
+                                if (currentSaturation >= 85.0) {
+                                        currentSa = Math.max(5, saMinutes / 3);
+                                } else if (currentSaturation >= 65.0) {
+                                        currentSa = Math.max(5, saMinutes / 2);
+                                }
+                                if (currentSimMinuteOfDay + currentSa > 1440) {
+                                        currentSa = 1440 - currentSimMinuteOfDay;
+                                }
+                                session.setCurrentSaMinutes(currentSa);
+
+                                long currentSimTime = currentTime + ((long) currentSimMinuteOfDay * 60_000L);
+                                long nextSimTime = currentSimTime + (currentSa * 60_000L);
+
+                                int simHour   = currentSimMinuteOfDay / 60;
+                                int simMinute = currentSimMinuteOfDay % 60;
                                 String simulatedTimeStr = String.format("Día %d - %02d:%02d", day + 1, simHour, simMinute);
 
                                 // ── DETECTAR CANCELACIONES MANUALES (REPLANT OPERATIVA REACTIVA) ──
@@ -341,8 +355,11 @@ int cyclesPerDay = 1440 / saMinutes;
                                 lotsDelDia.removeAll(lotesVentana);
 
                                 // ── ALNS STATE-AWARE: Inyectamos el estado actual de la red ──
+                                long tAlnsStart = System.currentTimeMillis();
                                 Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS, 
                                         globalState.getCapacidadVuelo(), globalState.getCargaAeropuerto());
+                                long taMs = System.currentTimeMillis() - tAlnsStart;
+                                session.setLastTaMs(taMs);
                                 
                                 masterSolution.getRoutes().addAll(sol.getRoutes());
                                 
@@ -386,16 +403,17 @@ int cyclesPerDay = 1440 / saMinutes;
                                     })
                                     .collect(Collectors.toList());
 
-                                if (cycle < cyclesPerDay - 1) {
+                                if (currentSimMinuteOfDay + currentSa < 1440) {
                                     lotsDelDia.addAll(remanentes); 
                                 } else {
                                     pendientes = remanentes; 
                                 }
 
                                 // ── MICRO-STEPPING: AVANCE DEL MOTOR (CONSUMO DE COLA) ──
-                                int microSteps = saMinutes; 
+                                int microSteps = currentSa; 
                                 long stepDurationMs = 60_000L;
-                                long sleepPerMicroStep = sleepPerCycleMs / microSteps;
+                                long sleepPerCycleMsDynamic = computeSleepPerCycleMs(dias, playbackMinutes, 1440 / currentSa);
+                                long sleepPerMicroStep = sleepPerCycleMsDynamic / microSteps;
 
                                 for (int step = 0; step < microSteps; step++) {
                                         long tMicroStart = System.nanoTime();
@@ -409,8 +427,8 @@ int cyclesPerDay = 1440 / saMinutes;
                                         int mMin = (int) (((microEnd - startTime) % 3600_000L) / 60_000L);
                                         String mTimeStr = String.format("Día %d - %02d:%02d", day + 1, mHour, mMin);
 
-                                        double totalMicroSteps = (double)dias * cyclesPerDay * microSteps;
-                                        int mPercent = (int) ((((day * (double)cyclesPerDay * microSteps) + (cycle * (double)microSteps) + step) / totalMicroSteps) * 100);
+                                        double totalMicroSteps = (double)dias * 1440.0;
+                                        int mPercent = (int) ((((day * 1440.0) + currentSimMinuteOfDay + step) / totalMicroSteps) * 100);
 
                                         updateProgress(session, day + 1, dias, mPercent,
                                                        mTimeStr, 100.0, globalState, airportMap,
@@ -421,7 +439,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                         long adjustedSleep = Math.max(0, sleepPerMicroStep - workTimeMs);
 
                                         try {
-                                                if (day == 0 && cycle < startCycle) {
+                                                if (day == 0 && currentSimMinuteOfDay < startCycle * saMinutes) {
                                                         // Fast-forward (no sleep)
                                                 } else {
                                                         if (adjustedSleep > 0) Thread.sleep(adjustedSleep);
@@ -431,6 +449,8 @@ int cyclesPerDay = 1440 / saMinutes;
                                                 return history;
                                         }
                                 }
+                                
+                                currentSimMinuteOfDay += currentSa;
                         }
 
                         // --- AL FINAL DEL DIA CONSOLIDAR METRICAS ---
@@ -533,7 +553,7 @@ final long dayStartTimeVal = currentTime;
                                             // Aún no despega el primer tramo
                                         } else {
                                             // Layover: Ya aterrizó de un tramo anterior pero no despega el siguiente
-                                            System.out.printf("[LAYOVER_DIAG] Time=%s Flight=%s Shipment=%s At=%s NextDep=%s%n",
+                                            log.trace("[LAYOVER_DIAG] Time={} Flight={} Shipment={} At={} NextDep={}",
                                                 simulatedTime, v.getId(), r.getLot().getId(), v.getOrigen().getIcaoCode(), new Date(depEpoch));
                                         }
                                         continue;
@@ -613,7 +633,9 @@ double capacityPercent = (ocupacion * 100.0) / Math.max(1, max);
                         session.getErrorMessage(),
                         session.getStartEpoch(),
                         new ArrayList<>(activeRoutes),
-                        algorithm
+                        algorithm,
+                        session.getLastTaMs(),
+                        session.getCurrentSaMinutes()
                 ));
         }
 

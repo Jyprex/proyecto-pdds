@@ -88,18 +88,73 @@ public class NetworkAdapterImpl implements NetworkAdapter {
 
         Map<String, Map<String, List<Vuelo>>> cache = new HashMap<>();
         for (Aeropuerto origen : aeropuertos.values()) {
-            Map<String, List<Vuelo>> destMap = new HashMap<>();
-            for (Aeropuerto destino : aeropuertos.values()) {
-                if (origen.getIcaoCode().equals(destino.getIcaoCode())) continue;
-                // Calculamos asumiendo t=0, deadline infinito y sin restricciones
-                List<Vuelo> rutaOptima = calcularRuta(origen, destino, 0L, Long.MAX_VALUE, Collections.emptySet(), Collections.emptyMap());
-                if (!rutaOptima.isEmpty()) {
-                    destMap.put(destino.getIcaoCode(), rutaOptima);
-                }
-            }
+            Map<String, List<Vuelo>> destMap = dijkstraAllDestinations(origen, graph, aeropuertos);
             cache.put(origen.getIcaoCode(), destMap);
         }
         this.shortestPathsCache = cache;
+    }
+
+    private Map<String, List<Vuelo>> dijkstraAllDestinations(Aeropuerto origen, Map<String, List<Vuelo>> localGraph, Map<String, Aeropuerto> aeropuertos) {
+        PriorityQueue<Node> pq = new PriorityQueue<>(Comparator.comparingLong(n -> n.time));
+        Map<String, Long> bestTime = new HashMap<>();
+        Map<String, Vuelo> prevFlight = new HashMap<>();
+
+        pq.add(new Node(origen.getIcaoCode(), 0L));
+        bestTime.put(origen.getIcaoCode(), 0L);
+
+        while (!pq.isEmpty()) {
+            Node current = pq.poll();
+
+            if (current.time > bestTime.getOrDefault(current.airport, Long.MAX_VALUE)) continue;
+
+            Instant momentCurrent = Instant.ofEpochMilli(current.time);
+            if (bloqueoService.nodoEstaBloqueado(current.airport, momentCurrent)) {
+                continue;
+            }
+
+            for (Vuelo v : localGraph.getOrDefault(current.airport, List.of())) {
+                String dest = v.getDestino().getIcaoCode();
+                if (bloqueoService.tramoEstaBloqueado(current.airport, dest, momentCurrent)) {
+                    continue;
+                }
+
+                long wait = calcularEsperaMatematica(current.time, v);
+                long duration = v.getDuracionMs();
+                
+                if (bloqueoService.tieneDemoraTransito(current.airport, dest, momentCurrent)) {
+                    duration *= 2;
+                }
+
+                long arrTime = current.time + wait + duration;
+                if (bloqueoService.nodoEstaBloqueado(dest, Instant.ofEpochMilli(arrTime))) {
+                    continue;
+                }
+
+                long costoEspera = wait;
+                if (Boolean.TRUE.equals(v.getCancelled())) {
+                    wait += PERIODO_DIARIO_MS;
+                    costoEspera = wait - (3600_000L);
+                }
+
+                long costoLlegada = current.time + costoEspera + duration;
+
+                if (costoLlegada < bestTime.getOrDefault(dest, Long.MAX_VALUE)) {
+                    bestTime.put(dest, costoLlegada);
+                    prevFlight.put(dest, v);
+                    pq.add(new Node(dest, costoLlegada));
+                }
+            }
+        }
+
+        Map<String, List<Vuelo>> destMap = new HashMap<>();
+        for (Aeropuerto destino : aeropuertos.values()) {
+            if (origen.getIcaoCode().equals(destino.getIcaoCode())) continue;
+            List<Vuelo> path = reconstruirRuta(prevFlight, origen.getIcaoCode(), destino.getIcaoCode());
+            if (!path.isEmpty()) {
+                destMap.put(destino.getIcaoCode(), path);
+            }
+        }
+        return destMap;
     }
 
     @Override

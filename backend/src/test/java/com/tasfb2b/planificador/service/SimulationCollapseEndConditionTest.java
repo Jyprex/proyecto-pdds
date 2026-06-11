@@ -23,8 +23,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SimulationCollapseEndConditionTest {
 
+    private final CollapseHelper collapseHelper = new CollapseHelper(null, null);
+
     private static final double SLA_THRESHOLD = 30.0;
     private static final int CONSECUTIVE_DAYS = 2;
+
+    public SimulationCollapseEndConditionTest() {
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
+    }
 
     private static Aeropuerto aeropuerto(String icao, int storageCapacity) {
         return Aeropuerto.builder()
@@ -40,7 +47,7 @@ class SimulationCollapseEndConditionTest {
     private static SimulationState stateConCarga(Map<String, Integer> cargaPorIcao,
                                                  Map<String, Aeropuerto> airportMap) {
         List<Aeropuerto> airports = List.copyOf(airportMap.values());
-        SimulationState state = new SimulationState(airports, List.<Vuelo>of(), 0L);
+        SimulationState state = new SimulationState(airports, List.<Vuelo>of(), 0L, null);
         cargaPorIcao.forEach((icao, carga) -> state.getCargaAeropuerto().put(icao, carga));
         return state;
     }
@@ -64,8 +71,8 @@ class SimulationCollapseEndConditionTest {
         airportMap.put("SKBO", aeropuerto("SKBO", 100));
         SimulationState state = stateConCarga(Map.of("SKBO", 50), airportMap);
 
-        SimulationService.CollapseCheckResult r = SimulationService.checkEndCondition(
-                s, report, state, airportMap, SLA_THRESHOLD, CONSECUTIVE_DAYS);
+        CollapseHelper.CollapseCheckResult r = collapseHelper.checkEndCondition(
+                s, report, state, airportMap);
 
         assertThat(r.terminated()).isFalse();
         assertThat(s.getSlaStreak()).isEqualTo(1);
@@ -83,8 +90,8 @@ class SimulationCollapseEndConditionTest {
         airportMap.put("SKBO", aeropuerto("SKBO", 100));
         SimulationState state = stateConCarga(Map.of("SKBO", 50), airportMap);
 
-        SimulationService.CollapseCheckResult r = SimulationService.checkEndCondition(
-                s, report, state, airportMap, SLA_THRESHOLD, CONSECUTIVE_DAYS);
+        CollapseHelper.CollapseCheckResult r = collapseHelper.checkEndCondition(
+                s, report, state, airportMap);
 
         assertThat(r.terminated()).isTrue();
         assertThat(s.getSlaStreak()).isEqualTo(2);
@@ -103,8 +110,8 @@ class SimulationCollapseEndConditionTest {
         airportMap.put("SKBO", aeropuerto("SKBO", 100));
         SimulationState state = stateConCarga(Map.of("SKBO", 50), airportMap);
 
-        SimulationService.CollapseCheckResult r = SimulationService.checkEndCondition(
-                s, report, state, airportMap, SLA_THRESHOLD, CONSECUTIVE_DAYS);
+        CollapseHelper.CollapseCheckResult r = collapseHelper.checkEndCondition(
+                s, report, state, airportMap);
 
         assertThat(r.terminated()).isFalse();
         assertThat(s.getSlaStreak()).isEqualTo(0);
@@ -128,8 +135,8 @@ class SimulationCollapseEndConditionTest {
         SimulationState state = stateConCarga(
                 Map.of("SKBO", 95, "SEQM", 95, "SVMI", 95), airportMap);
 
-        SimulationService.CollapseCheckResult r = SimulationService.checkEndCondition(
-                s, report, state, airportMap, SLA_THRESHOLD, CONSECUTIVE_DAYS);
+        CollapseHelper.CollapseCheckResult r = collapseHelper.checkEndCondition(
+                s, report, state, airportMap);
 
         assertThat(r.terminated()).isTrue();
         assertThat(r.reason()).contains("3/3");
@@ -150,8 +157,8 @@ class SimulationCollapseEndConditionTest {
         SimulationState state = stateConCarga(
                 Map.of("SKBO", 95, "SEQM", 50), airportMap);
 
-        SimulationService.CollapseCheckResult r = SimulationService.checkEndCondition(
-                s, report, state, airportMap, SLA_THRESHOLD, CONSECUTIVE_DAYS);
+        CollapseHelper.CollapseCheckResult r = collapseHelper.checkEndCondition(
+                s, report, state, airportMap);
 
         assertThat(r.terminated()).isFalse();
     }
@@ -169,8 +176,8 @@ class SimulationCollapseEndConditionTest {
         airportMap.put("SKBO", aeropuerto("SKBO", 100));
         SimulationState state = stateConCarga(Map.of("SKBO", 100), airportMap);
 
-        SimulationService.CollapseCheckResult r = SimulationService.checkEndCondition(
-                s, report, state, airportMap, SLA_THRESHOLD, CONSECUTIVE_DAYS);
+        CollapseHelper.CollapseCheckResult r = collapseHelper.checkEndCondition(
+                s, report, state, airportMap);
 
         assertThat(r.terminated()).isFalse();
         assertThat(s.getSlaStreak()).isEqualTo(0); // NONE no toca el streak

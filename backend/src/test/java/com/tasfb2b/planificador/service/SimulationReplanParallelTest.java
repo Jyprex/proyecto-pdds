@@ -61,12 +61,18 @@ class SimulationReplanParallelTest {
     @Mock SimulationProgressHolder progressHolder;
     @Mock EnvioService envioService;
     @Mock SimulationWsPublisher wsPublisher;
+    @Mock com.tasfb2b.planificador.strategy.NetworkAdapter networkAdapter;
+    @Mock com.tasfb2b.bloqueo.service.BloqueoService bloqueoService;
 
     /**
      * Construye un SimulationService con los mocks y un executor configurable.
      * Usa el constructor generado por Lombok con el orden de declaración de campos.
      */
     private SimulationService buildService(Executor exec) {
+        CollapseHelper collapseHelper = new CollapseHelper(alnsPlanner, exec);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
+
         return new SimulationService(
                 simulator,
                 eventEngine,
@@ -77,7 +83,9 @@ class SimulationReplanParallelTest {
                 progressHolder,
                 envioService,
                 wsPublisher,
-                exec);
+                collapseHelper,
+                networkAdapter,
+                bloqueoService);
     }
 
     /**
@@ -116,7 +124,9 @@ class SimulationReplanParallelTest {
     @Test
     void invoca_doReplan_con_ventana_500ms() {
         Executor sync = Runnable::run;
-        SimulationService svc = buildService(sync);
+        CollapseHelper collapseHelper = new CollapseHelper(alnsPlanner, sync);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
 
         // 10 rutas con vueloIds únicos
         List<Route> routes = new ArrayList<>();
@@ -127,7 +137,7 @@ class SimulationReplanParallelTest {
 
         when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
 
-        svc.applyCollapseInjections(s, routes, "alns");
+        collapseHelper.applyCollapseInjections(s, routes, "alns");
 
         // 3 cancelaciones, todas con vueloId único → 3 llamadas
         verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L));
@@ -140,7 +150,9 @@ class SimulationReplanParallelTest {
     @Test
     void dedupe_por_vueloId() {
         Executor sync = Runnable::run;
-        SimulationService svc = buildService(sync);
+        CollapseHelper collapseHelper = new CollapseHelper(alnsPlanner, sync);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
 
         // 4 rutas: vueloId=1 aparece 2 veces. Tras dedupe, debe haber 3 replans (no 4).
         List<Route> routes = List.of(
@@ -152,7 +164,7 @@ class SimulationReplanParallelTest {
 
         when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
 
-        svc.applyCollapseInjections(s, routes, "alns");
+        collapseHelper.applyCollapseInjections(s, routes, "alns");
 
         // 4 rutas, 3 vueloIds únicos → 3 replans (no 4)
         verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L));
@@ -163,7 +175,9 @@ class SimulationReplanParallelTest {
     @Test
     void replan_exitoso_marca_rescued() {
         Executor sync = Runnable::run;
-        SimulationService svc = buildService(sync);
+        CollapseHelper collapseHelper = new CollapseHelper(alnsPlanner, sync);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
 
         List<Route> routes = List.of(
                 routeWithVuelo(1L), routeWithVuelo(2L), routeWithVuelo(3L));
@@ -175,7 +189,7 @@ class SimulationReplanParallelTest {
         ok.setRoutes(List.of(routeWithVuelo(99L)));
         when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(ok);
 
-        int rescued = svc.applyCollapseInjections(s, routes, "alns");
+        int rescued = collapseHelper.applyCollapseInjections(s, routes, "alns");
 
         assertThat(rescued).isEqualTo(3);
         for (Route r : routes) {
@@ -188,7 +202,9 @@ class SimulationReplanParallelTest {
     @Test
     void replan_sin_rutas_marca_cancelled() {
         Executor sync = Runnable::run;
-        SimulationService svc = buildService(sync);
+        CollapseHelper collapseHelper = new CollapseHelper(alnsPlanner, sync);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
 
         List<Route> routes = List.of(
                 routeWithVuelo(1L), routeWithVuelo(2L), routeWithVuelo(3L));
@@ -197,7 +213,7 @@ class SimulationReplanParallelTest {
 
         when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
 
-        int rescued = svc.applyCollapseInjections(s, routes, "alns");
+        int rescued = collapseHelper.applyCollapseInjections(s, routes, "alns");
 
         assertThat(rescued).isZero();
         for (Route r : routes) {
@@ -211,7 +227,9 @@ class SimulationReplanParallelTest {
     @Test
     void excepcion_en_un_replan_no_aborta_otros() {
         Executor sync = Runnable::run;
-        SimulationService svc = buildService(sync);
+        CollapseHelper collapseHelper = new CollapseHelper(alnsPlanner, sync);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
 
         List<Route> routes = List.of(
                 routeWithVuelo(1L), routeWithVuelo(2L), routeWithVuelo(3L));
@@ -226,7 +244,7 @@ class SimulationReplanParallelTest {
         ok.setRoutes(List.of(routeWithVuelo(99L)));
         when(alnsPlanner.doReplan(any(Solution.class), eq(3L), anyLong())).thenReturn(ok);
 
-        int rescued = svc.applyCollapseInjections(s, routes, "alns");
+        int rescued = collapseHelper.applyCollapseInjections(s, routes, "alns");
 
         // vueloId=1 y 3 → cancelled y rescued respectivamente; vueloId=2 → cancelled (excepción)
         assertThat(rescued).isEqualTo(1);
@@ -244,7 +262,9 @@ class SimulationReplanParallelTest {
         java.util.concurrent.ExecutorService realPool =
                 java.util.concurrent.Executors.newFixedThreadPool(4);
         try {
-            SimulationService svc = buildService(realPool);
+            CollapseHelper collapseHelper = new CollapseHelper(alnsPlanner, realPool);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseSlaThreshold", 30.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(collapseHelper, "collapseConsecutiveDays", 2);
 
             // 4 rutas con vueloIds distintos, stress=100 para cancelar las 4
             List<Route> routes = List.of(
@@ -268,7 +288,7 @@ class SimulationReplanParallelTest {
                 return emptyReplan();
             });
 
-            svc.applyCollapseInjections(s, routes, "alns");
+            collapseHelper.applyCollapseInjections(s, routes, "alns");
 
             // Si el código fuera serial, maxConcurrent quedaría en 1.
             assertThat(maxConcurrent.get())

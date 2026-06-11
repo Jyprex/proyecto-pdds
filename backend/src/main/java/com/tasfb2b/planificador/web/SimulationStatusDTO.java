@@ -115,4 +115,10 @@ public class SimulationStatusDTO {
      *                  slaPercent, airportSaturation, colapsed }
      */
     private List<Map<String, Object>> reports;
+
+    /** Tiempo de ejecución del último ALNS (ms) */
+    private Long taMs;
+
+    /** Salto de algoritmo actual (minutos) */
+    private Integer saMinutes;
 }

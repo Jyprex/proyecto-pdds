@@ -188,7 +188,9 @@ public class SimulationController {
                 .collapseReason(session.getCollapseReason())
                 .comparisonResults(progressHolder.getComparisonResults())
                 .errorMessage(session.getErrorMessage())
-                .reports(reportsList);
+                .reports(reportsList)
+                .taMs(session.getLastTaMs())
+                .saMinutes(session.getCurrentSaMinutes());
 
         if ("DONE".equals(session.getStatus().name()) && session.getStartEpoch() != null) {
             try {

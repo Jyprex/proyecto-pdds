@@ -45,7 +45,9 @@ public class SimulationProgressHolder {
             String errorMessage,
             Long startEpoch,
             List<Map<String, Object>> activeRoutes,
-            String algorithm
+            String algorithm,
+            Long taMs,
+            Integer saMinutes
     ) {}
 
     /**
@@ -131,6 +133,12 @@ public class SimulationProgressHolder {
         
         /** Epoch ms del primer día simulado. */
         private Long startEpoch;
+
+        /** Tiempo de ejecución del último ALNS (ms) */
+        private Long lastTaMs = 0L;
+
+        /** Salto de algoritmo actual (minutos) */
+        private Integer currentSaMinutes = 10;
     }
 
     private final ConcurrentHashMap<String, SimulationSessionState> sessions =

@@ -32,9 +32,6 @@ public class SimulationDayReport {
     /** Maletas efectivamente asignadas a vuelos (capacidadAsignada total). */
     private int malatetasAtendidas;
 
-    /** Maletas entregadas al cliente final (recogidas del almacén destino). */
-    private int maletasEntregadas;
-
     /**
      * Maletas entregadas al cliente durante este día de simulación (eventos BAGGAGE_PICKUP).
      * Representa las maletas que efectivamente salieron del almacén destino.

@@ -255,6 +255,9 @@ export const useControlTowerController = () => {
   const handleTabChange = useCallback((tabKey = "vivo") => {
     setActiveTab(tabKey);
     setIsScenarioConfigOpen(false);
+    if (tabKey === "periodo" || tabKey === "colapso") {
+      setIsDockCollapsed(true);
+    }
   }, []);
 
   const toggleScenarioConfig = useCallback(() => {

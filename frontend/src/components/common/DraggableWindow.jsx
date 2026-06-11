@@ -61,11 +61,11 @@ export default function DraggableWindow({
         width: defaultSize.width,
         height: defaultSize.height,
         minWidth: 300,
-        background: 'rgba(15, 23, 42, 0.95)',
-        backdropFilter: 'blur(12px)',
-        border: `1px solid ${isActive ? 'rgba(96, 165, 250, 0.6)' : 'rgba(255, 255, 255, 0.1)'}`,
+        background: 'rgba(30, 41, 59, 0.85)',
+        backdropFilter: 'blur(16px)',
+        border: `1px solid ${isActive ? 'rgba(96, 165, 250, 0.8)' : 'rgba(255, 255, 255, 0.15)'}`,
         borderRadius: '8px',
-        boxShadow: isActive ? '0 10px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(96,165,250,0.3)' : '0 10px 25px rgba(0,0,0,0.5)',
+        boxShadow: isActive ? '0 10px 30px rgba(0,0,0,0.6), 0 0 0 1px rgba(96,165,250,0.4)' : '0 10px 25px rgba(0,0,0,0.5)',
         zIndex: isActive ? 1000 : 900,
         display: 'flex',
         flexDirection: 'column',
@@ -77,7 +77,7 @@ export default function DraggableWindow({
         onMouseDown={handleMouseDown}
         style={{
           padding: '8px 12px',
-          background: isActive ? 'rgba(30, 41, 59, 0.9)' : 'rgba(30, 41, 59, 0.5)',
+          background: isActive ? 'rgba(51, 65, 85, 0.9)' : 'rgba(51, 65, 85, 0.5)',
           borderBottom: '1px solid rgba(255,255,255,0.05)',
           display: 'flex',
           justifyContent: 'space-between',
@@ -108,7 +108,7 @@ export default function DraggableWindow({
           ✕
         </button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
+      <div className="draggable-content-wrapper" style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
         {children}
       </div>
     </div>
