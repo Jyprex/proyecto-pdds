@@ -54,7 +54,8 @@ public class SimulationController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
             @RequestParam(required = false) String preCancelledFlightIds,
-            @RequestParam(required = false) String startTime) {
+            @RequestParam(required = false) String startTime,
+            @RequestParam(required = false, defaultValue = "1440") int saMinutes) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         String sessionId = UUID.randomUUID().toString();
@@ -67,7 +68,7 @@ public class SimulationController {
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setAlgorithm(algorithm);
         
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime, saMinutes);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -87,7 +88,8 @@ public class SimulationController {
             @RequestParam(required = false, defaultValue = "NONE") String endCondition,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
             @RequestParam(required = false) String preCancelledFlightIds,
-            @RequestParam(required = false, defaultValue = "00:00:00") String startTime) {
+            @RequestParam(required = false, defaultValue = "00:00:00") String startTime,
+            @RequestParam(required = false, defaultValue = "1440") int saMinutes) {
 
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); 
@@ -112,7 +114,7 @@ public class SimulationController {
         session.setAlgorithm(algorithm);
         session.setEndCondition(cond);
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime);
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime, saMinutes);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);

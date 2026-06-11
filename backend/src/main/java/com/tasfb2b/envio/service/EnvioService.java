@@ -115,30 +115,42 @@ public class EnvioService {
         String diaStr = dia.format(DateTimeFormatter.BASIC_ISO_DATE);
         java.nio.file.Path folder = java.nio.file.Path.of(dataPath);
 
+        List<java.nio.file.Path> archivos = new ArrayList<>();
         try (java.nio.file.DirectoryStream<java.nio.file.Path> stream =
                      java.nio.file.Files.newDirectoryStream(folder, "_envios_*.txt")) {
-            for (java.nio.file.Path archivo : stream) {
+            stream.forEach(archivos::add);
+        } catch (Exception e) {
+            throw new RuntimeException("Error leyendo directorio: " + folder, e);
+        }
+
+        // Leer en paralelo, altamente IO/CPU bound
+        Map<String, List<String>> lineasPorArchivo = archivos.parallelStream()
+            .map(archivo -> {
                 List<String> lineasFecha = new ArrayList<>();
                 try (java.io.BufferedReader br = java.nio.file.Files.newBufferedReader(archivo)) {
                     String linea;
                     while ((linea = br.readLine()) != null) {
                         int guion = linea.indexOf('-');
                         if (guion < 0 || linea.length() <= guion + 8) continue;
-                        String f = linea.substring(guion + 1, guion + 9);
-                        if (f.equals(diaStr)) {
+                        // Usar regionMatches es más rápido que substring() y no crea nuevos objetos String
+                        if (linea.regionMatches(guion + 1, diaStr, 0, 8)) {
                             lineasFecha.add(linea);
                         }
                     }
+                } catch (Exception e) {
+                    log.error("Error leyendo archivo {}", archivo, e);
                 }
-                if (!lineasFecha.isEmpty()) {
-                    cargarDesdeLineasArchivo(archivo.getFileName().toString(), lineasFecha);
-                }
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Error en carga diaria para " + dia, e);
+                return Map.entry(archivo.getFileName().toString(), lineasFecha);
+            })
+            .filter(entry -> !entry.getValue().isEmpty())
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        // Insertar secuencialmente para evitar bloqueos concurrentes en la DB H2
+        for (Map.Entry<String, List<String>> entry : lineasPorArchivo.entrySet()) {
+            cargarDesdeLineasArchivo(entry.getKey(), entry.getValue());
         }
 
-        log.info("[Memoria] Cargados envíos del día {} a H2", dia);
+        log.info("[Memoria] Cargados envíos del día {} a H2 (Multi-hilo)", dia);
     }
 
     /**

@@ -8,6 +8,7 @@ import com.tasfb2b.bloqueo.repository.BloqueoRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -21,6 +22,16 @@ import java.util.stream.Collectors;
 public class BloqueoService {
 
     private final BloqueoRepository repository;
+    private volatile List<Bloqueo> activeCache = List.of();
+
+    @PostConstruct
+    public void init() {
+        refreshCache();
+    }
+
+    private synchronized void refreshCache() {
+        activeCache = repository.findByActivoTrue();
+    }
 
     public BloqueoResponse crear(BloqueoRequest request) {
         Bloqueo bloqueo = Bloqueo.builder()
@@ -34,7 +45,9 @@ public class BloqueoService {
                 .descripcion(request.descripcion())
                 .activo(true)
                 .build();
-        return toResponse(repository.save(bloqueo));
+        Bloqueo saved = repository.save(bloqueo);
+        refreshCache();
+        return toResponse(saved);
     }
 
     public List<BloqueoResponse> listarActivos() {
@@ -56,11 +69,13 @@ public class BloqueoService {
         repository.findById(id).ifPresent(b -> {
             b.setActivo(false);
             repository.save(b);
+            refreshCache();
         });
     }
 
     public void eliminar(Long id) {
         repository.deleteById(id);
+        refreshCache();
     }
 
     /** Comprueba si un tramo está bloqueado en este momento */
@@ -69,16 +84,20 @@ public class BloqueoService {
     }
 
     public boolean tramoEstaBloqueado(String origenIcao, String destinoIcao, Instant momento) {
-        // Un tramo está bloqueado si hay un bloqueo de TRAMO activo o una avería Tipo 4 (corte total)
-        boolean tieneBloqueoTramo = !repository.findTramoVigenteEn(origenIcao, destinoIcao, momento).isEmpty();
-        if (tieneBloqueoTramo) return true;
-
-        // Verificar avería Tipo 4 (Corte total de tramo)
-        return repository.findVigenteEn(momento).stream()
-                .anyMatch(b -> b.getTipo() == TipoBloqueo.AVERIA &&
-                               Integer.valueOf(4).equals(b.getAveriaType()) &&
-                               origenIcao.equals(b.getOrigenIcao()) &&
-                               destinoIcao.equals(b.getDestinoIcao()));
+        return activeCache.stream().anyMatch(b -> {
+            if (momento.isBefore(b.getInicio()) || momento.isAfter(b.getFin())) return false;
+            
+            boolean esBloqueoTramo = b.getTipo() == TipoBloqueo.TRAMO &&
+                                     origenIcao.equals(b.getOrigenIcao()) &&
+                                     destinoIcao.equals(b.getDestinoIcao());
+            
+            boolean esCorteTotal = b.getTipo() == TipoBloqueo.AVERIA &&
+                                   Integer.valueOf(4).equals(b.getAveriaType()) &&
+                                   origenIcao.equals(b.getOrigenIcao()) &&
+                                   destinoIcao.equals(b.getDestinoIcao());
+            
+            return esBloqueoTramo || esCorteTotal;
+        });
     }
 
     /** Comprueba si un nodo está bloqueado en este momento */
@@ -87,15 +106,18 @@ public class BloqueoService {
     }
 
     public boolean nodoEstaBloqueado(String icao, Instant momento) {
-        // Un nodo está bloqueado si hay un bloqueo de NODO activo o una avería Tipo 2 (Cierre de origen/nodo)
-        boolean tieneBloqueoNodo = !repository.findNodoVigenteEn(icao, momento).isEmpty();
-        if (tieneBloqueoNodo) return true;
-
-        // Verificar avería Tipo 2 (Cierre de Origen - bloquea salidas de vuelos)
-        return repository.findVigenteEn(momento).stream()
-                .anyMatch(b -> b.getTipo() == TipoBloqueo.AVERIA &&
-                               Integer.valueOf(2).equals(b.getAveriaType()) &&
-                               icao.equals(b.getOrigenIcao()));
+        return activeCache.stream().anyMatch(b -> {
+            if (momento.isBefore(b.getInicio()) || momento.isAfter(b.getFin())) return false;
+            
+            boolean esBloqueoNodo = b.getTipo() == TipoBloqueo.NODO &&
+                                    icao.equals(b.getOrigenIcao());
+            
+            boolean esCierreOrigen = b.getTipo() == TipoBloqueo.AVERIA &&
+                                     Integer.valueOf(2).equals(b.getAveriaType()) &&
+                                     icao.equals(b.getOrigenIcao());
+            
+            return esBloqueoNodo || esCierreOrigen;
+        });
     }
 
     /**
@@ -107,8 +129,8 @@ public class BloqueoService {
     }
 
     public int getCapacidadEfectivaPct(String icao, Instant momento) {
-        List<Bloqueo> averias = repository.findVigenteEn(momento)
-                .stream()
+        List<Bloqueo> averias = activeCache.stream()
+                .filter(b -> !momento.isBefore(b.getInicio()) && !momento.isAfter(b.getFin()))
                 .filter(b -> b.getTipo() == TipoBloqueo.AVERIA &&
                              Integer.valueOf(1).equals(b.getAveriaType()) && // Tipo 1 - Reducción capacidad
                              icao.equals(b.getOrigenIcao()) &&
@@ -122,7 +144,8 @@ public class BloqueoService {
 
     /** Comprueba si hay una avería Tipo 3 (Demora de tránsito) activa para un tramo */
     public boolean tieneDemoraTransito(String origenIcao, String destinoIcao, Instant momento) {
-        return repository.findVigenteEn(momento).stream()
+        return activeCache.stream()
+                .filter(b -> !momento.isBefore(b.getInicio()) && !momento.isAfter(b.getFin()))
                 .anyMatch(b -> b.getTipo() == TipoBloqueo.AVERIA &&
                                Integer.valueOf(3).equals(b.getAveriaType()) &&
                                origenIcao.equals(b.getOrigenIcao()) &&

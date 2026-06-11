@@ -87,11 +87,7 @@ public class SimulationService {
         private static final long PLANNER_WINDOW_MS = 500;
 
         // ── PLANIFICACIÓN PROGRAMADA (PLANIFICACION_PROGRAMADA.md) ──────────
-        /**
-         * Sa = Salto del algoritmo: granularidad de ciclos en minutos de tiempo simulado.
-         */
-        @Value("${tasf.sim.saMinutes:10}")
-        private int saMinutes;
+        // saMinutes se inyecta desde la petición HTTP para permitir configuración
 
         public record WsEnvelope<T>(long seq, T data) {}
 
@@ -99,7 +95,7 @@ public class SimulationService {
          * Inicia la simulación en el pool {@code simulationExecutor}.
          */
         @Async("simulationExecutor")
-        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds, String startTime) {
+        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds, String startTime, int saMinutes) {
                 SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
                 if (session == null) return;
                 
@@ -111,7 +107,7 @@ public class SimulationService {
                         session.setStartEpoch(startEpochMs);
 
                         List<SimulationDayReport> reports = runFullSimulation(
-                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime);
+                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime, saMinutes);
                         session.getReports().addAll(reports);
 
                         int totalAttended = reports.stream().mapToInt(SimulationDayReport::getMalatetasAtendidas).sum();
@@ -156,7 +152,8 @@ public class SimulationService {
                         LocalDate fechaInicio,
                         int playbackMinutes,
                         String preCancelledFlightIds,
-                        String startTimeStr) {
+                        String startTimeStr,
+                        int saMinutes) {
 
                 // Parsear pre-cancelaciones (ej: 5:2, 12, 15:all)
                 List<PreCancellation> preCancellations = new ArrayList<>();
@@ -187,6 +184,15 @@ public class SimulationService {
                 Map<String, Aeropuerto> airportMap = airportRepo.findAll().stream()
                                 .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
 
+                long startTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                long currentTime = startTime;
+
+                // Enviar primer frame de inmediato para quitar el modal de carga
+                updateProgress(session, 1, dias, 0, "Inicializando...", 100.0,
+                        new SimulationState(new ArrayList<>(airportMap.values()), new ArrayList<>(), startTime, bloqueoService),
+                        airportMap, new ArrayList<>(), startTime, startTime, algorithm);
+                wsPublisher.pushImmediate(session.getSessionId(), session);
+
                 List<Vuelo> todosLosVuelos = vueloRepo.findAllWithAirports();
                 todosLosVuelos.forEach(v -> {
                     v.getOrigen().getIcaoCode();
@@ -194,8 +200,6 @@ public class SimulationService {
                 });
 
                 List<SimulationDayReport> history = new ArrayList<>();
-                long startTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
-                long currentTime = startTime;
                 List<SuperLot> pendientes = new ArrayList<>();
                 List<Route> inTransitRoutes = new ArrayList<>();
 
