@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { ComposableMap, Geographies, Geography, Marker, Line, ZoomableGroup } from "react-simple-maps";
-import { interpolateCoordinates } from "../../data/airportsData";
+import { interpolateCoordinates, calculateAircraftRotation } from "../../data/airportsData";
 
 const GEO_URL = "/world-110m.json";
 
@@ -164,6 +164,8 @@ const WorldMap = ({
             // Usar progress suavizado (interpolado por rAF) en lugar del discreto
             const progress   = smoothedProgress[plane.id] ?? plane.progress ?? 0;
             const position   = interpolateCoordinates(from, to, progress);
+            const rotation =
+                plane.rotation ?? calculateAircraftRotation(from, to);
             const isBlocked  = plane.status === "blocked";
             const isCancelled= plane.status === "cancelled";
             const isRescued  = plane.status === "rescued";
@@ -174,7 +176,7 @@ const WorldMap = ({
                 coordinates={position}
                 // Sin transition CSS — el movimiento lo controla useSmoothProgress vía rAF
               >
-                <g
+                <g transform={`rotate(${rotation})`}
                   className={`ct-aircraft-pin ct-aircraft-pin--${plane.status} ${
                     selectedAircraftId === plane.id ? "ct-aircraft-pin--selected" : ""
                   }`}

@@ -332,11 +332,52 @@ export const buildAirportMetrics = (airports = [], occupancyMap = null) =>
   }, {});
 
 /** Interpola posición [lng, lat] entre dos aeropuertos para animación de vuelo */
-export const interpolateCoordinates = (fromAirport = {}, toAirport = {}, progress = 0) => {
+export const interpolateCoordinates = (
+    fromAirport = {},
+    toAirport = {},
+    progress = 0
+) => {
   const [fromLng, fromLat] = fromAirport.coordinates ?? [0, 0];
   const [toLng, toLat] = toAirport.coordinates ?? [0, 0];
+
+  let diffLng = toLng - fromLng;
+
+  if (diffLng > 180) diffLng -= 360;
+  if (diffLng < -180) diffLng += 360;
+
+  let lng = fromLng + diffLng * progress;
+
+  if (lng > 180) lng -= 360;
+  if (lng < -180) lng += 360;
+
   return [
-    fromLng + (toLng - fromLng) * progress,
+    lng,
     fromLat + (toLat - fromLat) * progress,
   ];
+};
+
+/**
+ * Calcula la rotación en grados para que el avión apunte a su destino.
+ * Considera la inversión del eje Y en SVG y el cruce del meridiano 180.
+ * Asume que el icono base '✈' tiene una inclinación de ~45° (hacia el noreste).
+ */
+export const calculateAircraftRotation = (fromAirport, toAirport) => {
+  if (!fromAirport?.coordinates || !toAirport?.coordinates) return 0;
+
+  const [fromLng, fromLat] = fromAirport.coordinates;
+  const [toLng, toLat] = toAirport.coordinates;
+
+  let dx = toLng - fromLng;
+  if (dx > 180) dx -= 360;
+  if (dx < -180) dx += 360;
+
+  const dy = toLat - fromLat;
+
+  // Ángulo en grados (0 es Este, 90 es Norte)
+  const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+  // Ajuste para SVG (Y invertido) y compensación de inclinación del icono Unicode ✈ (aprox 45°)
+  // Si el icono fuera perfectamente horizontal hacia la derecha, usaríamos -angleDeg.
+  // Al estar inclinado 45° hacia arriba, restamos ese offset.
+  return 45 - angleDeg;
 };

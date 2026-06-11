@@ -7,7 +7,7 @@ import {
   COLLAPSE_AIRPORT_ROWS,
   SCENARIO_TABS,
 } from "../data/controlTowerData";
-import { AIRPORT_BY_ICAO, buildAirportMetrics, AIRPORTS } from "../data/airportsData";
+import { AIRPORT_BY_ICAO, buildAirportMetrics, AIRPORTS, calculateAircraftRotation } from "../data/airportsData";
 
 const PANEL_VISIBILITY_DEFAULT = {
   telemetry: true,
@@ -734,6 +734,7 @@ export const useControlTowerController = () => {
         arrivalTime: r.arrivalTime,
         capacityPercent: r.capacityPercent ?? 0,
         progress: r.progress,
+        rotation: calculateAircraftRotation(AIRPORT_BY_ICAO[r.from], AIRPORT_BY_ICAO[r.to]),
       };
       const prev = byId.get(next.id);
       if (!prev) {

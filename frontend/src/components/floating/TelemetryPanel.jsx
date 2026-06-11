@@ -30,7 +30,7 @@ function TelemetryPanel({ isVisible, summary, elapsedOperationTime, onHide }) {
         </div>
         <div>
           <span>TRANSCURRIDO</span>
-          <strong>{elapsedOperationTime}</strong>
+          <strong>{summary.realTimeElapsed}</strong>
         </div>
         <div>
           <span>FASE DE SIMULACIÓN</span>
