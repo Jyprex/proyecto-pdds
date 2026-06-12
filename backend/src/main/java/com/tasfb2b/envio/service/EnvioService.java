@@ -161,4 +161,71 @@ public class EnvioService {
                 ));
     }
 
+    @Transactional
+    public void registrarManual(com.tasfb2b.envio.web.UserEnvioRequest req) {
+        Aeropuerto origen = aeropuertoRepo.findByIcaoCode(req.getOrigenIcao())
+                .orElseThrow(() -> new RuntimeException("Origen no encontrado: " + req.getOrigenIcao()));
+        Aeropuerto destino = aeropuertoRepo.findByIcaoCode(req.getDestinoIcao())
+                .orElseThrow(() -> new RuntimeException("Destino no encontrado: " + req.getDestinoIcao()));
+
+        String codigo9 = String.format("%09d", new java.util.Random().nextInt(1000000000));
+
+        envioRepo.save(Envio.builder()
+                .codigoPedido(codigo9)
+                .fecha(req.getFecha())
+                .hora(req.getHora())
+                .origen(origen)
+                .destino(destino)
+                .cantidadMaletas(req.getCantidadMaletas())
+                .clienteId(req.getClienteId())
+                .build());
+    }
+
+    @Transactional
+    public void registrarLoteUsuario(List<String> lineas) {
+        Map<String, Aeropuerto> aeropuertoCache = aeropuertoRepo.findAll()
+                .stream()
+                .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
+
+        List<Envio> batch = new ArrayList<>();
+        java.util.Random random = new java.util.Random();
+
+        for (String linea : lineas) {
+            String[] parts = linea.split(",");
+            if (parts.length < 6) continue;
+
+            try {
+                LocalDate fecha = LocalDate.parse(parts[0].trim()); // ISO-8601 (yyyy-MM-dd)
+                LocalTime hora = LocalTime.parse(parts[1].trim());
+                String origenIcao = parts[2].trim();
+                String destinoIcao = parts[3].trim();
+                Integer cantidad = Integer.parseInt(parts[4].trim());
+                String clienteId = parts[5].trim();
+
+                Aeropuerto origen = aeropuertoCache.get(origenIcao);
+                Aeropuerto destino = aeropuertoCache.get(destinoIcao);
+
+                if (origen == null || destino == null) continue;
+
+                String codigo9 = String.format("%09d", random.nextInt(1000000000));
+
+                batch.add(Envio.builder()
+                        .codigoPedido(codigo9)
+                        .fecha(fecha)
+                        .hora(hora)
+                        .origen(origen)
+                        .destino(destino)
+                        .cantidadMaletas(cantidad)
+                        .clienteId(clienteId)
+                        .build());
+
+            } catch (Exception e) {
+                log.warn("[EnvioService] Error parseando linea de usuario: {}", linea);
+            }
+        }
+
+        if (!batch.isEmpty()) {
+            envioRepo.saveAll(batch);
+        }
+    }
 }

@@ -1,4 +1,5 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 const ScenarioHeader = ({
   activeTab = "vivo",
@@ -11,6 +12,7 @@ const ScenarioHeader = ({
   onSearch = () => {},
   isSearching = false
 }) => {
+  const navigate = useNavigate();
   const [searchValue, setSearchValue] = React.useState("");
 
   const handleSearch = (e) => {
@@ -23,6 +25,14 @@ const ScenarioHeader = ({
       <div className="ct-brand">
         <p className="ct-title">Control Tower</p>
         <nav className="ct-tabs" aria-label="Escenarios de operación">
+          <button
+            className="ct-tab"
+            type="button"
+            onClick={() => navigate('/registrar-envio')}
+            style={{ color: '#38bdf8', fontWeight: 'bold', marginRight: '10px', borderRight: '1px solid rgba(255,255,255,0.1)', paddingRight: '15px' }}
+          >
+            📥 Registrar envío
+          </button>
           {tabs.map((tab) => (
             <button
               key={tab.key}

@@ -38,4 +38,27 @@ public class EnvioController {
             throw new RuntimeException("Error procesando archivo", e);
         }
     }
+
+    @PostMapping("/manual")
+    public String registrarManual(@RequestBody UserEnvioRequest req) {
+        envioService.registrarManual(req);
+        return "Envío registrado correctamente";
+    }
+
+    @PostMapping("/archivo")
+    public String registrarArchivo(@RequestParam("file") MultipartFile file) {
+        try {
+            List<String> lineas = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(file.getInputStream()))
+                    .lines()
+                    .toList();
+
+            envioService.registrarLoteUsuario(lineas);
+
+            return "Archivo de usuario procesado correctamente";
+
+        } catch (Exception e) {
+            throw new RuntimeException("Error procesando archivo de usuario", e);
+        }
+    }
 }
