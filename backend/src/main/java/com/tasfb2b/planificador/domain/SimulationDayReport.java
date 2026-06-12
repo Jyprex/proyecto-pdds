@@ -15,7 +15,7 @@ public class SimulationDayReport {
     private long startTime;
     private long endTime;
 
-    private List<Route> routes;
+
 
     private boolean colapsed;
     private int airportSaturation;
@@ -45,4 +45,3 @@ public class SimulationDayReport {
      */
     private List<SuperLot> pendingLots = new ArrayList<>();
 }
-

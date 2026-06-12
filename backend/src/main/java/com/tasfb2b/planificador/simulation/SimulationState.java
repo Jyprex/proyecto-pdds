@@ -165,6 +165,10 @@ public class SimulationState {
                 int actualLoad = maletasEmbarcadas.getOrDefault(
                         v.getId() + "-" + event.getLot().getId(), event.getLoad());
 
+                // Restaurar la capacidad del vuelo (el avión se vacía al llegar)
+                int remaining = capacidadVuelo.getOrDefault(v.getId(), 0);
+                capacidadVuelo.put(v.getId(), remaining + actualLoad);
+
                 String icao = v.getDestino().getIcaoCode();
                 Aeropuerto ap = airports.get(icao);
                 int current = cargaAeropuerto.getOrDefault(icao, 0);

@@ -42,11 +42,10 @@ public class EnvioService {
         String origenIcao = NombreArchivoParser.extraerIcao(nombreArchivo);
         Aeropuerto origen = aeropuertoCache.get(origenIcao);
         if (origen == null) {
-            System.err.println("[EnvioService] Origen no registrado, se omite: " + nombreArchivo);
+            log.error("[EnvioService] Origen no registrado, se omite: {}", nombreArchivo);
             return;
         }
 
-        // Pre-cargar los códigos ya existentes para este origen — evita excepciones de Hibernate
         java.util.Set<String> existentes = envioRepo.findCodigosByOrigenIcao(origenIcao);
         Set<String> seenInBatch = new HashSet<>();
         List<Envio> batch = new ArrayList<>(BATCH_SIZE);
@@ -61,14 +60,12 @@ public class EnvioService {
             if (parsed == null) continue;
 
             String codigo = parsed.codigo();
-            // Saltar si ya existe en BD o si ya lo vimos en este mismo lote de carga
             if (existentes.contains(codigo) || !seenInBatch.add(codigo)) {
                 continue;
             }
 
             Aeropuerto destino = aeropuertoCache.get(parsed.destinoIcao());
             if (destino == null) {
-                System.err.println("Destino no encontrado: " + parsed.destinoIcao());
                 continue;
             }
 
@@ -92,24 +89,18 @@ public class EnvioService {
             envioRepo.saveAll(batch);
         }
     }
+
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public synchronized void cargarPorFecha(LocalDate inicio, LocalDate fin, String dataPath) {
-        // Delegamos a carga diaria para no subir todo a RAM de golpe
         for (LocalDate d = inicio; !d.isAfter(fin); d = d.plusDays(1)) {
             cargarPorDia(d, dataPath);
         }
     }
 
-    /**
-     * Carga envíos de un SOLO día a H2 — Patrón Ventana Deslizante.
-     * Si ya están cargados, no-op (idempotente).
-     * Diseñado para ser llamado desde el loop diario de SimulationService,
-     * cargando solo el día necesario justo antes de procesarlo.
-     */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public synchronized void cargarPorDia(LocalDate dia, String dataPath) {
         if (envioRepo.existsByFecha(dia)) {
-            return; // Ya cargado, evitar duplicados
+            return;
         }
 
         String diaStr = dia.format(DateTimeFormatter.BASIC_ISO_DATE);
@@ -153,22 +144,12 @@ public class EnvioService {
         log.info("[Memoria] Cargados envíos del día {} a H2 (Multi-hilo)", dia);
     }
 
-    /**
-     * Purga envíos anteriores a una fecha de H2 para liberar heap.
-     * Llamar desde SimulationService al terminar cada día: purgar días ya procesados
-     * que no necesitan reconsulta (ventana deslizante de 3 días de retención).
-     */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void purgarAntesDe(LocalDate fecha) {
         envioRepo.deleteByFechaBefore(fecha);
         log.info("[Memoria] Purgados envíos anteriores a {}", fecha);
     }
 
-    /**
-     * Devuelve la demanda REAL de maletas por día en el rango dado.
-     * Fuente: tabla Envio en BD (cargada previamente con cargarPorFecha).
-     * Clave del mapa: "YYYYMMDD", valor: suma de cantidadMaletas de todos los aeropuertos.
-     */
     @Transactional(readOnly = true)
     public java.util.Map<String, Long> getDemandaRealPorFecha(LocalDate inicio, LocalDate fin) {
         return envioRepo.findDailyTotalsByRange(inicio, fin).stream()
@@ -179,6 +160,5 @@ public class EnvioService {
                         java.util.TreeMap::new
                 ));
     }
-
 
 }

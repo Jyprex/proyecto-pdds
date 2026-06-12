@@ -127,6 +127,52 @@ public class SuperLotService {
         return superLots;
     }
 
+    @Transactional(readOnly = true)
+    public List<SuperLot> agruparEnviosPorVentana(long startTimeMs, long endTimeMs) {
+        Map<String, Accumulator> grupos = new HashMap<>();
+        
+        java.time.LocalDate startDate = java.time.Instant.ofEpochMilli(startTimeMs).atOffset(ZoneOffset.UTC).toLocalDate().minusDays(1);
+        java.time.LocalDate endDate = java.time.Instant.ofEpochMilli(endTimeMs).atOffset(ZoneOffset.UTC).toLocalDate().plusDays(1);
+
+        try (Stream<EnvioResumen> stream = envioRepo.streamResumenesPorRangoFechas(startDate, endDate)) {
+            stream.forEach(e -> {
+                long readyTime = java.time.LocalDateTime
+                        .of(e.getFecha(), e.getHora())
+                        .minusHours(e.getOrigenGmtOffset())
+                        .toInstant(ZoneOffset.UTC)
+                        .toEpochMilli();
+
+                if (readyTime >= startTimeMs && readyTime < endTimeMs) {
+                    String key = e.getOrigenIcao() + "-" + e.getDestinoIcao();
+                    grupos.computeIfAbsent(key, k -> new Accumulator(
+                            e.getOrigenContinente(),
+                            e.getDestinoContinente(),
+                            readyTime
+                    )).add(e.getCantidadMaletas(), readyTime);
+                }
+            });
+        }
+
+        List<SuperLot> superLots = new ArrayList<>();
+        for (var entry : grupos.entrySet()) {
+            String[] partes = entry.getKey().split("-");
+            Accumulator acc = entry.getValue();
+
+            boolean intercontinental = !acc.origenCont.equals(acc.destinoCont);
+            long sla = intercontinental ? 48L * 3600_000 : 24L * 3600_000;
+
+            SuperLot lot = new SuperLot(
+                    megaLotIdCounter.getAndIncrement(), partes[0], partes[1],
+                    acc.totalMaletas, acc.minReadyTime,
+                    sla, intercontinental, 0);
+
+            lot.validate();
+            superLots.add(lot);
+        }
+
+        return superLots;
+    }
+
     // Contador global para IDs de MegaLots
     private final java.util.concurrent.atomic.AtomicInteger megaLotIdCounter = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
 

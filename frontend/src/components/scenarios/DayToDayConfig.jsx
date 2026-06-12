@@ -52,8 +52,8 @@ function DayToDayConfig({
   // ── Early return DESPUÉS de todos los hooks ───────────────────────────────
   if (!isOpen) return null;
 
-  const isRunning   = simState === "running";
-  const isCompleted = simState === "completed";
+  const isRunning   = simState === "running" || liveStatus?.status === "RUNNING";
+  const isCompleted = simState === "completed" || liveStatus?.status === "DONE";
 
   const sections = [
     { key: "envios",  label: "Monitor" },
@@ -93,12 +93,6 @@ function DayToDayConfig({
         <div className="ct-config-section" style={{ marginBottom: 0 }}>
           {!isRunning && !isCompleted ? (
           <>
-            {/* EXPERIMENTAL MODE - DISABLED FOR BUSINESS UI
-            <p style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
-              Algoritmo: <strong style={{ color: "#818cf8" }}>{selectedAlgorithm?.toUpperCase()}</strong>
-            </p>
-            */}
-
             {/* Selector de fecha */}
             <div style={{
               background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(79,70,229,0.3)',
@@ -516,8 +510,7 @@ function DayToDayConfig({
         {/* ── SECCIÓN CONFIG ───────────────────────────────────────────────── */}
         {activeSection === "config" && (
           <div className="ct-config-section">
-<p className="ct-config-section__title">🚦 SEMÁFORO DE MALETAS</p>
-
+            <p className="ct-config-section__title" style={{ marginTop: 16 }}>🚦 SEMÁFORO DE MALETAS</p>
             <div className="ct-sla-legend">
               {[
                 { cls: "green",  label: "Verde: <70% del plazo" },

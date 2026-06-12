@@ -220,12 +220,13 @@ public class SimulationService {
 int cyclesPerDay = 1440 / saMinutes;
                 
                 // Estado global persistente multi-día
-                Solution masterSolution = new Solution();
-                masterSolution.setRoutes(new ArrayList<>());
+
                 boolean hubsReduced = false;
                 Set<Long> processedCancelledFlightIds = new HashSet<>();
 
-                for (int day = 0; day < dias; day++) {
+                int day = 0;
+                boolean terminated = false;
+                while (!terminated && (dias <= 0 || day < dias)) {
 
                         LocalDate fechaDia = fechaInicio.plusDays(day);
                         long dayStartEpochMs = fechaDia.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
@@ -257,14 +258,11 @@ int cyclesPerDay = 1440 / saMinutes;
                         }
 
                         envioService.cargarPorDia(fechaDia, dataPath);
+                        // Precargar los datos del día siguiente para permitir al planificador mirar a futuro
+                        if (day + 1 < dias) {
+                                envioService.cargarPorDia(fechaInicio.plusDays(day + 1), dataPath);
+                        }
                         if (day >= 3) envioService.purgarAntesDe(fechaInicio.plusDays(day - 2));
-
-                        List<SuperLot> lotsDelDia = new ArrayList<>(pendientes);
-                        lotsDelDia.addAll(superLotService.agruparEnviosPorFecha(fechaDia));
-                        
-                        // ── CONSOLIDACIÓN DE CARGA (Eficiencia) ──
-                        lotsDelDia = superLotService.mergeLots(lotsDelDia);
-                        pendientes.clear();
 
                         // Reducción de hubs una sola vez al entrar en modo colapso
                         if (session.isCollapseMode() && !hubsReduced) {
@@ -339,7 +337,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                                                         // Re-encolar para replanificación
                                                                         SuperLot replanLot = elevateToMaxPriority(r.getLot(), currentSimTime);
                                                                         replanLot.setTotalMaletas(cantidad);
-                                                                        lotsDelDia.add(replanLot);
+                                                                        pendientes.add(replanLot);
 
                                                                         session.getEventLog().add(String.format(
                                                                                 "[%02d:%02d] 🔄 Replanificando automáticamente lote %d (%s -> %s) afectado por cancelación.",
@@ -353,21 +351,24 @@ int cyclesPerDay = 1440 / saMinutes;
                                         log.warn("[SimulationService] Error procesando cancelaciones en ciclo: {}", e.getMessage());
                                 }
 
-                                List<SuperLot> lotesVentana = lotsDelDia.stream()
-                                    .filter(l -> l.getReadyTime() < nextSimTime)
-                                    .collect(Collectors.toList());
-                                lotsDelDia.removeAll(lotesVentana);
+                                // ── ALNS PIPELINE (Ejecución Concurrente/Paralela) ──
+                                Solution sol;
+                                if (session.getNextPlanFuture() != null) {
+                                        sol = (Solution) session.getNextPlanFuture().join();
+                                        session.setNextPlanFuture(null);
+                                } else {
+                                        List<SuperLot> lotesVentana = new ArrayList<>(pendientes);
+                                        lotesVentana.addAll(superLotService.agruparEnviosPorVentana(currentSimTime, nextSimTime));
+                                        lotesVentana = superLotService.mergeLots(lotesVentana);
+                                        pendientes.clear();
 
-                                // ── ALNS STATE-AWARE: Inyectamos el estado actual de la red ──
-                                long tAlnsStart = System.currentTimeMillis();
-                                Solution sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS, 
-                                        globalState.getCapacidadVuelo(), globalState.getCargaAeropuerto());
-                                long taMs = System.currentTimeMillis() - tAlnsStart;
-                                session.setLastTaMs(taMs);
+                                        long tAlnsStart = System.currentTimeMillis();
+                                        sol = alnsPlanner.plan(lotesVentana, PLANNER_WINDOW_MS, 
+                                                globalState.getCapacidadVuelo(), globalState.getCargaAeropuerto());
+                                        session.setLastTaMs(System.currentTimeMillis() - tAlnsStart);
+                                        totalMaletasDia += lotesVentana.stream().mapToInt(SuperLot::getTotalMaletas).sum();
+                                }
                                 
-                                masterSolution.getRoutes().addAll(sol.getRoutes());
-                                
-                                totalMaletasDia += lotesVentana.stream().mapToInt(SuperLot::getTotalMaletas).sum();
                                 malatetasAtendidasDia += sol.getRoutes().stream().mapToInt(Route::getCapacidadAsignada).sum();
 
                                 if (session.isCollapseMode()) {
@@ -407,11 +408,30 @@ int cyclesPerDay = 1440 / saMinutes;
                                     })
                                     .collect(Collectors.toList());
 
-                                if (currentSimMinuteOfDay + currentSa < 1440) {
-                                    lotsDelDia.addAll(remanentes); 
-                                } else {
-                                    pendientes = remanentes; 
-                                }
+                                pendientes.addAll(remanentes);
+
+                                // ── KICK OFF PLANIFICADOR PARA LA PRÓXIMA VENTANA EN PARALELO ──
+                                long futureSimTime = nextSimTime;
+                                long futureNextSimTime = futureSimTime + (currentSa * 60_000L);
+                                List<SuperLot> futureLotes = new ArrayList<>(pendientes);
+                                futureLotes.addAll(superLotService.agruparEnviosPorVentana(futureSimTime, futureNextSimTime));
+                                final List<SuperLot> finalFutureLotes = superLotService.mergeLots(futureLotes);
+                                pendientes.clear();
+                                
+                                // Guardamos las métricas adelantadas
+                                final int futureTotalMaletas = finalFutureLotes.stream().mapToInt(SuperLot::getTotalMaletas).sum();
+                                totalMaletasDia += futureTotalMaletas;
+
+                                Map<Long, Integer> nextCapVuelo = new HashMap<>(globalState.getCapacidadVuelo());
+                                Map<String, Integer> nextCapAero = new HashMap<>(globalState.getCargaAeropuerto());
+
+                                CompletableFuture<Solution> futurePlan = CompletableFuture.supplyAsync(() -> {
+                                        long tStart = System.currentTimeMillis();
+                                        Solution s = alnsPlanner.plan(finalFutureLotes, PLANNER_WINDOW_MS, nextCapVuelo, nextCapAero);
+                                        session.setLastTaMs(System.currentTimeMillis() - tStart);
+                                        return s;
+                                });
+                                session.setNextPlanFuture(futurePlan);
 
                                 // ── MICRO-STEPPING: AVANCE DEL MOTOR (CONSUMO DE COLA) ──
                                 int microSteps = currentSa; 
@@ -464,12 +484,6 @@ int cyclesPerDay = 1440 / saMinutes;
                         report.setDayIndex(day);
                         report.setStartTime(currentTime);
                         report.setEndTime(currentTime + 24L * 60 * 60 * 1000);
-final long dayStartTimeVal = currentTime;
-                        List<Route> dayRoutes = masterSolution.getRoutes().stream()
-                                .filter(r -> r.getLot().getReadyTime() >= dayStartTimeVal
-                                        && r.getLot().getReadyTime() < (dayStartTimeVal + 24L * 60 * 60 * 1000))
-                                .collect(Collectors.toList());
-                        report.setRoutes(dayRoutes);
                         report.setColapsed(globalState.isColapsado());
                         report.setAirportSaturation(globalState.getSaturacionAeropuerto());
                         report.setCollapseTime(globalState.isColapsado() ? globalState.getCurrentTime() : -1L);
@@ -497,6 +511,7 @@ final long dayStartTimeVal = currentTime;
                         }
 
                         currentTime += 24L * 60 * 60 * 1000;
+                        day++;
                 }
 
                 session.setAvgRouteLength(totalRoutesWithFlights == 0 ? 0.0 : (double) totalFlightLegs / totalRoutesWithFlights);
@@ -548,8 +563,15 @@ final long dayStartTimeVal = currentTime;
                         long routeTime = r.getLot().getReadyTime();
                         for (int i = 0; i < flights.size(); i++) {
                                 Vuelo v = flights.get(i);
-                                long depEpoch = v.getDepartureEpoch(baseTime); 
-                                long arrEpoch = v.getArrivalEpoch(baseTime);
+                                long depEpoch = v.calcularSiguienteSalida(routeTime);
+                                long duration = v.getDuracionMs();
+                                if (bloqueoService != null && bloqueoService.tieneDemoraTransito(
+                                        v.getOrigen().getIcaoCode(),
+                                        v.getDestino().getIcaoCode(),
+                                        java.time.Instant.ofEpochMilli(depEpoch))) {
+                                    duration *= 2;
+                                }
+                                long arrEpoch = depEpoch + duration;
                                 routeTime = arrEpoch;
 
                                 if (currentSimTime < depEpoch) {

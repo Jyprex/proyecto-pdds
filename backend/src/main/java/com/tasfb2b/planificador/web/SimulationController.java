@@ -222,18 +222,9 @@ public class SimulationController {
         SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
         if (session == null) return ResponseEntity.notFound().build();
 
-        // Buscar en el reporte de todos los días simulados hasta el momento
-        for (SimulationDayReport report : session.getReports()) {
-            if (report.getRoutes() == null) continue;
-            for (Route r : report.getRoutes()) {
-                if (String.valueOf(r.getLot().getId()).equals(shipmentId)) {
-                    return ResponseEntity.ok(buildShipmentTraceMap(r));
-                }
-            }
-        }
-
+        // Historial de rutas no mantenido en memoria para evitar OOM.
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(Map.of("message", "Envío no encontrado en el historial de esta sesión"));
+                .body(Map.of("message", "Envío no encontrado en el historial de esta sesión (historial purgado por OOM)"));
     }
 
     private Map<String, Object> buildShipmentTraceMap(Route r) {
@@ -479,50 +470,9 @@ public class SimulationController {
         }
 
         sb.append("## ✈️ Ocupación Acumulada de Vuelos Físicos\n");
-        sb.append("Detalle del equipaje transportado por cada vuelo programado que participó en el traslado de lotes:\n\n");
-        
-        Map<Long, Integer> flightLoads = new LinkedHashMap<>();
-        Map<Long, Vuelo> flightObjects = new LinkedHashMap<>();
+        sb.append("*El historial de rutas por vuelo ha sido deshabilitado para evitar OOM.*\n\n");
 
-        for (SimulationDayReport report : session.getReports()) {
-            if (report.getRoutes() == null) continue;
-            for (Route r : report.getRoutes()) {
-                if (r.getFlights() == null || r.getCapacidadAsignada() <= 0) continue;
-                for (Vuelo v : r.getFlights()) {
-                    flightLoads.put(v.getId(), flightLoads.getOrDefault(v.getId(), 0) + r.getCapacidadAsignada());
-                    flightObjects.put(v.getId(), v);
-                }
-            }
-        }
-
-        if (flightLoads.isEmpty()) {
-            sb.append("*No se registraron asignaciones de equipaje a ningún vuelo físico en esta corrida.*\n\n");
-        } else {
-            sb.append("| ID Vuelo | Origen | Destino | Tipo | Capacidad Total | Equipaje Asignado | % Ocupación | Estado |\n");
-            sb.append("| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n");
-            for (Map.Entry<Long, Integer> entry : flightLoads.entrySet()) {
-                Long flightId = entry.getKey();
-                int load = entry.getValue();
-                Vuelo v = flightObjects.get(flightId);
-                if (v == null) continue;
-
-                double occupancy = (load * 100.0) / v.getCapacidadTotal();
-                String status = v.getCancelled() ? "🚨 Cancelado" : "🟢 Activo";
-                String type = v.getIntercontinental() ? "Intercontinental" : "Nacional";
-
-                sb.append("| ").append(v.getId())
-                  .append(" | ").append(v.getOrigen().getIcaoCode())
-                  .append(" | ").append(v.getDestino().getIcaoCode())
-                  .append(" | ").append(type)
-                  .append(" | ").append(String.format("%,d", v.getCapacidadTotal()))
-                  .append(" | ").append(String.format("%,d", load))
-                  .append(" | ").append(String.format("%.1f%%", occupancy))
-                  .append(" | ").append(status).append(" |\n");
-            }
-            sb.append("\n");
-        }
-
-        sb.append("## 📅 Desglose de Rutas y Reacomodación por Día\n");
+        sb.append("## 📅 Desglose Diarios\n");
         for (SimulationDayReport report : session.getReports()) {
             sb.append("### 📆 Día ").append(report.getDayIndex() + 1).append("\n");
             sb.append("- **SLA del Día**: `").append(String.format("%.2f", report.getSlaPercent())).append("%`\n");
@@ -534,32 +484,6 @@ public class SimulationController {
                 sb.append("- **Estado**: 🟢 Estable\n");
             }
             sb.append("\n");
-
-            if (report.getRoutes() == null || report.getRoutes().isEmpty()) {
-                sb.append("*No hay rutas detalladas disponibles para este día.*\n\n");
-            } else {
-                sb.append("| Lote ID | Origen ➔ Destino | Tipo | Demanda | Atendidas | Ecap | Estado | Ruta Tomada |\n");
-                sb.append("| :---: | :--- | :---: | :---: | :---: | :---: | :---: | :--- |\n");
-                for (Route r : report.getRoutes()) {
-                    List<String> hops = r.getHops();
-                    String routePath = (hops != null && !hops.isEmpty()) ? String.join(" ➔ ", hops) : "Sin Ruta Directa";
-
-                    String state = "A tiempo";
-                    if (r.isNoAtendido()) state = "❌ No atendido";
-                    else if (r.isTarde()) state = "⚠️ Retrasado";
-                    else if ("cancelled".equals(r.getStatus())) state = "🚨 Afectado Cancelación";
-
-                    sb.append("| ").append(r.getLot().getId())
-                      .append(" | ").append(r.getLot().getOrigenIcao()).append(" ➔ ").append(r.getLot().getDestinoIcao())
-                      .append(" | ").append(r.isIntercontinental() ? "Intercon." : "Nacional")
-                      .append(" | ").append(String.format("%,d", r.getDemandaTotal()))
-                      .append(" | ").append(String.format("%,d", r.getCapacidadAsignada()))
-                      .append(" | ").append(String.format("%,d", r.getDemandaNoAtendida()))
-                      .append(" | ").append(state)
-                      .append(" | `").append(routePath).append("` |\n");
-                }
-                sb.append("\n");
-            }
         }
 
         sb.append("\n---\n> Reporte detallado generado dinámicamente por **TASF-B2B Control Tower**.");

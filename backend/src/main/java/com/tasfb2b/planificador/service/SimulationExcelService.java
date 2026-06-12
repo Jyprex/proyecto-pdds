@@ -141,15 +141,16 @@ public class SimulationExcelService {
                 int ecap       = demanda - atendidas;
                 double sla     = rep.getSlaPercent();
                 double ocp     = (atendidas / CAPACIDAD_AVIONES_DIA) * 100.0;
-                int rutas      = rep.getRoutes() != null ? rep.getRoutes().size() : 0;
-                double satAero = rep.getAirportSaturation();
-                boolean col    = rep.isColapsed();
+                int atendidos = rep.getMalatetasAtendidas();
+                int invalidos = rep.getTotalMaletas() - atendidos;
 
                 sumDemanda  += demanda;
                 sumAtendidas += atendidas;
                 sumSla      += sla;
-                sumSat      += satAero;
-                sumRutas    += rutas;
+                sumSat      += rep.getAirportSaturation();
+                sumRutas    += 0;
+                double satAero = rep.getAirportSaturation();
+                boolean col    = rep.isColapsed();
 
                 XSSFCellStyle rowSt = (diasCol % 2 == 0) ? dataBSt : dataASt;
                 XSSFCellStyle colSt = col ? redSt : rowSt;
@@ -163,7 +164,7 @@ public class SimulationExcelService {
                 wc(dr, 4, ecap,                               ecap > 0 ? redSt : rowSt);
                 wcd(dr, 5, sla,                               rowSt);
                 wcd(dr, 6, ocp,                               rowSt);
-                wc(dr, 7, rutas,                              rowSt);
+                wc(dr, 7, 0,                                  rowSt);
                 wc(dr, 8, 0 /* activeFlights snapshot */,     rowSt);
                 wcd(dr, 9, satAero,                           satAero > 100 ? redSt : rowSt);
                 wc(dr, 10, col ? "⚠️ SÍ" : "No",             colSt);

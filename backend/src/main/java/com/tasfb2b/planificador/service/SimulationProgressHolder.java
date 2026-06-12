@@ -139,6 +139,9 @@ public class SimulationProgressHolder {
 
         /** Salto de algoritmo actual (minutos) */
         private Integer currentSaMinutes = 10;
+        
+        /** Futuro para el ALNS de la siguiente ventana concurrente */
+        private java.util.concurrent.CompletableFuture<?> nextPlanFuture;
     }
 
     private final ConcurrentHashMap<String, SimulationSessionState> sessions =
