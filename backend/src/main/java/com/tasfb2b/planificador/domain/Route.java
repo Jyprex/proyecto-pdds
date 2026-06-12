@@ -129,4 +129,9 @@ public class Route {
         this.deadline = 0;
         this.status = "normal";
     }
+
+    public long getDepartureTime() {
+        if (flights == null || flights.isEmpty()) return -1L;
+        return flights.get(0).getDepartureEpoch(getLot().getReadyTime());
+    }
 }

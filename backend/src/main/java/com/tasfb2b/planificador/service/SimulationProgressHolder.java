@@ -47,7 +47,9 @@ public class SimulationProgressHolder {
             List<Map<String, Object>> activeRoutes,
             String algorithm,
             Long taMs,
-            Integer saMinutes
+            Integer saMinutes,
+            String planId,
+            List<Map<String, Object>> plannedRoutes
     ) {}
 
     /**
@@ -57,6 +59,9 @@ public class SimulationProgressHolder {
     public static class SimulationSessionState {
         private String sessionId;
         private Status status = Status.RUNNING;
+
+        /** ID del plan maestro actual para sincronización por versiones */
+        private String currentPlanId;
 
         /** Contenedor inmutable para sincronización con el WebSocket Publisher */
         private volatile MapSnapshot mapSnapshot;

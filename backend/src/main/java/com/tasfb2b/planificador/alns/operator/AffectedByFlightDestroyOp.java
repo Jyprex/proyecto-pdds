@@ -22,12 +22,17 @@ public class AffectedByFlightDestroyOp implements DestroyOperator {
     }
 
     @Override
-    public List<SuperLot> destroy(List<Route> routes, int q, Random rng) {
+    public List<SuperLot> destroy(List<Route> routes, int q, Random rng, long currentSimTime) {
         List<SuperLot> removed = new ArrayList<>();
 
         Iterator<Route> it = routes.iterator();
         while (it.hasNext()) {
             Route r = it.next();
+            // Solo podemos destruir rutas que no han empezado su primer tramo
+            if (!r.getFlights().isEmpty() && r.getDepartureTime() <= currentSimTime) {
+                continue;
+            }
+
             boolean afectado = r.getFlights().stream()
                     .anyMatch(v -> vueloIdCancelado.equals(v.getId()));
             if (afectado) {

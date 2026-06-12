@@ -164,7 +164,9 @@ public class SimulationWsPublisher {
                     .simulatedTime(frame.simulatedTime())
                     .currentEpochTime(frame.currentEpochTime())
                     .snapshotEpochTime(System.currentTimeMillis())
+                    .planId(frame.planId())
                     .activeRoutes(toRouteDtos(frame.activeRoutes(), limit))
+                    .masterPlan(frame.plannedRoutes())
                     .build();
         }
 
@@ -177,6 +179,7 @@ public class SimulationWsPublisher {
                     .simulatedTime(session.getSimulatedTime())
                     .currentEpochTime(session.getCurrentEpochTime())
                     .snapshotEpochTime(System.currentTimeMillis())
+                    .planId(session.getCurrentPlanId())
                     .activeRoutes(toRouteDtos(session.getActiveRoutes(), limit))
                     .build();
         }

@@ -17,11 +17,18 @@ import java.util.Set;
 public class RelatedDestroyOp implements DestroyOperator {
 
     @Override
-    public List<SuperLot> destroy(List<Route> routes, int q, Random rng) {
+    public List<SuperLot> destroy(List<Route> routes, int q, Random rng, long currentSimTime) {
         if (routes.isEmpty()) return List.of();
 
-        // Elegir pivote aleatorio
-        Route pivot = routes.get(rng.nextInt(routes.size()));
+        // Filtrar rutas que pueden ser destruidas (no han empezado su primer tramo)
+        List<Route> candidates = routes.stream()
+                .filter(r -> r.getFlights().isEmpty() || r.getDepartureTime() > currentSimTime)
+                .collect(java.util.stream.Collectors.toList());
+
+        if (candidates.isEmpty()) return List.of();
+
+        // Elegir pivote aleatorio entre los candidatos
+        Route pivot = candidates.get(rng.nextInt(candidates.size()));
         String origenPivot  = pivot.getLot().getOrigenIcao();
         String destinoPivot = pivot.getLot().getDestinoIcao();
         long   slaPivot     = pivot.getLot().getSla();

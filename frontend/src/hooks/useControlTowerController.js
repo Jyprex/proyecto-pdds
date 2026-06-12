@@ -87,6 +87,7 @@ export const useControlTowerController = () => {
   });
   const [airportLoads, setAirportLoads] = useState({});
   const [aircraft, setAircraft] = useState([]);
+  const [masterPlan, setMasterPlan] = useState({ planId: null, routes: [] });
   const prevAircraftRef = useRef([]);
   const prevActiveIdsRef = useRef(new Set());
   const [clock, setClock] = useState({ simulatedTime: "--:--", currentEpochTime: 0 });
@@ -179,6 +180,8 @@ export const useControlTowerController = () => {
         let appliedRoutes = null;
         let appliedAirportLoads = null;
         let appliedKpis = null;
+        let appliedPlanId = null;
+        let appliedMasterPlan = null;
         
         while (buffer.length > 0 && buffer[0].epoch <= smoothSimTimeRef.current) {
           const snap = buffer.shift();
@@ -187,6 +190,8 @@ export const useControlTowerController = () => {
           if (snap.routes !== undefined) appliedRoutes = snap.routes;
           if (snap.airportLoads !== undefined) appliedAirportLoads = snap.airportLoads;
           if (snap.kpis !== undefined) appliedKpis = snap.kpis;
+          if (snap.planId !== undefined) appliedPlanId = snap.planId;
+          if (snap.masterPlan !== undefined) appliedMasterPlan = snap.masterPlan;
         }
         
         if (appliedClock !== null && appliedEpoch !== null) {
@@ -194,6 +199,13 @@ export const useControlTowerController = () => {
         }
         if (appliedRoutes !== null) {
            setAircraft(appliedRoutes);
+        }
+        if (appliedPlanId !== null && appliedMasterPlan !== null) {
+            setMasterPlan(prev => {
+                if (prev.planId === appliedPlanId) return prev;
+                console.info(`[Fase 4] Nuevo Plan Maestro detectado: ${appliedPlanId}. Sincronizando horizontes futuros.`);
+                return { planId: appliedPlanId, routes: appliedMasterPlan };
+            });
         }
         if (appliedAirportLoads !== null) {
            setAirportLoads(appliedAirportLoads);
@@ -652,6 +664,8 @@ let f = pendingBySeq.get(seq);
         if (type === 'snapshot') {
           f.clock = data.simulatedTime;
           f.routes = data.activeRoutes || [];
+          f.planId = data.planId;
+          f.masterPlan = data.masterPlan || [];
         } else if (type === 'kpi') {
           f.kpis = data;
           f.airportLoads = data.airportLoads || {};
@@ -1119,6 +1133,7 @@ activeAircraft,
     isSimScenario,
     kpiCards,
     liveStatus,
+    masterPlan,
     panelVisibility,
     selectedAircraftId,
     selectedAirportCode,

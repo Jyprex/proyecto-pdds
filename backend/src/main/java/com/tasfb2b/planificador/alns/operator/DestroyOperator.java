@@ -17,9 +17,10 @@ public interface DestroyOperator {
      * @param routes lista de rutas actual (se modificará: se eliminan las rutas destruidas)
      * @param q      número máximo de lotes a extraer
      * @param rng    generador aleatorio
+     * @param currentSimTime tiempo actual de simulación para proteger rutas en vuelo
      * @return lista de SuperLots extraídos de sus rutas
      */
-    List<SuperLot> destroy(List<Route> routes, int q, Random rng);
+    List<SuperLot> destroy(List<Route> routes, int q, Random rng, long currentSimTime);
 
     /** Nombre identificador para el tracker de pesos. */
     String name();

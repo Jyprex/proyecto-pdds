@@ -135,12 +135,12 @@ class SimulationReplanParallelTest {
         // stress=10 → 30% = 3 cancelaciones
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(10.0);
 
-        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong(),anyLong())).thenReturn(emptyReplan());
 
         collapseHelper.applyCollapseInjections(s, routes, "alns");
 
         // 3 cancelaciones, todas con vueloId único → 3 llamadas
-        verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L));
+        verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L),anyLong());
         // Nunca debe invocar replanificar (la versión con side-effect)
         verify(alnsPlanner, never()).replanificar(anyLong(), anyLong());
     }
@@ -162,12 +162,12 @@ class SimulationReplanParallelTest {
         // → se seleccionan las 4 rutas, dedupe deja 3 vueloIds únicos
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(100.0);
 
-        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong(),anyLong())).thenReturn(emptyReplan());
 
         collapseHelper.applyCollapseInjections(s, routes, "alns");
 
         // 4 rutas, 3 vueloIds únicos → 3 replans (no 4)
-        verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L));
+        verify(alnsPlanner, times(3)).doReplan(any(Solution.class), anyLong(), eq(500L),anyLong());
     }
 
     // ── 3. Replan exitoso → rescued ──────────────────────────────────
@@ -187,7 +187,7 @@ class SimulationReplanParallelTest {
         // Todos los replans devuelven solución con 1 ruta (éxito)
         Solution ok = new Solution();
         ok.setRoutes(List.of(routeWithVuelo(99L)));
-        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(ok);
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong(),anyLong())).thenReturn(ok);
 
         int rescued = collapseHelper.applyCollapseInjections(s, routes, "alns");
 
@@ -211,7 +211,7 @@ class SimulationReplanParallelTest {
         // stress=100 → cancelCount cape a 3
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(100.0);
 
-        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong(),anyLong())).thenReturn(emptyReplan());
 
         int rescued = collapseHelper.applyCollapseInjections(s, routes, "alns");
 
@@ -237,12 +237,12 @@ class SimulationReplanParallelTest {
         SimulationProgressHolder.SimulationSessionState s = sessionConStress(100.0);
 
         // vueloId=2 explota, los otros retornan éxito
-        when(alnsPlanner.doReplan(any(Solution.class), eq(1L), anyLong())).thenReturn(emptyReplan());
-        when(alnsPlanner.doReplan(any(Solution.class), eq(2L), anyLong()))
+        when(alnsPlanner.doReplan(any(Solution.class), eq(1L), anyLong(),anyLong())).thenReturn(emptyReplan());
+        when(alnsPlanner.doReplan(any(Solution.class), eq(2L), anyLong(),anyLong()))
                 .thenThrow(new RuntimeException("boom simulado"));
         Solution ok = new Solution();
         ok.setRoutes(List.of(routeWithVuelo(99L)));
-        when(alnsPlanner.doReplan(any(Solution.class), eq(3L), anyLong())).thenReturn(ok);
+        when(alnsPlanner.doReplan(any(Solution.class), eq(3L), anyLong(),anyLong())).thenReturn(ok);
 
         int rescued = collapseHelper.applyCollapseInjections(s, routes, "alns");
 
@@ -276,7 +276,7 @@ class SimulationReplanParallelTest {
             AtomicInteger currentConcurrent = new AtomicInteger();
             AtomicInteger maxConcurrent = new AtomicInteger();
 
-            when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong())).thenAnswer(inv -> {
+            when(alnsPlanner.doReplan(any(Solution.class), anyLong(), anyLong(),anyLong())).thenAnswer(inv -> {
                 int now = currentConcurrent.incrementAndGet();
                 maxConcurrent.updateAndGet(m -> Math.max(m, now));
                 allStarted.countDown();

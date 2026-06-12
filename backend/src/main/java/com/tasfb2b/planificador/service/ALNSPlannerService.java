@@ -46,13 +46,16 @@ public class ALNSPlannerService {
     private static final int    SEGMENT_SIZE        = 100;
     private static final double DESTROY_FRACTION    = 0.20;
 
+    /** Tiempo máximo del planificador ALNS por ciclo (ms). */
+    private static final long DEFAULT_PLANNER_WINDOW_MS = 3000;
+
     private record EvaluationResult(double fitness, SimulationState state) {}
 
     /**
      * Planificación completa desde cero sobre todos los SuperLots.
      */
     public Solution plan(List<SuperLot> lots, long windowMs) {
-        return plan(lots, windowMs, new HashMap<>(), new HashMap<>());
+        return plan(lots, windowMs, new HashMap<>(), new HashMap<>(), System.currentTimeMillis());
     }
 
     /**
@@ -61,30 +64,31 @@ public class ALNSPlannerService {
      */
     public Solution plan(List<SuperLot> lots, long windowMs,
                          Map<Long, Integer> baseFlightCapacity,
-                         Map<String, Integer> baseAirportLoad) {
+                         Map<String, Integer> baseAirportLoad,
+                         long currentSimTime) {
         if (lots.isEmpty()) return emptySolution();
 
         Map<String, Aeropuerto> airportMap = loadAirportMap();
         Random rng = new Random();
 
         List<Route> currentRoutes = buildInitialSolution(lots, airportMap, baseAirportLoad, baseFlightCapacity);
-        return runAlns(currentRoutes, airportMap, rng, windowMs, null, baseFlightCapacity, baseAirportLoad);
+        return runAlns(currentRoutes, airportMap, rng, windowMs, null, baseFlightCapacity, baseAirportLoad, currentSimTime);
     }
 
     public Solution replanificar(Long vueloIdCancelado, long windowMs) {
-        Solution sol = doReplan(vueloIdCancelado, windowMs);
+        Solution sol = doReplan(vueloIdCancelado, windowMs, System.currentTimeMillis());
         sessionHolder.store(sol);
         return sol;
     }
 
-    Solution doReplan(Long vueloIdCancelado, long windowMs) {
+    Solution doReplan(Long vueloIdCancelado, long windowMs, long currentSimTime) {
         if (!sessionHolder.hasSolution()) {
             throw new IllegalStateException("No hay planificación activa.");
         }
-        return doReplan(sessionHolder.get(), vueloIdCancelado, windowMs);
+        return doReplan(sessionHolder.get(), vueloIdCancelado, windowMs, currentSimTime);
     }
 
-    public Solution doReplan(Solution current, Long vueloIdCancelado, long windowMs) {
+    public Solution doReplan(Solution current, Long vueloIdCancelado, long windowMs, long currentSimTime) {
         Map<String, Aeropuerto> airportMap = loadAirportMap();
         Random rng = new Random();
 
@@ -111,7 +115,7 @@ public class ALNSPlannerService {
         }
 
         if (sinBackup.isEmpty()) {
-            return buildSolution(rutasNoAfectadas, airportMap, System.currentTimeMillis());
+            return buildSolution(rutasNoAfectadas, airportMap, currentSimTime);
         }
 
         List<Route> partialRoutes = new ArrayList<>(rutasNoAfectadas);
@@ -119,7 +123,7 @@ public class ALNSPlannerService {
             partialRoutes.add(routeBuilder.build(lot, airportMap, new HashMap<>(), new HashMap<>()));
         }
 
-        return runAlns(partialRoutes, airportMap, rng, windowMs, vueloIdCancelado, new HashMap<>(), new HashMap<>());
+        return runAlns(partialRoutes, airportMap, rng, windowMs, vueloIdCancelado, new HashMap<>(), new HashMap<>(), currentSimTime);
     }
 
     private Solution runAlns(List<Route> initialRoutes,
@@ -127,7 +131,8 @@ public class ALNSPlannerService {
                              Random rng, long windowMs,
                              Long vueloIdCancelado,
                              Map<Long, Integer> baseFlightCapacity,
-                             Map<String, Integer> baseAirportLoad) {
+                             Map<String, Integer> baseAirportLoad,
+                             long currentSimTime) {
 
         long start = System.currentTimeMillis();
 
@@ -170,7 +175,7 @@ public class ALNSPlannerService {
             RepairOperator rOp = tracker.selectRepair(rng);
 
             long tD0 = System.nanoTime();
-            List<SuperLot> removed = dOp.destroy(candidatePartial, q, rng);
+            List<SuperLot> removed = dOp.destroy(candidatePartial, q, rng, currentSimTime);
             totalDestroyNanos += (System.nanoTime() - tD0);
             
             Map<Long, Integer> capacidadDisponible = buildCapacidadDisponible(candidatePartial, baseFlightCapacity);

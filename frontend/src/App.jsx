@@ -94,6 +94,7 @@ targetPlaybackMinutes,
     toggleScenarioConfig,
     cancelFlight,
     trackedRouteData,
+    masterPlan,
   } = useControlTowerController();
 
   // ── Paso 4: Sincronizar Track & Trace con el SelectionBridge ──
@@ -317,6 +318,7 @@ targetPlaybackMinutes,
             airports={airportNodes}
             activeMetrics={activeMetrics}
             activeAircraft={activeAircraft}
+            masterPlan={masterPlan}
             airportByIcao={airportByCode}
             isCollapseScenario={isCollapseScenario}
             selectedAirportCode={selectedAirportCode}

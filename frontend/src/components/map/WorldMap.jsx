@@ -100,6 +100,7 @@ const WorldMap = ({
   airports = [],
   activeMetrics = {},
   activeAircraft = [],
+  masterPlan = { planId: null, routes: [] },
   airportByIcao = {},
   isCollapseScenario = false,
   selectedAirportCode = "",
@@ -112,7 +113,7 @@ const WorldMap = ({
   zoom = 1,
   center = [0, 20],
   onMoveEnd = () => {},
-currentEpochTime = 0,
+  currentEpochTime = 0,
   systemClock = "--:--:--",
 }) => {
   // ── Selection Bridge ─────────────────────────────────────────────────────
@@ -303,6 +304,31 @@ currentEpochTime = 0,
         <ZoomableGroup zoom={zoom} center={center} onMoveEnd={onMoveEnd} maxZoom={8}>
           
           <MapBackground isCollapseScenario={isCollapseScenario} />
+
+          {/* ── Fase 4: Proyección de Horizonte Maestro (Shadow Routes) ────── */}
+          {masterPlan.routes && masterPlan.routes.map((route) => {
+            return route.legs?.map((leg, legIdx) => {
+              const from = airportByIcao[leg.from] || AIRPORT_BY_ICAO[leg.from];
+              const to = airportByIcao[leg.to] || AIRPORT_BY_ICAO[leg.to];
+              if (!from || !to) return null;
+
+              // No dibujar si este tramo coincide con un avión ya en vuelo (para evitar ruido)
+              const isActive = activeAircraft.some(p => p.from === leg.from && p.to === leg.to);
+              if (isActive) return null;
+
+              return (
+                <Line
+                  key={`master-shadow-${route.lotId}-${legIdx}`}
+                  from={from.coordinates}
+                  to={to.coordinates}
+                  stroke="rgba(56, 189, 248, 0.15)"
+                  strokeWidth={1}
+                  strokeDasharray="4 4"
+                  style={{ pointerEvents: 'none' }}
+                />
+              );
+            });
+          })}
 
 
 

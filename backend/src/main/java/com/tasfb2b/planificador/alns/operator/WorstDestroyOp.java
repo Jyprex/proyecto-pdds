@@ -14,25 +14,31 @@ import java.util.*;
 public class WorstDestroyOp implements DestroyOperator {
 
     @Override
-    public List<SuperLot> destroy(List<Route> routes, int q, Random rng) {
+    public List<SuperLot> destroy(List<Route> routes, int q, Random rng, long currentSimTime) {
         if (routes.isEmpty()) return List.of();
 
-        // Ordenar COPIA: primero los noAtendidos, luego por delayHoras descendente
-        List<Route> sorted = new ArrayList<>(routes);
-        sorted.sort(Comparator
+        // Filtrar rutas que pueden ser destruidas (no han empezado su primer tramo)
+        List<Route> candidates = routes.stream()
+                .filter(r -> r.getFlights().isEmpty() || r.getDepartureTime() > currentSimTime)
+                .collect(java.util.stream.Collectors.toList());
+
+        if (candidates.isEmpty()) return List.of();
+
+        // Ordenar candidatos: primero los noAtendidos, luego por delayHoras descendente
+        candidates.sort(Comparator
                 .comparing(Route::isNoAtendido).reversed()
                 .thenComparingDouble(Route::getDelayHoras).reversed());
 
-        int toRemove = Math.min(q, sorted.size());
+        int toRemove = Math.min(q, candidates.size());
         List<SuperLot> removed = new ArrayList<>(toRemove);
         Set<Integer> lotIdsToRemove = new HashSet<>(toRemove * 2);
 
         for (int i = 0; i < toRemove; i++) {
-            removed.add(sorted.get(i).getLot());
-            lotIdsToRemove.add(sorted.get(i).getLot().getId());
+            removed.add(candidates.get(i).getLot());
+            lotIdsToRemove.add(candidates.get(i).getLot().getId());
         }
 
-        // Single-pass removal — O(N) en lugar de O(N²)
+        // Single-pass removal — O(N)
         routes.removeIf(r -> lotIdsToRemove.contains(r.getLot().getId()));
 
         return removed;

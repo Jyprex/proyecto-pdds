@@ -8,6 +8,7 @@ import java.util.Map;
 
 @Data
 public class Solution {
+    private String planId = java.util.UUID.randomUUID().toString();
     private List<Route> routes;
     private double fitness;        // SuperLots atendidos antes del colapso
     private int routeCount;
