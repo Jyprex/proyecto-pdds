@@ -949,12 +949,15 @@ if (selected && !finalSelection.some((p) => p.id === selected.id)) {
     const pad = (n) => String(n).padStart(2, "0");
     const fmtSim = (epoch, start) => {
       if (!epoch || !start) return "--:--:--";
-      const diff = epoch - start;
-      const d = Math.floor(diff / (24 * 3600 * 1000)) + 1;
-      const h = Math.floor((diff % (24 * 3600 * 1000)) / (3600 * 1000));
-      const m = Math.floor((diff % (3600 * 1000)) / (60 * 1000));
-      const s = Math.floor((diff % (60 * 1000)) / 1000);
-      return `Día ${d} - ${pad(h)}:${pad(m)}:${pad(s)}`;
+      const date = new Date(epoch);
+      const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+      const day = date.getUTCDate();
+      const month = months[date.getUTCMonth()];
+      const year = date.getUTCFullYear();
+      const h = pad(date.getUTCHours());
+      const m = pad(date.getUTCMinutes());
+      const s = pad(date.getUTCSeconds());
+      return `${day} ${month} ${year} - ${h}:${m}:${s}`;
     };
     const fmtReal = (s) => {
       const h = Math.floor(s / 3600);

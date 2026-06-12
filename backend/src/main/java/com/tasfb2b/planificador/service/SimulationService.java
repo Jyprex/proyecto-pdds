@@ -102,7 +102,16 @@ public class SimulationService {
                 LocalDate fechaInicio = (startDate != null) ? startDate : DEFAULT_START_DATE;
 
                 try {
-                        long startEpochMs = fechaInicio.atStartOfDay()
+                        int initHour = 0;
+                        int initMin = 0;
+                        if (startTime != null && startTime.contains(":")) {
+                            try {
+                                String[] parts = startTime.split(":");
+                                initHour = Integer.parseInt(parts[0].trim());
+                                initMin = Integer.parseInt(parts[1].trim());
+                            } catch (Exception ignored) {}
+                        }
+                        long startEpochMs = fechaInicio.atTime(initHour, initMin)
                                 .toInstant(ZoneOffset.UTC).toEpochMilli();
                         session.setStartEpoch(startEpochMs);
 
@@ -184,7 +193,16 @@ public class SimulationService {
                 Map<String, Aeropuerto> airportMap = airportRepo.findAll().stream()
                                 .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
 
-                long startTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                int initHour = 0;
+                int initMin = 0;
+                if (startTimeStr != null && startTimeStr.contains(":")) {
+                    try {
+                        String[] parts = startTimeStr.split(":");
+                        initHour = Integer.parseInt(parts[0].trim());
+                        initMin = Integer.parseInt(parts[1].trim());
+                    } catch (Exception ignored) {}
+                }
+                long startTime = fechaInicio.atTime(initHour, initMin).toInstant(ZoneOffset.UTC).toEpochMilli();
                 long currentTime = startTime;
 
                 // Enviar primer frame de inmediato para quitar el modal de carga
@@ -466,10 +484,13 @@ int cyclesPerDay = 1440 / saMinutes;
                                         double totalMicroSteps = (double)dias * 1440.0;
                                         int mPercent = (int) ((((day * 1440.0) + currentSimMinuteOfDay + step) / totalMicroSteps) * 100);
 
-                                        updateProgress(session, day + 1, dias, mPercent,
-                                                       mTimeStr, slaPercent, globalState, airportMap,
-                                                       inTransitRoutes, microEnd, startTime, algorithm,
-                                                       session.getCurrentPlanId(), masterPlan);
+                                        boolean isFastForwarding = (day == 0 && currentSimMinuteOfDay < startCycle * saMinutes);
+                                        if (!isFastForwarding) {
+                                                updateProgress(session, day + 1, dias, mPercent,
+                                                               mTimeStr, slaPercent, globalState, airportMap,
+                                                               inTransitRoutes, microEnd, startTime, algorithm,
+                                                               session.getCurrentPlanId(), masterPlan);
+                                        }
 
                                         long tMicroEnd = System.nanoTime();
                                         long workTimeMs = (tMicroEnd - tMicroStart) / 1_000_000;
