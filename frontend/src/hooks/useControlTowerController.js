@@ -471,7 +471,7 @@ export const useControlTowerController = () => {
 
       const data = await res.json();
       setSessionId(data.sessionId);
-console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${dias} días | ${selectedAlgorithm.toUpperCase()} | estrés ×${stressFactor} | hora ${startTime}`);
+      console.info(`[Tasf.B2B] Simulación colapso iniciada: ${startDate ?? "hoy"} × ${totalDays} días | ${selectedAlgorithm.toUpperCase()} | estrés ×${stressFactor} | hora 00:00:00`);
     } catch (err) {
       console.error("[Tasf.B2B] Error al iniciar simulación de colapso:", err);
       setSimState("idle");

@@ -497,7 +497,8 @@ int cyclesPerDay = 1440 / saMinutes;
                                         } else {
                                                 if (session.getStatus() == SimulationProgressHolder.Status.RECONSTRUCTING) {
                                                         session.setStatus(SimulationProgressHolder.Status.RUNNING);
-                                                        log.info("[SimulationService] Pasando de RECONSTRUCTING a RUNNING en {}. Iniciando flujo real-time.", mTimeStr);
+                                                        log.info("[SimulationService] Pasando de RECONSTRUCTING a RUNNING en {}. Iniciando flujo {}", 
+                                                                mTimeStr, isRealTime ? "REAL-TIME (1:1)" : "ACELERADO");
                                                 }
                                                 updateProgress(session, day + 1, dias, mPercent,
                                                                mTimeStr, slaPercent, globalState, airportMap,
