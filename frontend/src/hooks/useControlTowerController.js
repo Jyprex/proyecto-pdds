@@ -370,9 +370,18 @@ export const useControlTowerController = () => {
     }
   }, [sessionId]);
 
-  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = [], startTime = "00:00", options = {}) => {
+  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = [], startTime = null, options = {}) => {
     try {
       const { isRealTime = false, planningHorizon = 240 } = options;
+      
+      let finalStartTime = startTime;
+      if (!finalStartTime && isRealTime) {
+          const now = new Date();
+          finalStartTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          console.log(`[TASF.B2B] Sincronización automática: Iniciando simulación en vivo a las ${finalStartTime}`);
+      } else if (!finalStartTime) {
+          finalStartTime = "00:00";
+      }
 
       setSimState("running");
       setAircraft([]);
@@ -383,7 +392,8 @@ export const useControlTowerController = () => {
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
-      const startEpoch = new Date(`${startDate}T${startTime}:00`).getTime();
+      // startEpoch siempre al inicio del día (00:00) para que el reloj muestre la hora correcta
+      const startEpoch = new Date(`${startDate}T00:00:00`).getTime();
       setMeta({
         status: "RUNNING",
         percent: 0,
@@ -402,7 +412,7 @@ export const useControlTowerController = () => {
       });
 
       const preCancelStr = preCancelledIds.length > 0 ? preCancelledIds.join(",") : "";
-      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}&startTime=${startTime}&planningHorizon=${planningHorizon}&isRealTime=${isRealTime}`;
+      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}&startTime=${finalStartTime}&planningHorizon=${planningHorizon}&isRealTime=${isRealTime}`;
       const res = await apiFetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
@@ -415,8 +425,9 @@ export const useControlTowerController = () => {
     }
   }, [selectedAlgorithm, targetPlaybackMinutes]);
 
-  const startCollapseSimulation = useCallback(async (dias = 5, startDate = null, stressFactor = 5, startTime = "00:00") => {
+  const startCollapseSimulation = useCallback(async (dias = 90, startDate = null, stressFactor = 5, endCondition = "FAILED_DELIVERY") => {
     try {
+      const totalDays = 90; // Meta: Buscar colapso hasta 90 días
       setSimState("running");
       setAircraft([]);
       setLogs([]);
@@ -425,14 +436,17 @@ export const useControlTowerController = () => {
       snapshotBufferRef.current = [];
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
+      
+      // En modo colapso, targetPlaybackMinutes = totalDays para tener 1 min por día real
+      setTargetPlaybackMinutes(totalDays);
 
-const resolvedDate = startDate || "2026-04-09";
-      const startEpoch = new Date(`${resolvedDate}T${startTime}:00`).getTime();
+      const resolvedDate = startDate || "2026-04-09";
+      const startEpoch = new Date(`${resolvedDate}T00:00:00`).getTime();
       setMeta({
         status: "RUNNING",
         percent: 0,
         currentDay: 1,
-        totalDays: dias,
+        totalDays: totalDays,
         isCollapseMode: true,
         errorMessage: null,
         algorithm: selectedAlgorithm || "hga",
@@ -440,14 +454,16 @@ const resolvedDate = startDate || "2026-04-09";
         totalAttended: 0,
         totalMissed: 0,
         slaFinal: 0,
-        reports: []
+        reports: [],
+        endCondition: endCondition
       });
 
       const dateParam = startDate ? `&startDate=${startDate}` : "";
       const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
-      const timeParam   = startTime    ? `&startTime=${startTime}`       : "";
+      const condParam = `&endCondition=${endCondition}`;
+      
       const res = await apiFetch(
-`/api/v1/simulation/run-collapse/${dias}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}${timeParam}&playbackMinutes=${targetPlaybackMinutes}`,
+        `/api/v1/simulation/run-collapse/${totalDays}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}${condParam}&playbackMinutes=${totalDays}`,
         { method: "POST" }
       );
 

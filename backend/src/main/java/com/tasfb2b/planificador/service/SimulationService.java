@@ -102,16 +102,7 @@ public class SimulationService {
                 LocalDate fechaInicio = (startDate != null) ? startDate : DEFAULT_START_DATE;
 
                 try {
-                        int initHour = 0;
-                        int initMin = 0;
-                        if (startTime != null && startTime.contains(":")) {
-                            try {
-                                String[] parts = startTime.split(":");
-                                initHour = Integer.parseInt(parts[0].trim());
-                                initMin = Integer.parseInt(parts[1].trim());
-                            } catch (Exception ignored) {}
-                        }
-                        long startEpochMs = fechaInicio.atTime(initHour, initMin)
+                        long startEpochMs = fechaInicio.atStartOfDay()
                                 .toInstant(ZoneOffset.UTC).toEpochMilli();
                         session.setStartEpoch(startEpochMs);
 
@@ -204,13 +195,18 @@ public class SimulationService {
                         initMin = Integer.parseInt(parts[1].trim());
                     } catch (Exception ignored) {}
                 }
-                long startTime = fechaInicio.atTime(initHour, initMin).toInstant(ZoneOffset.UTC).toEpochMilli();
+                long startTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
                 long currentTime = startTime;
+
+                if (startTimeStr != null && !startTimeStr.isBlank()) {
+                        session.setStatus(SimulationProgressHolder.Status.RECONSTRUCTING);
+                }
 
                 // Enviar primer frame de inmediato para quitar el modal de carga
                 updateProgress(session, 1, dias, 0, "Inicializando...", 100.0,
                         new SimulationState(new ArrayList<>(airportMap.values()), new ArrayList<>(), startTime, bloqueoService),
                         airportMap, new ArrayList<>(), startTime, startTime, algorithm, null, new ArrayList<>());
+
                 wsPublisher.pushImmediate(session.getSessionId(), session);
 
                 List<Vuelo> todosLosVuelos = vueloRepo.findAllWithAirports();
@@ -289,10 +285,10 @@ int cyclesPerDay = 1440 / saMinutes;
                         if (day >= 3) envioService.purgarAntesDe(fechaInicio.plusDays(day - 2));
 
                         // Reducción de hubs una sola vez al entrar en modo colapso
-                        if (session.isCollapseMode() && !hubsReduced) {
+                        /*if (session.isCollapseMode() && !hubsReduced) {
                                 collapseHelper.reduceHubCapacity(airportMap);
                                 hubsReduced = true;
-                        }
+                        }*/
 
                         long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes, cyclesPerDay, isRealTime, saMinutes);
                         
@@ -420,11 +416,11 @@ int cyclesPerDay = 1440 / saMinutes;
                                         }
                                     }
                                 }
-
+                                /*
                                 if (session.isCollapseMode()) {
                                         collapseHelper.applyCollapseInjections(session, sol.getRoutes(), algorithm);
                                 }
-
+                                */
                                 // ── TRADUCCIÓN A EVENTOS FUTUROS ──
                                 // Limpiamos eventos futuros antiguos antes de inyectar el nuevo plan maestro
                                 globalEventQueue.removeIf(e -> e.getTime() > currentSimTime);
@@ -466,8 +462,8 @@ int cyclesPerDay = 1440 / saMinutes;
                                 double slaPercent = totalMaletasDia == 0 ? 0 : (malatetasAtendidasDia * 100.0) / totalMaletasDia;
 
                                 // ── MICRO-STEPPING: AVANCE DEL MOTOR (CONSUMO DE COLA) ──
-                                int microSteps = currentSa; 
-                                long stepDurationMs = 60_000L;
+                                int microSteps = isRealTime ? currentSa * 60 : currentSa; 
+                                long stepDurationMs = isRealTime ? 1000L : 60_000L;
                                 long sleepPerCycleMsDynamic = computeSleepPerCycleMs(dias, playbackMinutes, 1440 / currentSa, isRealTime, currentSa);
                                 long sleepPerMicroStep = sleepPerCycleMsDynamic / microSteps;
 
@@ -487,7 +483,22 @@ int cyclesPerDay = 1440 / saMinutes;
                                         int mPercent = (int) ((((day * 1440.0) + currentSimMinuteOfDay + step) / totalMicroSteps) * 100);
 
                                         boolean isFastForwarding = (day == 0 && currentSimMinuteOfDay < startCycle * saMinutes);
-                                        if (!isFastForwarding) {
+                                        if (isFastForwarding) {
+                                                session.setPercent(mPercent);
+                                                session.setSimulatedTime(mTimeStr);
+                                                // Actualizar frame mínimo para que el front vea el progreso
+                                                session.setWsFrame(new SimulationProgressHolder.WsFrame(
+                                                        session.getSessionId(), session.getStatus().name(),
+                                                        microEnd, mTimeStr, mPercent, day + 1, dias,
+                                                        slaPercent, 0, new HashMap<>(), 0, session.isCollapseMode(),
+                                                        0, null, startTime, new ArrayList<>(), algorithm, 
+                                                        0L, currentSa, null, new ArrayList<>()
+                                                ));
+                                        } else {
+                                                if (session.getStatus() == SimulationProgressHolder.Status.RECONSTRUCTING) {
+                                                        session.setStatus(SimulationProgressHolder.Status.RUNNING);
+                                                        log.info("[SimulationService] Pasando de RECONSTRUCTING a RUNNING en {}. Iniciando flujo real-time.", mTimeStr);
+                                                }
                                                 updateProgress(session, day + 1, dias, mPercent,
                                                                mTimeStr, slaPercent, globalState, airportMap,
                                                                inTransitRoutes, microEnd, startTime, algorithm,

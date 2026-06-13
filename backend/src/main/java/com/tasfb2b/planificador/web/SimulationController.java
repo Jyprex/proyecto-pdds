@@ -71,8 +71,18 @@ public class SimulationController {
         session.setAlgorithm(algorithm);
         session.setPlanningHorizon(planningHorizon);
         session.setRealTime(isRealTime);
-        
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime, saMinutes, planningHorizon, isRealTime);
+
+        String effectiveStartTime = startTime;
+
+        if (isRealTime) {
+            effectiveStartTime = java.time.LocalTime
+                    .now(java.time.ZoneOffset.UTC)
+                    .withSecond(0)
+                    .withNano(0)
+                    .toString();
+        }
+
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, effectiveStartTime, saMinutes, planningHorizon, isRealTime);
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
@@ -88,15 +98,15 @@ public class SimulationController {
             @PathVariable(required = false) Integer dias,
             @RequestParam(required = false, defaultValue = "ALNS") String algorithm,
             @RequestParam(required = false) String startDate,
-            @RequestParam(required = false, defaultValue = "5.0") double stressFactor,
-            @RequestParam(required = false, defaultValue = "NONE") String endCondition,
+            @RequestParam(required = false, defaultValue = "FAILED_DELIVERY") String endCondition,
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
             @RequestParam(required = false) String preCancelledFlightIds,
             @RequestParam(required = false, defaultValue = "00:00:00") String startTime,
             @RequestParam(required = false, defaultValue = "1440") int saMinutes) {
 
-        int totalDays = (dias != null && dias > 0) ? dias : 5;
-        double clampedStress = Math.max(1.0, Math.min(10.0, stressFactor)); 
+        // En modo colapso, buscamos el punto de quiebre, por lo que usamos un límite alto de días (1000)
+        int totalDays = 1000; //DEspués dse cambiará
+
         String sessionId = UUID.randomUUID().toString();
 
         java.time.LocalDate fechaInicio = null;
@@ -108,22 +118,23 @@ public class SimulationController {
         try {
             cond = CollapseEndCondition.valueOf(endCondition.toUpperCase());
         } catch (IllegalArgumentException e) {
-            log.warn("[run-collapse] endCondition '{}' inválida; usando NONE", endCondition);
-            cond = CollapseEndCondition.NONE;
+            log.warn("[run-collapse] endCondition '{}' inválida; usando FAILED_DELIVERY", endCondition);
+            cond = CollapseEndCondition.FAILED_DELIVERY;
         }
 
         SimulationProgressHolder.SimulationSessionState session = progressHolder.create(sessionId, totalDays);
         session.setCollapseMode(true);
-        session.setStressFactor(clampedStress);
         session.setAlgorithm(algorithm);
         session.setEndCondition(cond);
+        session.setPlanningHorizon(1440); // 24 Horas para colapso
 
-        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime, saMinutes,1440,false);
+        // En modo colapso playbackMinutes debe ser igual a totalDays para meta 1 min / día
+        service.runAsync(sessionId, totalDays, algorithm, fechaInicio, totalDays, preCancelledFlightIds, startTime, saMinutes, 1440, false);
+
 
         Map<String, String> response = new HashMap<>();
         response.put("sessionId", sessionId);
         response.put("totalDays", String.valueOf(totalDays));
-        response.put("stressFactor", String.valueOf(clampedStress));
         response.put("endCondition", cond.name());
         response.put("message", "Simulación de colapso iniciada.");
 
@@ -186,7 +197,6 @@ public class SimulationController {
                 .slaFinal(session.getSlaFinal())
                 .isCollapseMode(session.isCollapseMode())
                 .rescuedFlights(session.getRescuedFlights())
-                .stressFactor(session.getStressFactor())
                 .startEpoch(session.getStartEpoch())
                 .algorithm(session.getAlgorithm())
                 .endCondition(session.getEndCondition() != null ? session.getEndCondition().name() : "NONE")

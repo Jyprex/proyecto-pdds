@@ -24,14 +24,15 @@ const [isStarting, setIsStarting]       = useState(false)
   }, [stressFactor])
 
   const handleStart = async () => {
-if (isCompleted) {
+    if (isCompleted) {
       if (onReset) onReset();
       setActiveSection('config');
       return;
     }
     if (!onStart) return;
     setIsStarting(true);
-    await onStart(5, startDate, stressFactor, startTime);
+    // En el nuevo motor de colapso, buscamos el quiebre hasta por 90 días con condición estricta
+    await onStart(90, startDate, stressFactor, "FAILED_DELIVERY");
     setIsStarting(false);
     setActiveSection('progreso');
   };
@@ -342,16 +343,37 @@ if (isCompleted) {
                 {isStarting
                   ? '⏳ Iniciando colapso...'
                   : isRunning
-                    ? `⚙ Simulando día ${liveStatus?.currentDay ?? 1}/${liveStatus?.totalDays ?? 5}...`
+                    ? `⚙ Simulando día ${liveStatus?.currentDay ?? 1}...`
                     : isCompleted
                       ? '✓ Colapso completado — Reiniciar'
                       : `⚠ Iniciar simulación de colapso real`}
               </button>
+
+              {isCompleted && (
+                <div style={{
+                  background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)',
+                  borderRadius: 10, padding: '14px', marginTop: 16, marginBottom: 16
+                }}>
+                  <p style={{ margin: '0 0 8px 0', fontSize: 13, fontWeight: 800, color: '#fca5a5', textTransform: 'uppercase' }}>
+                    🚨 REPORTE DE COLAPSO DETECTADO
+                  </p>
+                  <p style={{ margin: 0, fontSize: 11, color: '#d1d5db', lineHeight: 1.4 }}>
+                    <strong>Razón técnica:</strong> {liveStatus?.collapseReason || "SLA insuficiente o saturación física."}
+                  </p>
+                  <p style={{ margin: '6px 0 0 0', fontSize: 11, color: '#d1d5db' }}>
+                    <strong>Día del fallo:</strong> Día {liveStatus?.currentDay || liveStatus?.collapseDayIndex}
+                  </p>
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                    <p style={{ margin: '0 0 4px 0', fontSize: 11, fontWeight: 700, color: '#818cf8' }}>ÚLTIMA PLANIFICACIÓN (MASTER PLAN):</p>
+                    <p style={{ margin: 0, fontSize: 10, color: '#9ca3af' }}>
+                      ▸ {liveStatus?.masterPlan?.length ?? 0} rutas activas al momento del quiebre.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {isCompleted && (
                 <>
-                  <p style={{ textAlign: 'center', fontSize: 10, color: '#9ca3af', marginTop: 6 }}>
-                    Vuelos rescatados: <strong style={{color:'#818cf8'}}>{liveStatus?.rescuedFlights ?? 0}</strong>
-                  </p>
                   <button
                     type="button"
                     onClick={async () => {

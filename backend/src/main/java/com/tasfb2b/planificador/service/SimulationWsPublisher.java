@@ -49,7 +49,8 @@ public class SimulationWsPublisher {
             SimulationSessionState session = progressHolder.get(sessionId);
             if (session == null) continue;
 
-            boolean isRunning = session.getStatus() == SimulationProgressHolder.Status.RUNNING;
+            SimulationProgressHolder.Status status = session.getStatus();
+            boolean isRunning = status == SimulationProgressHolder.Status.RUNNING || status == SimulationProgressHolder.Status.RECONSTRUCTING;
             if (isRunning) {
                 // Seguimos permitiendo el polling de KPIs globales/logs
                 pushImmediate(sessionId, session);

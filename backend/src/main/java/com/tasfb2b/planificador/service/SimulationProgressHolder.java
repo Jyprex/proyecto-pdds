@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class SimulationProgressHolder {
 
-    public enum Status { RUNNING, DONE, FAILED }
+    public enum Status { RECONSTRUCTING, RUNNING, DONE, FAILED }
 
     /** Snapshot inmutable de los datos del mapa para evitar condiciones de carrera con el WebSocket publisher. */
     public record MapSnapshot(Long epoch, String clock, List<Map<String, Object>> routes) {}

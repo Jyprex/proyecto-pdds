@@ -32,7 +32,9 @@ public class CollapseHelper {
     @Qualifier("replanExecutor")
     private final Executor replanExecutor;
 
-    /** Ventana de ALNS para cada replan en modo colapso (ms). */
+    /**
+     * Ventana de ALNS para cada replan en modo colapso (ms).
+     */
     private static final long REPLAN_WINDOW_MS = 500L;
 
     @Value("${tasf.sim.collapse.slaThreshold:30.0}")
@@ -49,6 +51,7 @@ public class CollapseHelper {
      * @param algorithm algoritmo en uso ("HGA"/"ALNS")
      * @return número de rutas rescatadas
      */
+    /*
     public int applyCollapseInjections(
             SimulationProgressHolder.SimulationSessionState session,
             List<Route> routes,
@@ -123,12 +126,24 @@ public class CollapseHelper {
      * Reduce la capacidad de almacenamiento de aeropuertos hub para simular estrés.
      * Solo se aplica UNA VEZ al inicio del modo colapso.
      */
+    /*
     public void reduceHubCapacity(Map<String, Aeropuerto> airportMap) {
         for (String hub : Arrays.asList("SKBO", "LEMD", "VIDP")) {
             Aeropuerto a = airportMap.get(hub);
             if (a != null) a.setStorageCapacity(a.getStorageCapacity() / 2);
         }
     }
+    */
+    //Dummies temporales
+    @Deprecated
+    public int applyCollapseInjections(
+            SimulationProgressHolder.SimulationSessionState session,
+            List<Route> routes,
+            String algorithm) {
+        return 0;
+    }
+
+
 
     /**
      * Evalúa la condición de terminación del modo colapso al fin de un día simulado.
@@ -143,10 +158,18 @@ public class CollapseHelper {
 
         // REGLA ESTRICTA 1: Capacidad de almacén excedida
         if (endOfDayState.isColapsado()) {
-            return new CollapseCheckResult(true, "Capacidad máxima física excedida en uno o más almacenes.");
+            return new CollapseCheckResult(true, "CAPACIDAD_EXCEDIDA: Se ha superado la capacidad física de almacenamiento en la red.");
         }
 
-        // REGLA ESTRICTA 2: Lotes remanentes persistentemente grandes (sin capacidad de aviones)
+        // REGLA ESTRICTA 2: Incumplimiento de entrega (SLA < 100%)
+        if (session.getEndCondition() == CollapseEndCondition.FAILED_DELIVERY) {
+            if (report.getMalatetasAtendidas() < report.getTotalMaletas() || !report.getPendingLots().isEmpty()) {
+                return new CollapseCheckResult(true, "INCUMPLIMIENTO_ENTREGA: Se han detectado maletas que no pudieron ser entregadas a tiempo.");
+            }
+        }
+
+        // REGLA ESTRICTA 3: Lotes remanentes persistentemente grandes
+ //(sin capacidad de aviones)
         // Como heurística: si los pendientes superan la capacidad total diaria de la flota,
         // no hay forma de recuperarse.
         long totalCapacity = 0;

@@ -23,6 +23,11 @@ public enum CollapseEndCondition {
     ALL_AIRPORTS_CRITICAL,
 
     /**
+     * Terminar cuando se incumple la entrega de una maleta (SLA < 100% o Ecap > 0).
+     */
+    FAILED_DELIVERY,
+
+    /**
      * Nunca terminar por condición. La simulación corre los N días completos
      * configurados, útil para medir la degradación completa sin corte.
      */

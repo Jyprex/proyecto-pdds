@@ -83,7 +83,6 @@ public class SimulationStatusDTO {
     /** Métricas de colapso */
     private Boolean isCollapseMode;
     private Integer rescuedFlights;
-    private Double stressFactor;
     private Long startEpoch;
     private String algorithm;
 

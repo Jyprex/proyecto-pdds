@@ -140,28 +140,17 @@ function DayToDayConfig({
               </div>
             </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 4, textTransform: 'uppercase' }}>
-                Seleccionar hora de inyección:
-              </label>
-              <input
-                type="time"
-                value={startTime}
-                onChange={e => setStartTime(e.target.value)}
-                style={{
-                  width: '100%', boxSizing: 'border-box',
-                  padding: '8px 10px', borderRadius: 7,
-                  background: '#f8fafc', border: '1px solid rgba(79,70,229,0.45)',
-                  color: '#1e293b', fontSize: 14, fontWeight: 600,
-                  colorScheme: 'light',
-                }}
-              />
+            <div className="ct-config-section" style={{ textAlign: 'center', padding: '10px 0', background: 'rgba(16,185,129,0.05)', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)', marginBottom: '12px' }}>
+              <p style={{ margin: 0, fontSize: '11px', fontWeight: 700, color: '#10b981', textTransform: 'uppercase' }}>🛰️ SINCRONIZACIÓN EN VIVO</p>
+              <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#64748b' }}>
+                El sistema detectará automáticamente la hora actual para el monitoreo en tiempo real.
+              </p>
             </div>
 
             <button
               id="dtd-btn-start"
               type="button"
-              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1, preCancelledFlightIds, startTime, { isRealTime: true, planningHorizon: 30 })}
+              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1, preCancelledFlightIds, null, { isRealTime: true, planningHorizon: 30 })}
               style={{
                 width: "100%", padding: "12px 0", borderRadius: 8, border: "none",
                 background: "linear-gradient(135deg, #10b981, #059669)",
