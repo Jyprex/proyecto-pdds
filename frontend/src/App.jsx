@@ -57,11 +57,7 @@ const App = () => {
     liveStatus,
     panelVisibility,
     selectedAircraft,
-    selectedAircraftId,
-    selectedAirport,
     selectedAirportCode,
-    selectedAirportLevel,
-    selectedAirportMetrics,
     selectedAlgorithm,
     selectedFromAirport,
     selectedToAirport,
@@ -90,7 +86,8 @@ targetPlaybackMinutes,
     tabs,
     toggleDock,
     toggleKpiStrip,
-    togglePanel,
+    toggleDock,
+    toggleKpiStrip,
     toggleScenarioConfig,
     cancelFlight,
     trackedRouteData,
@@ -235,7 +232,42 @@ targetPlaybackMinutes,
         <KpiControls isCollapsed={isKpiCollapsed} onToggle={toggleKpiStrip} />
       </div>
 
-      {/* ── Ventanas Flotantes Draggable ── */}
+      {isWindowOpen("cancellation") && (
+        <DraggableWindow 
+          title="Cancelar Vuelos" 
+          onClose={() => handleToggleWindow("cancellation")}
+          initialPosition={{x: 20, y: window.innerHeight - 300}}
+          isActive={openWindowsQueue[openWindowsQueue.length - 1] === "cancellation"}
+          onFocus={() => handleFocusWindow("cancellation")}
+        >
+          <FlightCancellationPanel
+            isVisible={true}
+            onHide={() => handleToggleWindow("cancellation")}
+            onCancelFlight={cancelFlight}
+          />
+        </DraggableWindow>
+      )}
+
+      {isWindowOpen("airportDetail") && (
+        <DraggableWindow 
+          title={`Detalle: ${selectedAirportCode || 'Aeropuerto'}`} 
+          onClose={() => handleToggleWindow("airportDetail")}
+          initialPosition={{x: window.innerWidth - 320, y: 100}}
+          isActive={openWindowsQueue[openWindowsQueue.length - 1] === "airportDetail"}
+          onFocus={() => handleFocusWindow("airportDetail")}
+        >
+          <AirportDetailPanel
+            isOpen={true}
+            selectedAirport={AIRPORT_BY_ICAO[selectedAirportCode]}
+            selectedAirportMetrics={null}
+            selectedAirportLevel="green"
+            isCollapseScenario={isCollapseScenario}
+            onClose={() => handleToggleWindow("airportDetail")}
+          />
+        </DraggableWindow>
+      )}
+
+      {/* Renderizado de ventanas flotantes dinámicas desde DraggableWindow */}
       {isWindowOpen("telemetry") && (
         <DraggableWindow title="Telemetría en Tiempo Real" onClose={() => handleToggleWindow("telemetry")} initialPosition={{x: 20, y: 150}} isActive={openWindowsQueue[openWindowsQueue.length-1] === "telemetry"} onFocus={() => handleFocusWindow("telemetry")}>
           <TelemetryPanel isVisible={true} summary={summary} elapsedOperationTime={elapsedOperationTime} onHide={() => handleToggleWindow("telemetry")} />
@@ -334,9 +366,15 @@ targetPlaybackMinutes,
             selectedAirportCode={selectedAirportCode}
             selectedFromAirport={selectedFromAirport}
             selectedToAirport={selectedToAirport}
-            onAirportSelect={showAirportDetail}
+            onAirportSelect={(icao) => {
+                if (!isWindowOpen("airportDetail")) handleToggleWindow("airportDetail");
+                handleFocusWindow("airportDetail");
+            }}
             selectedAircraftId={selectedAircraftId}
-            onAircraftSelect={handleSelectAircraft}
+            onAircraftSelect={(id) => {
+                if (!isWindowOpen("shipmentDetail")) handleToggleWindow("shipmentDetail");
+                handleFocusWindow("shipmentDetail");
+            }}
             showCityLabels={activeAircraft.length < 80}
             zoom={mapZoom}
             center={mapCenter}
@@ -390,33 +428,7 @@ currentEpochTime={liveStatus?.interpolatedTime || currentEpochTime}
             simState={simState}
           />
 
-          <div className="ct-floating-rail ct-floating-rail--left">
-            <FlightCancellationPanel
-              isVisible={panelVisibility.cancellation}
-              onHide={() => togglePanel("cancellation")}
-              onCancelFlight={cancelFlight}
-            />
-            {eventLog && eventLog.length > 0 && (
-              <aside className="ct-panel ct-panel--event-log" style={{ maxHeight: '200px', overflowY: 'auto', background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', marginTop: '8px' }}>
-                <div className="ct-panel-header"><p>LOG DE EVENTOS</p></div>
-                <div style={{ padding: '0.75rem', fontSize: '11px', fontFamily: 'monospace', color: '#9ca3af', display: 'flex', flexDirection: 'column-reverse' }}>
-                  {eventLog.map((log, i) => (
-                    <div key={i} style={{ marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>{log}</div>
-                  ))}
-                </div>
-              </aside>
-            )}
-          </div>
-          <div className="ct-panel-stack ct-panel-stack--right">
-            <AirportDetailPanel
-              isOpen={isAirportDetailOpen}
-              selectedAirport={selectedAirport}
-              selectedAirportMetrics={selectedAirportMetrics}
-              selectedAirportLevel={selectedAirportLevel}
-              isCollapseScenario={isCollapseScenario}
-              onClose={hideAirportDetail}
-            />
-          </div>
+
         </section>
       </main>
 
@@ -431,7 +443,8 @@ currentEpochTime={liveStatus?.interpolatedTime || currentEpochTime}
           comparison: isWindowOpen("comparison"),
           shipmentDetail: isWindowOpen("shipmentDetail"),
           airportConfig: isWindowOpen("airportConfig"),
-          bloqueos: isWindowOpen("bloqueos")
+          bloqueos: isWindowOpen("bloqueos"),
+          cancellation: isWindowOpen("cancellation")
         }}
         onToggleScenarioConfig={toggleScenarioConfig}
         onTogglePanel={handleToggleWindow}

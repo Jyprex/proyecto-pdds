@@ -285,15 +285,10 @@ export const useControlTowerController = () => {
     setIsDockCollapsed((current) => !current);
   }, []);
 
-  const showShipmentDetail = useCallback(() => {
-    setPanelVisibility((current) => ({ ...current, shipmentDetail: true }));
-  }, []);
-
   const handleSelectAircraft = useCallback((aircraftId) => {
     if (!aircraftId) return;
     setSelectedAircraftId(aircraftId);
-    showShipmentDetail();
-  }, [showShipmentDetail]);
+  }, []);
 
   const resetSimulation = useCallback(() => {
     setSimState("idle");
@@ -319,16 +314,6 @@ export const useControlTowerController = () => {
     snapshotBufferRef.current = [];
     simClockRef.current = { serverEpoch: 0, receivedAt: 0, ratio: 1 };
   }, [selectedAlgorithm]);
-
-  const hideAirportDetail = useCallback(() => {
-    setIsAirportDetailOpen(false);
-  }, []);
-
-  const showAirportDetail = useCallback((airportCode = "") => {
-    if (!airportCode) return;
-    setSelectedAirportCode(airportCode);
-    setIsAirportDetailOpen(true);
-  }, []);
 
   const startSimulation = useCallback(async (dias = 5) => {
     try {
@@ -531,10 +516,11 @@ export const useControlTowerController = () => {
       if (finalStatus.startEpoch) {
         md += `| **Fecha Simulada de Inicio** | ${new Date(finalStatus.startEpoch).toLocaleDateString()} |\n`;
       }
-      md += `| **Modo de Escenario** | ${modeText} |\n`;
-      if (isCollapse && finalStatus.stressFactor) {
-        md += `| **Factor de Estrés** | **×${finalStatus.stressFactor}** (${(finalStatus.stressFactor * 3)}% de rutas canceladas) |\n`;
+      if (isCollapse) {
+        md += `| **Días hasta Colapso** | **${finalStatus.currentDay} días** |\n`;
+        md += `| **Motivo de Fin** | **${finalStatus.endCondition || 'DESCONOCIDO'}** |\n`;
       }
+      md += `| **Modo de Escenario** | ${modeText} |\n`;
       
       const algoName = (finalStatus.algorithm || selectedAlgorithm || "ALNS").toUpperCase();
       const algoBadge = algoName === "ALNS" 
@@ -839,7 +825,6 @@ const viewWindow = 12 * 3600 * 1000;
         hops: [{ from: local.from, to: local.to, flightId: local.id, status: local.status }]
       });
       setIsSearching(false);
-      togglePanel("shipmentDetail");
       return;
     }
 
@@ -875,7 +860,6 @@ const viewWindow = 12 * 3600 * 1000;
             hops: [{ from: data.origin, to: data.destination, flightId: id, status: data.status || 'normal' }]
           });
         }
-        togglePanel("shipmentDetail");
       } else {
         alert("Envío no encontrado en el historial de la sesión.");
       }
@@ -884,7 +868,7 @@ const viewWindow = 12 * 3600 * 1000;
     } finally {
       setIsSearching(false);
     }
-  }, [activeAircraftAll, sessionId, togglePanel]);
+  }, [activeAircraftAll, sessionId]);
 
   const rankedAircraftBase = useMemo(() => {
     if (activeAircraftAll.length === 0) return [];
@@ -1122,12 +1106,7 @@ if (selected && !finalSelection.some((p) => p.id === selected.id)) {
   const eventLog = logs;
   const totalBagsWaiting = kpis.totalBagsWaiting ?? 0;
 
-  useEffect(() => {
-    if (!isAirportDetailOpen) return undefined;
-    const handleKeyDown = (event) => { if (event.key === "Escape") setIsAirportDetailOpen(false); };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isAirportDetailOpen]);
+
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1148,8 +1127,6 @@ activeAircraft,
     totalBagsWaiting,
     activeShipments,
     handleTabChange,
-    hideAirportDetail,
-    isAirportDetailOpen,
     isCollapseScenario,
     isDockCollapsed,
     isKpiCollapsed,
@@ -1158,7 +1135,6 @@ activeAircraft,
     kpiCards,
     liveStatus,
     masterPlan,
-    panelVisibility,
     selectedAircraftId,
     selectedAirportCode,
     selectedAirport,
@@ -1188,10 +1164,8 @@ activeAircraft,
     tabs: SCENARIO_TABS,
     toggleDock,
     toggleKpiStrip,
-    togglePanel,
     toggleScenarioConfig,
     setSimState,
-    showAirportDetail,
     selectedAircraft,
     trackedRouteData,
     targetPlaybackMinutes,
@@ -1199,5 +1173,4 @@ activeAircraft,
     cancelFlight,
     handleSelectAircraft
   };
-};
 

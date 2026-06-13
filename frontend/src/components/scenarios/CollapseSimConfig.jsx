@@ -9,19 +9,13 @@ function CollapseSimConfig({ isOpen, onClose, selectedAlgorithm, onAlgorithmChan
 const [isStarting, setIsStarting]       = useState(false)
   const [startDate, setStartDate]         = useState('2026-04-09')
   const [startTime, setStartTime]         = useState('00:00')
-  const [stressFactor, setStressFactor]   = useState(5)
   const [destroyFraction, setDestroyFraction] = useState(20)
   const [mutationRate, setMutationRate]       = useState(15)
 
   const isRunning = liveStatus?.status === 'RUNNING'
   const isCompleted = liveStatus?.status === 'DONE'
 
-  const stressLabel = useMemo(() => {
-    if (stressFactor <= 2) return { text: 'Bajo', color: '#10b981' }
-    if (stressFactor <= 5) return { text: 'Moderado', color: '#f59e0b' }
-    if (stressFactor <= 8) return { text: 'Alto', color: '#f97316' }
-    return { text: 'EXTREMO', color: '#ef4444' }
-  }, [stressFactor])
+
 
   const handleStart = async () => {
     if (isCompleted) {
@@ -32,7 +26,7 @@ const [isStarting, setIsStarting]       = useState(false)
     if (!onStart) return;
     setIsStarting(true);
     // En el nuevo motor de colapso, buscamos el quiebre hasta por 90 días con condición estricta
-    await onStart(90, startDate, stressFactor, "FAILED_DELIVERY");
+    await onStart(90, startDate, "FAILED_DELIVERY");
     setIsStarting(false);
     setActiveSection('progreso');
   };
@@ -89,8 +83,7 @@ const [isStarting, setIsStarting]       = useState(false)
             }}>
               <p style={{ fontSize: 11, color: '#fca5a5', margin: 0, lineHeight: 1.5 }}>
                 <strong>¿Qué hace este escenario?</strong><br />
-                Inyecta disrupciones controladas: cancela el 15% de rutas y reduce al 50% los 3 hubs principales.
-                Detecta si el colapso es <em>computacional</em> (algoritmo lento) o <em>logístico</em> (aviones llenos).
+                Busca automáticamente el "Breaking Point" (Punto de Quiebre) del sistema, ejecutando hasta 90 días de simulación continua. Detectará si el colapso es <em>computacional</em> (algoritmo lento) o <em>logístico</em> (aviones llenos).
               </p>
             </div>
 
@@ -188,57 +181,7 @@ const [isStarting, setIsStarting]       = useState(false)
               </div>
             </div>
 
-            {/* ── Slider de estrés ───────────────────────────────────────── */}
-            <div className="ct-config-section">
-              <p className="ct-config-section__title">📈 FACTOR DE ESTRÉS OPERATIVO</p>
-              <p className="ct-config-hint">Nivel de interrupción real inyectada al backend. Determina el % de rutas canceladas en cada día simulado.</p>
 
-              <div style={{ background: 'rgba(15,23,42,0.5)', borderRadius: 10, padding: '12px 14px', marginTop: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>Nivel de estrés</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: stressLabel.color }}>
-                    ×{stressFactor} — {stressLabel.text}
-                  </span>
-                </div>
-                <input
-                  id="collapse-stress-slider"
-                  type="range" min="1" max="10" step="0.5"
-                  value={stressFactor}
-                  onChange={e => setStressFactor(parseFloat(e.target.value))}
-                  style={{ width: '100%', accentColor: stressLabel.color }}
-                />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#6b7280', marginTop: 4 }}>
-                  <span>×1 Normal</span><span>×5</span><span>×10 Extremo</span>
-                </div>
-              </div>
-            </div>
-
-{/* Explicación detallada del factor de estrés */}
-            <div style={{
-              background: 'rgba(15,23,42,0.4)',
-              border: '1px solid rgba(239,68,68,0.2)',
-              borderRadius: '8px',
-              padding: '10px 12px',
-              marginTop: '-6px',
-              marginBottom: '14px',
-              fontSize: '11px',
-              color: '#9ca3af',
-              lineHeight: '1.4'
-            }}>
-              <p style={{ margin: '0 0 6px 0', fontWeight: 'bold', color: stressLabel.color }}>
-                ¿Qué implica el Factor ×{stressFactor}?
-              </p>
-              <ul style={{ margin: 0, paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <li><strong>Cancelación de Rutas:</strong> Cancela automáticamente el <span style={{ color: '#fca5a5', fontWeight: 'bold' }}>{Math.round(stressFactor * 3)}%</span> de las rutas de vuelo en toda la red de manera aleatoria cada día.</li>
-                <li><strong>Capacidad de Hubs:</strong> Reduce al <span style={{ color: '#fca5a5', fontWeight: 'bold' }}>50%</span> la capacidad de procesamiento de maletas en los principales aeropuertos de conexión (BOG, MAD, DEL).</li>
-                <li><strong>Impacto Esperado:</strong> {
-                  stressFactor <= 2 ? 'Estrés controlado. El sistema debería redistribuir el equipaje sin generar retrasos significativos.' :
-                  stressFactor <= 5 ? 'Estrés moderado. ALNS usará rutas de respaldo para rescatar vuelos, mientras HGA empezará a acumular pérdidas.' :
-                  stressFactor <= 8 ? 'Estrés severo. Alta saturación en almacenes de paso y demoras generalizadas en la entrega de maletas.' :
-                  'Peligro de colapso. Pérdidas masivas de equipaje por superación del límite físico de almacenamiento de la red.'
-                }</li>
-              </ul>
-            </div>
 
             {/* ── Algoritmo ─────────────────────────────────────────────── */}
             <div className="ct-config-section">
@@ -321,9 +264,8 @@ const [isStarting, setIsStarting]       = useState(false)
             }}>
               <p style={{ margin: '0 0 6px 0', color: '#fca5a5', fontWeight: 700, fontSize: 12 }}>📤 Qué pondrás · 📥 Qué saldrá</p>
               <div style={{ color: '#9ca3af', lineHeight: 1.7 }}>
-                <p style={{ margin: 0 }}>▸ <strong style={{ color: '#e2e8f0' }}>Entrada:</strong> Fecha {startDate}, factor ×{stressFactor}, algoritmo {(selectedAlgorithm || 'alns').toUpperCase()}, 5 días</p>
+                <p style={{ margin: 0 }}>▸ <strong style={{ color: '#e2e8f0' }}>Entrada:</strong> Fecha {startDate}, algoritmo {(selectedAlgorithm || 'alns').toUpperCase()}, hasta 90 días continuos</p>
                 <p style={{ margin: 0 }}>▸ <strong style={{ color: '#e2e8f0' }}>Salida:</strong> Rutas rescatadas, E_cap, colapso computacional (Ta≥Sa), SLA violado</p>
-                <p style={{ margin: 0 }}>▸ <strong style={{ color: '#ef4444' }}>Disrupciones:</strong> −50% cap en BOG/MAD/DEL · {Math.round(stressFactor * 3)}% de rutas canceladas</p>
               </div>
             </div>
 
