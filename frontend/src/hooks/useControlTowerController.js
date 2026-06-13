@@ -151,7 +151,7 @@ export const useControlTowerController = () => {
                 const totalDays = meta.totalDays > 0 ? meta.totalDays : 5;
                 const totalSimulatedMs = totalDays * 24 * 60 * 60 * 1000;
                 const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
-                const baseRatio = totalSimulatedMs / Math.max(1000, targetPlaybackMs);
+                let baseRatio = meta.isRealTime ? 1 : (totalSimulatedMs / Math.max(1000, targetPlaybackMs));
 
                 const idealDelayMs = baseRatio * 500; 
                 let dynamicRatio = baseRatio;
@@ -370,8 +370,10 @@ export const useControlTowerController = () => {
     }
   }, [sessionId]);
 
-  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = [], startTime = "00:00") => {
+  const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = [], startTime = "00:00", options = {}) => {
     try {
+      const { isRealTime = false, planningHorizon = 240 } = options;
+
       setSimState("running");
       setAircraft([]);
       setLogs([]);
@@ -381,7 +383,7 @@ export const useControlTowerController = () => {
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
-const startEpoch = new Date(`${startDate}T${startTime}:00`).getTime();
+      const startEpoch = new Date(`${startDate}T${startTime}:00`).getTime();
       setMeta({
         status: "RUNNING",
         percent: 0,
@@ -394,11 +396,13 @@ const startEpoch = new Date(`${startDate}T${startTime}:00`).getTime();
         totalAttended: 0,
         totalMissed: 0,
         slaFinal: 0,
-        reports: []
+        reports: [],
+        isRealTime,
+        planningHorizon
       });
 
       const preCancelStr = preCancelledIds.length > 0 ? preCancelledIds.join(",") : "";
-      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}&startTime=${startTime}`;
+      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}&startTime=${startTime}&planningHorizon=${planningHorizon}&isRealTime=${isRealTime}`;
       const res = await apiFetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);

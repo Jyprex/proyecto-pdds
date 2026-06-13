@@ -95,7 +95,7 @@ public class SimulationService {
          * Inicia la simulación en el pool {@code simulationExecutor}.
          */
         @Async("simulationExecutor")
-        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds, String startTime, int saMinutes) {
+        public void runAsync(String sessionId, int dias, String algorithm, LocalDate startDate, int playbackMinutes, String preCancelledFlightIds, String startTime, int saMinutes, int planningHorizon, boolean isRealTime) {
                 SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
                 if (session == null) return;
                 
@@ -107,7 +107,7 @@ public class SimulationService {
                         session.setStartEpoch(startEpochMs);
 
                         List<SimulationDayReport> reports = runFullSimulation(
-                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime, saMinutes);
+                                dias, session, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, startTime, saMinutes, planningHorizon, isRealTime);
                         session.getReports().addAll(reports);
 
                         int totalAttended = reports.stream().mapToInt(SimulationDayReport::getMalatetasAtendidas).sum();
@@ -153,7 +153,9 @@ public class SimulationService {
                         int playbackMinutes,
                         String preCancelledFlightIds,
                         String startTimeStr,
-                        int saMinutes) {
+                        int saMinutes,
+                        int planningHorizon,
+                        boolean isRealTime) {
 
                 // Parsear pre-cancelaciones (ej: 5:2, 12, 15:all)
                 List<PreCancellation> preCancellations = new ArrayList<>();
@@ -274,7 +276,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                 hubsReduced = true;
                         }
 
-                        long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes, cyclesPerDay);
+                        long sleepPerCycleMs = computeSleepPerCycleMs(dias, playbackMinutes, cyclesPerDay, isRealTime, saMinutes);
                         
                         int malatetasAtendidasDia = 0;
                         int totalMaletasDia = 0;
@@ -363,12 +365,12 @@ int cyclesPerDay = 1440 / saMinutes;
                                         sol = (Solution) session.getNextPlanFuture().join();
                                         session.setNextPlanFuture(null);
                                 } else {
-                                        // 4-hour rolling horizon (240 minutes)
-                                        long horizonEnd = currentSimTime + (240L * 60_000L);
+                                        // planningHorizon-minute rolling horizon (default 240)
+                                        long horizonEnd = currentSimTime + ((long)planningHorizon * 60_000L);
                                         
-                                        // 1. Obtener nuevos envíos de la base de datos para las próximas 4 horas
-                                        List<SuperLot> nuevosEn4h = superLotService.agruparEnviosPorVentana(currentSimTime, horizonEnd);
-                                        for (SuperLot lot : nuevosEn4h) {
+                                        // 1. Obtener nuevos envíos de la base de datos para las próximas X horas
+                                        List<SuperLot> nuevosEnHorizonte = superLotService.agruparEnviosPorVentana(currentSimTime, horizonEnd);
+                                        for (SuperLot lot : nuevosEnHorizonte) {
                                             planifiablePool.put(lot.getId(), lot);
                                         }
 
@@ -386,7 +388,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                         masterPlan = sol.getRoutes();
 
                                         // Actualizar demanda total (solo informativos para KPIs del día)
-                                        totalMaletasDia += nuevosEn4h.stream().mapToInt(SuperLot::getTotalMaletas).sum();
+                                        totalMaletasDia += nuevosEnHorizonte.stream().mapToInt(SuperLot::getTotalMaletas).sum();
                                 }
                                 
                                 // Maletas atendidas: solo contamos lo que el planificador pudo asignar en este ciclo
@@ -448,7 +450,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                 // ── MICRO-STEPPING: AVANCE DEL MOTOR (CONSUMO DE COLA) ──
                                 int microSteps = currentSa; 
                                 long stepDurationMs = 60_000L;
-                                long sleepPerCycleMsDynamic = computeSleepPerCycleMs(dias, playbackMinutes, 1440 / currentSa);
+                                long sleepPerCycleMsDynamic = computeSleepPerCycleMs(dias, playbackMinutes, 1440 / currentSa, isRealTime, currentSa);
                                 long sleepPerMicroStep = sleepPerCycleMsDynamic / microSteps;
 
                                 for (int step = 0; step < microSteps; step++) {
@@ -679,7 +681,10 @@ int cyclesPerDay = 1440 / saMinutes;
                 return p.getOrDefault(newStatus, 0) > p.getOrDefault(currentStatus, 0);
         }
 
-        private long computeSleepPerCycleMs(int totalDays, int playbackMinutes, int cyclesPerDay) {
+        private long computeSleepPerCycleMs(int totalDays, int playbackMinutes, int cyclesPerDay, boolean isRealTime, int saMinutes) {
+                if (isRealTime) {
+                        return (long) saMinutes * 60_000L;
+                }
                 int minutes = Math.max(1, Math.min(playbackMinutes, 90));
                 long ms = (long) minutes * 60_000L / ((long) totalDays * cyclesPerDay);
                 return Math.max(100L, ms);

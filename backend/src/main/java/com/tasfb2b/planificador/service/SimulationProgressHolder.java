@@ -144,6 +144,12 @@ public class SimulationProgressHolder {
 
         /** Salto de algoritmo actual (minutos) */
         private Integer currentSaMinutes = 10;
+
+        /** Ventana de planificación del algoritmo (minutos) */
+        private Integer planningHorizon = 240;
+
+        /** Flag para ejecución en tiempo real (1:1) */
+        private boolean realTime = false;
         
         /** Futuro para el ALNS de la siguiente ventana concurrente */
         private java.util.concurrent.CompletableFuture<?> nextPlanFuture;

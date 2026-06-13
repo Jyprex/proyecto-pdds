@@ -161,7 +161,7 @@ function DayToDayConfig({
             <button
               id="dtd-btn-start"
               type="button"
-              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1, preCancelledFlightIds, startTime)}
+              onClick={() => onStartDayToDay && onStartDayToDay(selectedDate, 1, preCancelledFlightIds, startTime, { isRealTime: true, planningHorizon: 30 })}
               style={{
                 width: "100%", padding: "12px 0", borderRadius: 8, border: "none",
                 background: "linear-gradient(135deg, #10b981, #059669)",
