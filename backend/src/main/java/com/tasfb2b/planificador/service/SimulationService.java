@@ -205,18 +205,18 @@ public class SimulationService {
 
                 String initialLabel = (startTimeStr != null && !startTimeStr.isBlank()) ? "Sincronizando..." : "Inicializando...";
 
-                // Enviar primer frame de inmediato para quitar el modal de carga
-                updateProgress(session, 1, dias, 0, initialLabel, 100.0,
-                        new SimulationState(new ArrayList<>(airportMap.values()), new ArrayList<>(), initialDisplayTime, bloqueoService),
-                        airportMap, new ArrayList<>(), initialDisplayTime, startTime, algorithm, null, new ArrayList<>());
-
-                wsPublisher.pushImmediate(session.getSessionId(), session);
-
                 List<Vuelo> todosLosVuelos = vueloRepo.findAllWithAirports();
                 todosLosVuelos.forEach(v -> {
                     v.getOrigen().getIcaoCode();
                     v.getDestino().getIcaoCode();
                 });
+
+                // Enviar primer frame de inmediato para quitar el modal de carga
+                updateProgress(session, 1, dias, 0, initialLabel, 100.0,
+                        new SimulationState(new ArrayList<>(airportMap.values()), new ArrayList<>(), initialDisplayTime, bloqueoService),
+                        airportMap, new ArrayList<>(), initialDisplayTime, startTime, algorithm, null, new ArrayList<>(), todosLosVuelos);
+
+                wsPublisher.pushImmediate(session.getSessionId(), session);
 
                 List<SimulationDayReport> history = new ArrayList<>();
                 List<SuperLot> pendientes = new ArrayList<>();
@@ -299,8 +299,12 @@ int cyclesPerDay = 1440 / saMinutes;
                         int totalMaletasDia = 0;
                         int maletasEntregadasAlEmpezarDia = globalState.getMaletasEntregadas();
                         
-                        int targetMinuteOfDay = 0;
-                        if (day == 0 && startTimeStr != null && startTimeStr.contains(":")) {
+                        int targetMinuteOfDay = 1440;
+                        if (isRealTime) {
+                                try {
+                                        targetMinuteOfDay = java.time.LocalTime.now().get(java.time.temporal.ChronoField.MINUTE_OF_DAY);
+                                } catch (Exception ignored) {}
+                        } else if (day == 0 && startTimeStr != null && startTimeStr.contains(":")) {
                                 try {
                                         String[] parts = startTimeStr.split(":");
                                         int targetHour = Integer.parseInt(parts[0].trim());
@@ -308,7 +312,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                         targetMinuteOfDay = targetHour * 60 + targetMin;
                                 } catch (Exception ignored) {}
                         }
-                        long targetEpoch = startTime + (targetMinuteOfDay * 60_000L);
+                        long targetEpoch = dayStartEpochMs + (targetMinuteOfDay * 60_000L);
 
                         int currentSimMinuteOfDay = 0;
                         List<Route> masterPlan = new ArrayList<>();
@@ -327,11 +331,14 @@ int cyclesPerDay = 1440 / saMinutes;
                                 }
                                 session.setCurrentSaMinutes(currentSa);
 
-                                long currentSimTime = currentTime + ((long) currentSimMinuteOfDay * 60_000L);
+                                long currentSimTime = dayStartEpochMs + ((long) currentSimMinuteOfDay * 60_000L);
                                 long nextSimTime = currentSimTime + (currentSa * 60_000L);
 
-                                int simHour   = currentSimMinuteOfDay / 60;
-                                int simMinute = currentSimMinuteOfDay % 60;
+                                // Formatear hora de la simulación a Zona Horaria Local para el frontend
+                                java.time.Instant instant = java.time.Instant.ofEpochMilli(currentSimTime);
+                                java.time.ZonedDateTime zdt = instant.atZone(java.time.ZoneId.systemDefault());
+                                int simHour = zdt.getHour();
+                                int simMinute = zdt.getMinute();
                                 String simulatedTimeStr = String.format("Día %d - %02d:%02d", day + 1, simHour, simMinute);
 
                                 // ── DETECTAR CANCELACIONES MANUALES (REPLANT OPERATIVA REACTIVA) ──
@@ -507,7 +514,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                                 updateProgress(session, day + 1, dias, mPercent,
                                                                mTimeStr, slaPercent, globalState, airportMap,
                                                                inTransitRoutes, microEnd, startTime, algorithm,
-                                                               session.getCurrentPlanId(), masterPlan);
+                                                               session.getCurrentPlanId(), masterPlan, todosLosVuelos);
                                         }
 
                                         long tMicroEnd = System.nanoTime();
@@ -583,7 +590,7 @@ int cyclesPerDay = 1440 / saMinutes;
                         int completedDays, int totalDays, int currentPercent, String simulatedTime,
                         double slaPercent, SimulationState state, Map<String, Aeropuerto> airportMap,
                         List<Route> activeRoutesList, long currentSimTime, long baseTime, String algorithm,
-                        String planId, List<Route> masterPlan) {
+                        String planId, List<Route> masterPlan, List<Vuelo> todosLosVuelos) {
 
                 session.setCurrentDay(completedDays);
                 session.setPercent(currentPercent);
@@ -644,6 +651,8 @@ int cyclesPerDay = 1440 / saMinutes;
                                         segMap.put("status", routeStatus);
                                         segMap.put("departureTime", depEpoch);
                                         segMap.put("arrivalTime", arrEpoch);
+                                        segMap.put("departureLocal", v.getDepartureMinute());
+                                        segMap.put("arrivalLocal", v.getArrivalMinute());
                                         segMap.put("ocupacionReal", 0);
                                         segMap.put("capacidadMax", v.getCapacidadTotal());
                                         return segMap;
@@ -652,6 +661,32 @@ int cyclesPerDay = 1440 / saMinutes;
                                 Map<String, Object> existing = vuelosFisicos.get(mapKey);
                                 existing.put("ocupacionReal", (int)existing.get("ocupacionReal") + r.getCapacidadAsignada());
                         }
+                }
+
+                // Inyectar vuelos físicos que no llevan carga para visualización Día a Día
+                long currentDayStartEpoch = session.getStartEpoch() + ((long) (completedDays - 1) * 86400000L);
+                for (Vuelo v : todosLosVuelos) {
+                        long depEpoch = v.calcularSiguienteSalida(currentDayStartEpoch);
+                        long arrEpoch = depEpoch + v.getDuracionMs();
+                        
+                        if (currentSimTime < depEpoch || currentSimTime >= arrEpoch) {
+                                continue;
+                        }
+                        
+                        String mapKey = v.getId() + "-" + depEpoch;
+                        vuelosFisicos.computeIfAbsent(mapKey, k -> {
+                                Map<String, Object> segMap = new HashMap<>();
+                                segMap.put("id", "vuelo-" + mapKey);
+                                segMap.put("from", v.getOrigen().getIcaoCode());
+                                segMap.put("to", v.getDestino().getIcaoCode());
+                                segMap.put("progress", computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
+                                segMap.put("status", "normal");
+                                segMap.put("departureTime", depEpoch);
+                                segMap.put("arrivalTime", arrEpoch);
+                                segMap.put("ocupacionReal", 0);
+                                segMap.put("capacidadMax", v.getCapacidadTotal());
+                                return segMap;
+                        });
                 }
 
                 List<Map<String, Object>> activeRoutes = new ArrayList<>();

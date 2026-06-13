@@ -66,21 +66,13 @@ public class Vuelo {
      * Maneja cruce de medianoche.
      */
     public int getDuracionMinutos() {
-
-        int depLocal = departureMinute;
-        int arrLocal = arrivalMinute;
-
-        int depUtc = depLocal - (origen.getGmtOffset() * 60);
-        int arrUtc = arrLocal - (destino.getGmtOffset() * 60);
-
-        // Normalizar a rango positivo (0–1440)
-        depUtc = (depUtc + 1440) % 1440;
-        arrUtc = (arrUtc + 1440) % 1440;
+        int depUtc = departureMinute;
+        int arrUtc = arrivalMinute;
 
         if (arrUtc >= depUtc) {
             return arrUtc - depUtc;
         } else {
-            // cruza medianoche en UTC
+            // cruza medianoche
             return (1440 - depUtc) + arrUtc;
         }
     }
@@ -99,10 +91,8 @@ public class Vuelo {
     public long calcularSiguienteSalida(long currentTimeMs) {
         long dayMs = 24L * 60 * 60 * 1000;
         
-        // Ajustamos la hora local al UTC del aeropuerto origen
-        int depUtc = departureMinute - (origen.getGmtOffset() * 60);
-        // Normalizamos para manejar cruces de medianoche hacia atrás
-        depUtc = (depUtc + 1440) % 1440;
+        // Ignoramos zonas horarias, usamos el minuto local como absoluto
+        int depUtc = departureMinute;
 
         long baseDay = (currentTimeMs / dayMs) * dayMs;
         long departure = baseDay + depUtc * 60_000L;
@@ -165,8 +155,7 @@ public class Vuelo {
      *   No tiene relación con el reloj del servidor.
      */
     public long getDepartureEpoch(long dayStartEpochMs) {
-        int depUtc = (departureMinute - origen.getGmtOffset() * 60 + 1440) % 1440;
-        return dayStartEpochMs + (depUtc * 60_000L);
+        return dayStartEpochMs + (departureMinute * 60_000L);
     }
 
     /**
@@ -177,11 +166,9 @@ public class Vuelo {
      * @param dayStartEpochMs epoch UTC del inicio del día simulado.
      */
     public long getArrivalEpoch(long dayStartEpochMs) {
-        int depUtc = (departureMinute - origen.getGmtOffset()  * 60 + 1440) % 1440;
-        int arrUtc = (arrivalMinute   - destino.getGmtOffset() * 60 + 1440) % 1440;
-        long dep = dayStartEpochMs + (depUtc * 60_000L);
-        long arr = dayStartEpochMs + (arrUtc * 60_000L);
-        // Cruce de medianoche UTC: el avión llega al día siguiente
+        long dep = dayStartEpochMs + (departureMinute * 60_000L);
+        long arr = dayStartEpochMs + (arrivalMinute * 60_000L);
+        // Cruce de medianoche: el avión llega al día siguiente
         if (arr <= dep) arr += 24L * 60 * 60_000L;
         return arr;
     }

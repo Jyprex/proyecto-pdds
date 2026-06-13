@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useSelectionBridge } from "./hooks/useSelectionBridge";
+import { AIRPORT_BY_ICAO } from "./data/airportsData";
 import { useNavigate } from "react-router-dom";
 import WorldMap from "./components/map/WorldMap";
 import AirportDetailPanel from "./components/controlTower/AirportDetailPanel";

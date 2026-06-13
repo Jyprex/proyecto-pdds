@@ -165,13 +165,13 @@ const WorldMap = ({
     return () => clearTimeout(highlightTimerRef.current);
   }, []);
 
-  const getStrokeColor = (status) => {
+  const getStrokeColor = (status, ocupacion = 0) => {
     switch (status) {
       case "cancelled": return "#f43f5e";
       case "critical": return "#f59e0b";
       case "blocked": return "#e11d48";
       case "rescued": return "#3b82f6";
-      default: return "#10b981";
+      default: return ocupacion > 0 ? "#10b981" : "#0f766e"; // Verde vibrante si lleva carga, verde oscuro si va vacío
     }
   };
 
@@ -279,7 +279,7 @@ const WorldMap = ({
           pointerEvents: "none"
         }}>
           <div style={{ fontSize: "10px", color: isCollapseScenario ? "#ef4444" : "#60a5fa", fontWeight: "bold", textTransform: "uppercase", letterSpacing: "1px" }}>
-            {isCollapseScenario ? "⚠️ Simulación Colapso" : "🕒 Tiempo Simulado"}
+            {isCollapseScenario ? "⚠️ Simulación Colapso" : "🕒 Hora Operativa"}
           </div>
           <div style={{ fontSize: "18px", fontWeight: "bold", letterSpacing: "0.5px" }}>
             {systemClock}
@@ -457,7 +457,7 @@ const WorldMap = ({
 
                   // Paso 6: Filtro visual
                   const passesFilter = flightPassesFilter(plane.status);
-                  const strokeColor = getStrokeColor(plane.status);
+                  const strokeColor = getStrokeColor(plane.status, plane.ocupacionReal);
                   const isSelected = isPlaneSelected(plane.id);
                   const isHighlighted = highlightedId === plane.id;
                   const progress = plane.progress ?? 0;
@@ -563,7 +563,7 @@ const WorldMap = ({
                         <circle
                           r={isSelected || isHighlighted ? 13 : isOnGround ? 6 : 10}
                           fill={isOnGround ? "rgba(100,116,139,0.25)" : "rgba(15, 23, 42, 0.4)"}
-                          stroke={isHighlighted ? "#facc15" : getStrokeColor(plane.status)}
+                          stroke={isHighlighted ? "#facc15" : getStrokeColor(plane.status, plane.ocupacionReal)}
                           strokeWidth={isSelected || isHighlighted ? 2.5 : 1}
                           style={{
                             transition: "all 0.3s ease",
@@ -645,6 +645,7 @@ const WorldMap = ({
 
           {/* ── Tooltip Interactivo Flotante sobre Avión Seleccionado (foreignObject) ── */}
           {selectedPlane && (() => {
+            console.log("DEBUG selectedPlane:", selectedPlane);
             const from = airportByIcao[selectedPlane.from];
             const to   = airportByIcao[selectedPlane.to];
             if (!from || !to) return null;
@@ -665,7 +666,7 @@ const WorldMap = ({
                 >
                   <div style={{
                     background: "rgba(15, 23, 42, 0.96)",
-                    border: `1.5px solid ${getStrokeColor(selectedPlane.status)}`,
+                    border: `1.5px solid ${getStrokeColor(selectedPlane.status, selectedPlane.ocupacionReal)}`,
                     borderRadius: "6px",
                     padding: "6px 8px",
                     color: "white",
@@ -679,7 +680,20 @@ const WorldMap = ({
                       ✈️ Vuelo {selectedPlane.id.toString().replace("vuelo-", "").split("-")[0]}
                     </div>
                     <div style={{ fontSize: "11px", color: "#e2e8f0" }}>
-                      {selectedPlane.from} ➔ {selectedPlane.to} | {systemClock.split(" - ")[1] || systemClock}
+                      {selectedPlane.from} ➔ {selectedPlane.to}
+                    </div>
+                    <div style={{ fontSize: "10px", color: "#9ca3af", marginTop: "2px" }}>
+                      {(() => {
+                        const fmtOffset = (ep) => {
+                          if (!ep) return "--:--";
+                          const d = new Date(ep);
+                          return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+                        };
+                        const dep = fmtOffset(selectedPlane.departureTime);
+                        const arr = fmtOffset(selectedPlane.arrivalTime);
+                        const pct = Math.round((selectedPlane.progress ?? 0) * 100);
+                        return `${dep} — ${arr} (${pct}%)`;
+                      })()}
                     </div>
                     {selectedPlane.ocupacionReal != null && selectedPlane.capacidadMax != null && (
                       <div style={{ fontSize: "10px", color: "#9ca3af", marginTop: "2px" }}>

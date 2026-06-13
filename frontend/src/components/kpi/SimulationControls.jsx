@@ -65,7 +65,7 @@ function SimulationControls({
 
       <div className="ct-sim-controls__clocks">
         <div className="ct-sim-clock-item">
-          <span className="ct-sim-label">Reloj simulado</span>
+          <span className="ct-sim-label">Hora Operativa</span>
           <strong>{simulatedClock}</strong>
         </div>
         <div className="ct-sim-clock-item">
