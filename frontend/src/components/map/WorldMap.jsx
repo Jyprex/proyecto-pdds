@@ -130,20 +130,11 @@ const WorldMap = ({
   } = useSelectionBridge();
 
   // Estados para Tooltip de Aviones
-  const [selectedPlane, setSelectedPlane] = useState(null);
+  const [selectedPlaneId, setSelectedPlaneId] = useState(null);
+  const selectedPlane = activeAircraft.find(p => p.id === selectedPlaneId) || null;
+  
   const [highlightedId, setHighlightedId] = useState(null);
   const highlightTimerRef = useRef(null);
-
-  useEffect(() => {
-    if (selectedPlane) {
-      const current = activeAircraft.find(p => p.id === selectedPlane.id);
-      if (current) {
-        setSelectedPlane(current);
-      } else {
-        setSelectedPlane(null);
-      }
-    }
-  }, [activeAircraft, selectedPlane]);
 
   useEffect(() => {
     if (!mapCommand) return;
@@ -556,7 +547,7 @@ const WorldMap = ({
                         aria-label={`Vuelo ${plane.from} → ${plane.to}`}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setSelectedPlane(plane);
+                          setSelectedPlaneId(plane.id);
                           onAircraftSelect(plane.id);
                           // Paso 3: Notificar al bridge (Mapa→Panel)
                           setFocusedEntity('flight', plane.id, 'map');
