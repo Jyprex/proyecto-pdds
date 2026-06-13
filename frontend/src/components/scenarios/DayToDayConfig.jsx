@@ -93,57 +93,17 @@ function DayToDayConfig({
         <div className="ct-config-section" style={{ marginBottom: 0 }}>
           {!isRunning && !isCompleted ? (
           <>
-            {/* Selector de fecha */}
+            {/* Info de Monitoreo en Vivo */}
             <div style={{
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(79,70,229,0.3)',
-              borderRadius: 10, padding: '12px 14px', marginBottom: 10,
+              background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.2)',
+              borderRadius: 10, padding: '14px 16px', marginBottom: 16, textAlign: 'center'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 20 }}>📅</span>
-                <div>
-                  <p style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#818cf8' }}>
-                    {selectedDate
-                      ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })
-                      : '—'}
-                  </p>
-                  <p style={{ margin: 0, fontSize: 10, color: '#64748b' }}>Día de Monitoreo Activo</p>
-                </div>
-              </div>
-              <input
-                id="dtd-date-input"
-                type="date"
-                value={selectedDate}
-                onChange={e => setSelectedDate(e.target.value)}
-                style={{
-                  width: '100%', boxSizing: 'border-box',
-                  padding: '8px 10px', borderRadius: 7,
-                  background: '#f8fafc', border: '1px solid rgba(79,70,229,0.45)',
-                  color: '#1e293b', fontSize: 13, fontWeight: 600,
-                  colorScheme: 'light',
-                }}
-              />
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                {[{ label: 'Ayer', date: yesterdayStr }, { label: 'Hoy', date: todayStr }].map(q => (
-                  <button
-                    key={q.date}
-                    type="button"
-                    onClick={() => setSelectedDate(q.date)}
-                    style={{
-                      flex: 1, padding: '4px 0', borderRadius: 6,
-                      border: '1px solid rgba(79,70,229,0.3)',
-                      background: selectedDate === q.date ? 'rgba(79,70,229,0.25)' : 'rgba(79,70,229,0.08)',
-                      color: selectedDate === q.date ? '#818cf8' : '#64748b',
-                      fontSize: 11, cursor: 'pointer', fontWeight: 700,
-                    }}
-                  >{q.label}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="ct-config-section" style={{ textAlign: 'center', padding: '10px 0', background: 'rgba(16,185,129,0.05)', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)', marginBottom: '12px' }}>
-              <p style={{ margin: 0, fontSize: '11px', fontWeight: 700, color: '#10b981', textTransform: 'uppercase' }}>🛰️ SINCRONIZACIÓN EN VIVO</p>
-              <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#64748b' }}>
-                El sistema detectará automáticamente la hora actual para el monitoreo en tiempo real.
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📡</div>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: '#10b981', textTransform: 'uppercase', letterSpacing: 1 }}>
+                Sincronización en Vivo
+              </p>
+              <p style={{ margin: '8px 0 0 0', fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>
+                El sistema utilizará la fecha actual (<strong>{todayStr}</strong>) y sincronizará la hora automáticamente con el reloj del servidor para el monitoreo en tiempo real.
               </p>
             </div>
 
@@ -165,7 +125,7 @@ function DayToDayConfig({
         ) : isRunning ? (
           <div style={{ textAlign: "center", padding: "8px 0" }}>
             <span style={{ color: "#10b981", fontSize: 13, fontWeight: 700 }}>
-              📡 TRANSMITIENDO EN VIVO — Día {liveStatus?.currentDay ?? 1}
+              📡 TRANSMITIENDO EN VIVO — {new Date(todayStr + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'long' })}
             </span>
             <div style={{ height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 4, marginTop: 8 }}>
               <div style={{
@@ -299,7 +259,11 @@ function DayToDayConfig({
                 {liveStatus.percent != null && (
                   <div style={{ marginTop: 10 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#64748b', marginBottom: 4 }}>
-                      <span>{liveStatus.simulatedTime ?? `Día ${liveStatus.currentDay}`}</span>
+                      <span>
+                        {liveStatus.simulatedTime?.includes(" - ") 
+                          ? `Hoy - ${liveStatus.simulatedTime.split(" - ")[1]}` 
+                          : "Transmisión en Vivo"}
+                      </span>
                       <span style={{ color: liveStatus.status === 'DONE' ? '#10b981' : '#818cf8', fontWeight: 700 }}>
                         {liveStatus.status === 'DONE' ? '✓ Completado' : `${liveStatus.percent}%`}
                       </span>

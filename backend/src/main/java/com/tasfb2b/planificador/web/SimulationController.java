@@ -74,12 +74,16 @@ public class SimulationController {
 
         String effectiveStartTime = startTime;
 
-        if (isRealTime) {
-            effectiveStartTime = java.time.LocalTime
-                    .now(java.time.ZoneOffset.UTC)
-                    .withSecond(0)
-                    .withNano(0)
-                    .toString();
+        if (effectiveStartTime == null || effectiveStartTime.isBlank()) {
+            if (isRealTime) {
+                effectiveStartTime = java.time.LocalTime
+                        .now()
+                        .withSecond(0)
+                        .withNano(0)
+                        .toString();
+            } else {
+                effectiveStartTime = "00:00";
+            }
         }
 
         service.runAsync(sessionId, totalDays, algorithm, fechaInicio, playbackMinutes, preCancelledFlightIds, effectiveStartTime, saMinutes, planningHorizon, isRealTime);
@@ -141,7 +145,14 @@ public class SimulationController {
         return ResponseEntity.accepted().body(response);
     }
 
-
+    @PostMapping("/speed/{sessionId}")
+    public ResponseEntity<Void> updateSpeed(@PathVariable String sessionId, @RequestParam int speed) {
+        SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
+        if (session != null) {
+            session.setSpeedFactor(speed);
+        }
+        return ResponseEntity.ok().build();
+    }
 
     // ── GET /status/{sessionId} ─────────────────────────────────────────────
 

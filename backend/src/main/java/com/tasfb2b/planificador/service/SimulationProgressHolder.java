@@ -59,6 +59,7 @@ public class SimulationProgressHolder {
     public static class SimulationSessionState {
         private String sessionId;
         private Status status = Status.RUNNING;
+        private int speedFactor = 1;
 
         /** ID del plan maestro actual para sincronización por versiones */
         private String currentPlanId;

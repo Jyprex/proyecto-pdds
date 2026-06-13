@@ -264,15 +264,6 @@ export const useControlTowerController = () => {
     setPanelVisibility((current) => ({ ...current, [panelName]: !current[panelName] }));
   }, []);
 
-  const handleTabChange = useCallback((tabKey = "vivo") => {
-    resetSimulation();
-    setActiveTab(tabKey);
-    setIsScenarioConfigOpen(false);
-    if (tabKey === "periodo" || tabKey === "colapso") {
-      setIsDockCollapsed(true);
-    }
-  }, [resetSimulation]);
-
   const toggleScenarioConfig = useCallback(() => {
     setIsScenarioConfigOpen((current) => !current);
   }, []);
@@ -314,6 +305,15 @@ export const useControlTowerController = () => {
     snapshotBufferRef.current = [];
     simClockRef.current = { serverEpoch: 0, receivedAt: 0, ratio: 1 };
   }, [selectedAlgorithm]);
+
+  const handleTabChange = useCallback((tabKey = "vivo") => {
+    resetSimulation();
+    setActiveTab(tabKey);
+    setIsScenarioConfigOpen(false);
+    if (tabKey === "periodo" || tabKey === "colapso") {
+      setIsDockCollapsed(true);
+    }
+  }, [resetSimulation]);
 
   const startSimulation = useCallback(async (dias = 5) => {
     try {
@@ -361,10 +361,12 @@ export const useControlTowerController = () => {
       const { isRealTime = false, planningHorizon = 240 } = options;
       
       let finalStartTime = startTime;
-      if (!finalStartTime && isRealTime) {
+      let finalStartDate = startDate;
+      if (isRealTime) {
           const now = new Date();
           finalStartTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-          console.log(`[TASF.B2B] Sincronización automática: Iniciando simulación en vivo a las ${finalStartTime}`);
+          finalStartDate = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          console.log(`[TASF.B2B] Sincronización automática: Iniciando simulación en vivo a las ${finalStartDate} ${finalStartTime}`);
       } else if (!finalStartTime) {
           finalStartTime = "00:00";
       }
@@ -398,7 +400,7 @@ export const useControlTowerController = () => {
       });
 
       const preCancelStr = preCancelledIds.length > 0 ? preCancelledIds.join(",") : "";
-      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${startDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}&startTime=${finalStartTime}&planningHorizon=${planningHorizon}&isRealTime=${isRealTime}`;
+      const url = `/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&startDate=${finalStartDate}&playbackMinutes=${targetPlaybackMinutes}&preCancelledFlightIds=${preCancelStr}&startTime=${finalStartTime}&planningHorizon=${planningHorizon}&isRealTime=${isRealTime}`;
       const res = await apiFetch(url, { method: "POST" });
 
       if (!res.ok) throw new Error(`Backend respondió ${res.status}`);
@@ -486,6 +488,16 @@ export const useControlTowerController = () => {
       console.error("[Tasf.B2B] Error al exportar Excel:", err);
     }
   }, []);
+
+  const handleSetSimSpeed = useCallback((speed) => {
+    setSimSpeed(speed);
+    if (speed === 1) setIsFluidMode(false);
+    else setIsFluidMode(true);
+    
+    if (sessionId) {
+      apiFetch(`/api/v1/simulation/speed/${sessionId}?speed=${speed}`, { method: "POST" }).catch(e => console.error("Error setting speed:", e));
+    }
+  }, [sessionId]);
 
   const exportSimulationReportMd = useCallback(async (sid, name = "Escenario") => {
     if (!sid) return;
@@ -1139,6 +1151,7 @@ activeAircraft,
     selectedAirportCode,
     selectedAirport,
     selectedAirportLevel,
+    selectedAirportMetrics,
     selectedAlgorithm,
     selectedFromAirport,
     selectedToAirport,
@@ -1150,7 +1163,7 @@ activeAircraft,
     isSearching,
     setSelectedAircraftId,
     setSelectedAlgorithm,
-    setSimSpeed,
+    setSimSpeed: handleSetSimSpeed,
     simSpeed,
     simState,
     startSimulation,
@@ -1173,4 +1186,6 @@ activeAircraft,
     cancelFlight,
     handleSelectAircraft
   };
+};
 
+export default useControlTowerController;

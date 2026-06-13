@@ -213,7 +213,7 @@ const WorldMap = ({
       aria-label="Mapa de operaciones global" 
       style={{ position: "relative", width: "100%", height: "100%" }}
       onClick={() => {
-        setSelectedPlane(null);
+        setSelectedPlaneId(null);
         onAircraftSelect(null);
       }}
     >
@@ -486,7 +486,7 @@ const WorldMap = ({
                       strokeLinecap="round"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSelectedPlane(plane);
+                        setSelectedPlaneId(plane.id);
                         onAircraftSelect(plane.id);
                         // Paso 3: Notificar al bridge (Mapa→Panel)
                         setFocusedEntity('flight', plane.id, 'map');

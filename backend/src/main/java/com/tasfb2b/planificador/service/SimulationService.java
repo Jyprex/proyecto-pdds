@@ -196,16 +196,19 @@ public class SimulationService {
                     } catch (Exception ignored) {}
                 }
                 long startTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                long initialDisplayTime = startTime + (initHour * 3600_000L) + (initMin * 60_000L);
                 long currentTime = startTime;
 
                 if (startTimeStr != null && !startTimeStr.isBlank()) {
                         session.setStatus(SimulationProgressHolder.Status.RECONSTRUCTING);
                 }
 
+                String initialLabel = (startTimeStr != null && !startTimeStr.isBlank()) ? "Sincronizando..." : "Inicializando...";
+
                 // Enviar primer frame de inmediato para quitar el modal de carga
-                updateProgress(session, 1, dias, 0, "Inicializando...", 100.0,
-                        new SimulationState(new ArrayList<>(airportMap.values()), new ArrayList<>(), startTime, bloqueoService),
-                        airportMap, new ArrayList<>(), startTime, startTime, algorithm, null, new ArrayList<>());
+                updateProgress(session, 1, dias, 0, initialLabel, 100.0,
+                        new SimulationState(new ArrayList<>(airportMap.values()), new ArrayList<>(), initialDisplayTime, bloqueoService),
+                        airportMap, new ArrayList<>(), initialDisplayTime, startTime, algorithm, null, new ArrayList<>());
 
                 wsPublisher.pushImmediate(session.getSessionId(), session);
 
@@ -296,15 +299,16 @@ int cyclesPerDay = 1440 / saMinutes;
                         int totalMaletasDia = 0;
                         int maletasEntregadasAlEmpezarDia = globalState.getMaletasEntregadas();
                         
-                        int startCycle = 0;
+                        int targetMinuteOfDay = 0;
                         if (day == 0 && startTimeStr != null && startTimeStr.contains(":")) {
                                 try {
                                         String[] parts = startTimeStr.split(":");
                                         int targetHour = Integer.parseInt(parts[0].trim());
                                         int targetMin = Integer.parseInt(parts[1].trim());
-                                        startCycle = (targetHour * 60 + targetMin) / saMinutes;
+                                        targetMinuteOfDay = targetHour * 60 + targetMin;
                                 } catch (Exception ignored) {}
                         }
+                        long targetEpoch = startTime + (targetMinuteOfDay * 60_000L);
 
                         int currentSimMinuteOfDay = 0;
                         List<Route> masterPlan = new ArrayList<>();
@@ -465,7 +469,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                 int microSteps = isRealTime ? currentSa * 60 : currentSa; 
                                 long stepDurationMs = isRealTime ? 1000L : 60_000L;
                                 long sleepPerCycleMsDynamic = computeSleepPerCycleMs(dias, playbackMinutes, 1440 / currentSa, isRealTime, currentSa);
-                                long sleepPerMicroStep = sleepPerCycleMsDynamic / microSteps;
+                                long sleepPerMicroStep = (sleepPerCycleMsDynamic / microSteps) / session.getSpeedFactor();
 
                                 for (int step = 0; step < microSteps; step++) {
                                         long tMicroStart = System.nanoTime();
@@ -482,7 +486,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                         double totalMicroSteps = (double)dias * 1440.0;
                                         int mPercent = (int) ((((day * 1440.0) + currentSimMinuteOfDay + step) / totalMicroSteps) * 100);
 
-                                        boolean isFastForwarding = (day == 0 && currentSimMinuteOfDay < startCycle * saMinutes);
+                                        boolean isFastForwarding = (day == 0 && microEnd <= targetEpoch);
                                         if (isFastForwarding) {
                                                 session.setPercent(mPercent);
                                                 session.setSimulatedTime(mTimeStr);
@@ -511,7 +515,7 @@ int cyclesPerDay = 1440 / saMinutes;
                                         long adjustedSleep = Math.max(0, sleepPerMicroStep - workTimeMs);
 
                                         try {
-                                                if (day == 0 && currentSimMinuteOfDay < startCycle * saMinutes) {
+                                                if (day == 0 && microEnd <= targetEpoch) {
                                                         // Fast-forward (no sleep)
                                                 } else {
                                                         if (adjustedSleep > 0) Thread.sleep(adjustedSleep);
