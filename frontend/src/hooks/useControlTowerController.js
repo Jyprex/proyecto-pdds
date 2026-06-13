@@ -820,7 +820,7 @@ const viewWindow = 12 * 3600 * 1000;
     setIsSearching(true);
     
     // 1. Búsqueda Local (Caché activo)
-    const local = activeAircraftAll.find(a => a.id === id || String(a.lotId) === id);
+    const local = activeAircraftAll.find(a => a.id === id || String(a.lotId) === id || a.id === `vuelo-${id}`);
     if (local) {
       setSelectedAircraftId(local.id);
       setSearchedShipment({
@@ -1199,3 +1199,4 @@ activeAircraft,
     handleSelectAircraft
   };
 };
+

@@ -131,6 +131,16 @@ targetPlaybackMinutes,
   };
 
   const isWindowOpen = (panelKey) => openWindowsQueue.includes(panelKey);
+
+  React.useEffect(() => {
+    if (searchedShipment && !isWindowOpen("shipmentDetail")) {
+      handleToggleWindow("shipmentDetail");
+    }
+    if (searchedShipment) {
+      handleFocusWindow("shipmentDetail");
+    }
+  }, [searchedShipment]);
+
   const [mapZoom, setMapZoom] = useState(1);
   const [mapCenter, setMapCenter] = useState([0, 20]);
 
