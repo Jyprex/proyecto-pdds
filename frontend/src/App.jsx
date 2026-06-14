@@ -384,9 +384,10 @@ targetPlaybackMinutes,
               setMapZoom(position.zoom);
               setMapCenter(position.coordinates);
             }}
-currentEpochTime={liveStatus?.interpolatedTime || currentEpochTime}
+            currentEpochTime={liveStatus?.interpolatedTime || currentEpochTime}
             systemClock={summary.systemClock}
-          />
+            simState={simState}
+            />
 
           <DayToDayConfig
             isOpen={isScenarioConfigOpen && activeTab === "vivo"}

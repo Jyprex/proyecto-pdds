@@ -85,6 +85,22 @@ const MapBackground = React.memo(({ isCollapseScenario }) => (
   </Geographies>
 ));
 
+// Auxiliar para generar una trayectoria recta en la proyección (lineal en Lat/Lng)
+// Esto evita que react-simple-maps dibuje arcos geodésicos curvos.
+const getStraightPath = (start, end) => {
+  if (!start || !end) return [];
+  const steps = 6; // Suficientes puntos para que parezca recta en cualquier zoom
+  const path = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    path.push([
+      start[0] + (end[0] - start[0]) * t,
+      start[1] + (end[1] - start[1]) * t,
+    ]);
+  }
+  return path;
+};
+
 /**
  * WorldMap — Componente raíz del mapa interactivo.
  *
@@ -115,6 +131,7 @@ const WorldMap = ({
   onMoveEnd = () => {},
   currentEpochTime = 0,
   systemClock = "--:--:--",
+  simState = "idle",
 }) => {
   // ── Selection Bridge ─────────────────────────────────────────────────────
   const {
@@ -297,37 +314,14 @@ const WorldMap = ({
           <MapBackground isCollapseScenario={isCollapseScenario} />
 
           {/* ── Fase 4: Proyección de Horizonte Maestro (Shadow Routes) ────── */}
-          {masterPlan.routes && masterPlan.routes.map((route) => {
-            return route.legs?.map((leg, legIdx) => {
-              const from = airportByIcao[leg.from] || AIRPORT_BY_ICAO[leg.from];
-              const to = airportByIcao[leg.to] || AIRPORT_BY_ICAO[leg.to];
-              if (!from || !to) return null;
-
-              // No dibujar si este tramo coincide con un avión ya en vuelo (para evitar ruido)
-              const isActive = activeAircraft.some(p => p.from === leg.from && p.to === leg.to);
-              if (isActive) return null;
-
-              return (
-                <Line
-                  key={`master-shadow-${route.lotId}-${legIdx}`}
-                  from={from.coordinates}
-                  to={to.coordinates}
-                  stroke="rgba(56, 189, 248, 0.15)"
-                  strokeWidth={1}
-                  strokeDasharray="4 4"
-                  style={{ pointerEvents: 'none' }}
-                />
-              );
-            });
-          })}
+          {/* Renderizado de rutas sombra eliminado a petición del usuario para limpiar el mapa */}
 
 
 
 {/* ── Ruta seleccionada ──────────────────────────────────────────── */}
           {selectedFromAirport && selectedToAirport && (
             <Line
-              from={selectedFromAirport.coordinates}
-              to={selectedToAirport.coordinates}
+              coordinates={getStraightPath(selectedFromAirport.coordinates, selectedToAirport.coordinates)}
               className="ct-map-route-line"
               strokeLinecap="round"
               stroke="#818cf8"
@@ -344,8 +338,7 @@ const WorldMap = ({
             return (
               <Line
                 key={`track-${trackedRoute.shipmentId}-${idx}`}
-                from={from.coordinates}
-                to={to.coordinates}
+                coordinates={getStraightPath(from.coordinates, to.coordinates)}
                 stroke="#a78bfa"
                 strokeWidth={3}
                 strokeDasharray="8 4"
@@ -399,8 +392,7 @@ const WorldMap = ({
               if (from && to) {
                 return (
                   <Line
-                    from={from.coordinates}
-                    to={to.coordinates}
+                    coordinates={getStraightPath(from.coordinates, to.coordinates)}
                     stroke={exColor}
                     strokeWidth={4}
                     strokeDasharray="6 3"
@@ -449,55 +441,42 @@ const WorldMap = ({
 
             return (
               <>
-                {/* ── Paso 7: Arcos de vuelos con ESTELA progresiva ─────────── */}
+                {/* ── Trayectoria restante (Dashed line) ── */}
                 {activeAircraft.map((plane) => {
                   const from = airportByIcao[plane.from];
                   const to   = airportByIcao[plane.to];
                   if (!from || !to) return null;
 
-                  // Paso 6: Filtro visual
+                  const progress = plane.progress ?? 0;
+                  // Optimización: No renderizar ruta si el avión no ha salido o ya llegó
+                  if (progress <= 0 || progress >= 0.99) return null;
+
                   const passesFilter = flightPassesFilter(plane.status);
                   const strokeColor = getStrokeColor(plane.status, plane.ocupacionReal);
-                  const isSelected = isPlaneSelected(plane.id);
-                  const isHighlighted = highlightedId === plane.id;
-                  const progress = plane.progress ?? 0;
+                  
+                  // Posición actual del avión
+                  const position = interpolateCoordinates(from, to, progress);
 
-                  // ── Paso 7: Estela progresiva ──
-                  // Calculamos la posición real geográficamente para evitar desfases.
-                  const trailStartProgress = Math.max(0, progress - 0.2);
-                  const trailStartPos = interpolateCoordinates(from, to, trailStartProgress);
-                  const trailEndPos = interpolateCoordinates(from, to, progress);
+                  // Trayectoria lineal restante
+                  const remainingPath = getStraightPath(position, to.coordinates);
 
                   return (
                     <Line
-                      key={`arc-${plane.id}`}
-                      from={trailStartPos}
-                      to={trailEndPos}
+                      key={`path-${plane.id}`}
+                      coordinates={remainingPath}
                       stroke={strokeColor}
-                      strokeWidth={isSelected || isHighlighted ? 3.5 : 2.5}
+                      strokeWidth={1.5}
+                      strokeDasharray="4 3"
                       style={{
-                        filter: isSelected || isHighlighted
-                          ? `drop-shadow(0 0 6px ${strokeColor})`
-                          : `drop-shadow(0 0 2px ${strokeColor})`,
-                        opacity: passesFilter ? getOpacity(plane.id, 0.85) : 0.08,
-                        transition: "opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease",
-                        cursor: "pointer"
-                      }}
-                      strokeLinecap="round"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedPlaneId(plane.id);
-                        onAircraftSelect(plane.id);
-                        // Paso 3: Notificar al bridge (Mapa→Panel)
-                        setFocusedEntity('flight', plane.id, 'map');
+                        opacity: passesFilter ? getOpacity(plane.id, 0.45) : 0,
+                        transition: "opacity 0.3s ease",
+                        pointerEvents: "none"
                       }}
                     />
                   );
                 })}
 
-
-
-                {/* ── Paso 8: Aviones con movimiento suavizado + diferenciación en tierra ── */}
+                {/* ── Aviones con ícono limpio y sombra ── */}
                 {activeAircraft.map((plane) => {
                   const from = airportByIcao[plane.from];
                   const to   = airportByIcao[plane.to];
@@ -512,24 +491,21 @@ const WorldMap = ({
                   const isHighlighted = highlightedId === plane.id;
                   const passesFilter = flightPassesFilter(plane.status);
 
-                  // ── Paso 8: Determinar si está en tierra ──
                   const isOnGround = progress <= 0.01 || progress >= 0.99;
                   const isPreDeparture = progress <= 0.01;
-                  const isPostArrival = progress >= 0.99;
 
                   const dx = to.coordinates[0] - from.coordinates[0];
                   const dy = to.coordinates[1] - from.coordinates[1];
                   const angle = Math.atan2(-dy, dx) * (180 / Math.PI) + 45;
 
-                  // Ícono según estado
                   let planeIcon = "✈";
-                  let planeSize = "15px";
+                  let planeSize = "18px";
                   if (isBlocked || isCancelled) {
                     planeIcon = "✖";
-                    planeSize = "12px";
+                    planeSize = "14px";
                   } else if (isOnGround) {
                     planeIcon = isPreDeparture ? "⏳" : "🛬";
-                    planeSize = "10px";
+                    planeSize = "14px";
                   }
 
                   return (
@@ -549,34 +525,32 @@ const WorldMap = ({
                           e.stopPropagation();
                           setSelectedPlaneId(plane.id);
                           onAircraftSelect(plane.id);
-                          // Paso 3: Notificar al bridge (Mapa→Panel)
                           setFocusedEntity('flight', plane.id, 'map');
                         }}
                         onKeyDown={(e) => e.key === "Enter" && onAircraftSelect(plane.id)}
                         style={{ 
                           cursor: "pointer", 
-                          color: isCancelled ? "#ef4444" : isRescued ? "#3b82f6" : undefined,
+                          color: isCancelled ? "#ef4444" : isRescued ? "#3b82f6" : getStrokeColor(plane.status, plane.ocupacionReal),
                           opacity: passesFilter ? getOpacity(plane.id, 1) : 0.08,
-                          transition: "opacity 0.3s ease, color 0.3s ease"
+                          transition: "opacity 0.3s ease, color 0.3s ease",
+                          filter: isSelected || isHighlighted 
+                            ? `drop-shadow(0 0 6px ${getStrokeColor(plane.status, plane.ocupacionReal)})` 
+                            : "drop-shadow(0 1px 2px rgba(0,0,0,0.8))"
                         }}
                       >
-                        <circle
-                          r={isSelected || isHighlighted ? 13 : isOnGround ? 6 : 10}
-                          fill={isOnGround ? "rgba(100,116,139,0.25)" : "rgba(15, 23, 42, 0.4)"}
-                          stroke={isHighlighted ? "#facc15" : getStrokeColor(plane.status, plane.ocupacionReal)}
-                          strokeWidth={isSelected || isHighlighted ? 2.5 : 1}
-                          style={{
-                            transition: "all 0.3s ease",
-                            animation: isHighlighted ? "ct-exception-pulse 1s 3 ease-in-out" : undefined,
-                          }}
-                        />
+                        {/* Se eliminó el círculo de fondo para una visualización más limpia */}
                         <text
                           textAnchor="middle"
                           dominantBaseline="central"
                           className={isBlocked ? "ct-aircraft-pin__blocked" : "ct-aircraft-pin__icon"}
                           y={0}
                           transform={isBlocked || isCancelled || isOnGround ? "" : `rotate(${angle})`}
-                          style={{ fontSize: planeSize, fill: "currentColor", transition: "font-size 0.3s ease" }}
+                          style={{ 
+                            fontSize: planeSize, 
+                            fill: "currentColor", 
+                            fontWeight: "bold",
+                            transition: "font-size 0.3s ease" 
+                          }}
                         >
                           {planeIcon}
                         </text>
@@ -708,6 +682,57 @@ const WorldMap = ({
 
         </ZoomableGroup>
       </ComposableMap>
+
+      {/* ── Overlay de Finalización ────────────────────────────────────────── */}
+      {simState === "completed" && (
+        <div style={{
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          background: "rgba(15, 23, 42, 0.95)",
+          border: `2px solid ${isCollapseScenario ? "#ef4444" : "#10b981"}`,
+          borderRadius: "16px",
+          padding: "32px 48px",
+          textAlign: "center",
+          zIndex: 1000,
+          backdropFilter: "blur(12px)",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.7)",
+          animation: "fadeIn 0.5s ease-out"
+        }}>
+          <div style={{
+            fontSize: "24px",
+            fontWeight: "900",
+            color: isCollapseScenario ? "#fca5a5" : "#34d399",
+            letterSpacing: "2px",
+            marginBottom: "8px"
+          }}>
+            {isCollapseScenario ? "PUNTO DE QUIEBRE ALCANZADO" : "SIMULACIÓN COMPLETADA"}
+          </div>
+          <div style={{ fontSize: "14px", color: "#94a3b8", maxWidth: "300px", margin: "0 auto", lineHeight: "1.5" }}>
+            {isCollapseScenario 
+              ? "El sistema ha detectado una saturación física o caída crítica del SLA que impide continuar la operación normal." 
+              : "Se han procesado todos los eventos del período solicitado exitosamente."}
+          </div>
+          <div style={{ marginTop: "24px", display: "flex", gap: "12px", justifyContent: "center" }}>
+            <button 
+              onClick={(e) => { e.stopPropagation(); window.location.reload(); }}
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                color: "#e2e8f0",
+                padding: "8px 20px",
+                borderRadius: "8px",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer"
+              }}
+            >
+              Reiniciar
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -282,8 +282,11 @@ int cyclesPerDay = 1440 / saMinutes;
 
                         envioService.cargarPorDia(fechaDia, dataPath);
                         // Precargar los datos del día siguiente para permitir al planificador mirar a futuro
-                        if (day + 1 < dias) {
-                                envioService.cargarPorDia(fechaInicio.plusDays(day + 1), dataPath);
+                        final int nextDay = day + 1;
+                        if (nextDay < dias) {
+                                java.util.concurrent.CompletableFuture.runAsync(() -> {
+                                        envioService.cargarPorDia(fechaInicio.plusDays(nextDay), dataPath);
+                                });
                         }
                         if (day >= 3) envioService.purgarAntesDe(fechaInicio.plusDays(day - 2));
 
@@ -666,27 +669,50 @@ int cyclesPerDay = 1440 / saMinutes;
                 // Inyectar vuelos físicos que no llevan carga para visualización Día a Día
                 long currentDayStartEpoch = session.getStartEpoch() + ((long) (completedDays - 1) * 86400000L);
                 for (Vuelo v : todosLosVuelos) {
+                        // Vuelo del día actual
                         long depEpoch = v.calcularSiguienteSalida(currentDayStartEpoch);
                         long arrEpoch = depEpoch + v.getDuracionMs();
                         
-                        if (currentSimTime < depEpoch || currentSimTime >= arrEpoch) {
-                                continue;
+                        if (currentSimTime >= depEpoch && currentSimTime < arrEpoch) {
+                                String mapKey = v.getId() + "-" + depEpoch;
+                                vuelosFisicos.computeIfAbsent(mapKey, k -> {
+                                        Map<String, Object> segMap = new HashMap<>();
+                                        segMap.put("id", "vuelo-" + mapKey);
+                                        segMap.put("from", v.getOrigen().getIcaoCode());
+                                        segMap.put("to", v.getDestino().getIcaoCode());
+                                        segMap.put("progress", computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
+                                        segMap.put("status", "normal");
+                                        segMap.put("departureTime", depEpoch);
+                                        segMap.put("arrivalTime", arrEpoch);
+                                        segMap.put("ocupacionReal", 0);
+                                        segMap.put("capacidadMax", v.getCapacidadTotal());
+                                        return segMap;
+                                });
                         }
                         
-                        String mapKey = v.getId() + "-" + depEpoch;
-                        vuelosFisicos.computeIfAbsent(mapKey, k -> {
-                                Map<String, Object> segMap = new HashMap<>();
-                                segMap.put("id", "vuelo-" + mapKey);
-                                segMap.put("from", v.getOrigen().getIcaoCode());
-                                segMap.put("to", v.getDestino().getIcaoCode());
-                                segMap.put("progress", computeFlightProgress(currentSimTime, depEpoch, arrEpoch));
-                                segMap.put("status", "normal");
-                                segMap.put("departureTime", depEpoch);
-                                segMap.put("arrivalTime", arrEpoch);
-                                segMap.put("ocupacionReal", 0);
-                                segMap.put("capacidadMax", v.getCapacidadTotal());
-                                return segMap;
-                        });
+                        // Vuelo del día anterior (para mantener la interpolación cruzando la medianoche)
+                        if (completedDays > 1) {
+                                long prevDayStartEpoch = currentDayStartEpoch - 86400000L;
+                                long depEpochPrev = v.calcularSiguienteSalida(prevDayStartEpoch);
+                                long arrEpochPrev = depEpochPrev + v.getDuracionMs();
+                                
+                                if (currentSimTime >= depEpochPrev && currentSimTime < arrEpochPrev) {
+                                        String mapKey = v.getId() + "-" + depEpochPrev;
+                                        vuelosFisicos.computeIfAbsent(mapKey, k -> {
+                                                Map<String, Object> segMap = new HashMap<>();
+                                                segMap.put("id", "vuelo-" + mapKey);
+                                                segMap.put("from", v.getOrigen().getIcaoCode());
+                                                segMap.put("to", v.getDestino().getIcaoCode());
+                                                segMap.put("progress", computeFlightProgress(currentSimTime, depEpochPrev, arrEpochPrev));
+                                                segMap.put("status", "normal");
+                                                segMap.put("departureTime", depEpochPrev);
+                                                segMap.put("arrivalTime", arrEpochPrev);
+                                                segMap.put("ocupacionReal", 0);
+                                                segMap.put("capacidadMax", v.getCapacidadTotal());
+                                                return segMap;
+                                        });
+                                }
+                        }
                 }
 
                 List<Map<String, Object>> activeRoutes = new ArrayList<>();

@@ -138,7 +138,7 @@ function DayToDayConfig({
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "6px 0" }}>
-            <span style={{ color: "#34d399", fontSize: 12, fontWeight: 700 }}>✓ Monitoreo finalizado</span>
+            <span style={{ color: "#34d399", fontSize: 12, fontWeight: 700 }}>Monitoreo finalizado</span>
             <button
               id="dtd-btn-reset"
               type="button"

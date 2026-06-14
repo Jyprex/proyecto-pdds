@@ -441,14 +441,14 @@ const [isStarting, setIsStarting]       = useState(false)
                     <div style={{
                       height: '100%', borderRadius: 4,
                       width: `${liveStatus.percent ?? 0}%`,
-                      background: liveStatus.percent >= 100 ? '#10b981' : 'linear-gradient(90deg, #ef4444, #f97316)',
+                      background: isCompleted ? 'linear-gradient(90deg, #ef4444, #b91c1c)' : (liveStatus.percent >= 100 ? '#10b981' : 'linear-gradient(90deg, #ef4444, #f97316)'),
                       transition: 'width 0.6s ease',
                     }} />
                   </div>
                 </div>
 
                 {[
-                  { label: 'Estado', value: liveStatus.status === 'RUNNING' ? '⚙ SIMULANDO' : liveStatus.status === 'DONE' ? '✓ COMPLETADO' : liveStatus.status, red: liveStatus.status === 'RUNNING' },
+                  { label: 'Estado', value: liveStatus.status === 'RUNNING' ? 'SIMULANDO' : liveStatus.status === 'DONE' ? 'SISTEMA COLAPSADO' : liveStatus.status, red: liveStatus.status === 'RUNNING' || liveStatus.status === 'DONE' },
                   { label: 'Tiempo simulado', value: liveStatus.simulatedTime ?? '—' },
                   { label: 'SLA acumulado', value: liveStatus.slaPercent != null ? `${liveStatus.slaPercent.toFixed(1)}%` : '—', red: liveStatus.slaPercent < 85 },
                   { label: 'Aeropuertos críticos', value: liveStatus.criticalNodes ?? 0, red: (liveStatus.criticalNodes ?? 0) > 0 },
