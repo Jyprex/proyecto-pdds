@@ -29,6 +29,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import com.tasfb2b.planificador.simulation.EventEngine;
+import com.tasfb2b.planificador.domain.EventType;
+import com.tasfb2b.tracking.domain.ShipmentStatus;
 
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -103,8 +105,18 @@ public class SimulationService {
                         metrics.put("rescuedFlights",    session.getRescuedFlights());
 
                         progressHolder.saveAlgorithmResult("ALNS", metrics);
-                        progressHolder.markDone(sessionId);
-                        wsPublisher.pushImmediate(sessionId, session);
+
+                        // El productor terminó de generar días, pero el consumidor puede seguir
+                        // mostrando frames acolados. markDone() lo dispara el consumidor cuando
+                        // la cola quede vacía — así "DONE" coincide con lo que el usuario VE, no con
+                        // lo que el backend ya terminó de calcular.
+                        if (session.getFrameQueue() != null) {
+                                session.setProducerFinished(true);
+                        } else {
+                                // isRealTime: sin cola, comportamiento original
+                                progressHolder.markDone(sessionId);
+                                wsPublisher.pushImmediate(sessionId, session);
+                        }
 
                 } catch (Exception ex) {
                         log.error("Simulation failed", ex);
@@ -166,6 +178,20 @@ public class SimulationService {
                 long startTime = fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
                 long initialDisplayTime = startTime + (initHour * 3600_000L) + (initMin * 60_000L);
 
+                // ── Productor-Consumidor: cola acotada, solo para modo no-realtime ──────
+                if (!isRealTime) {
+                        long msPerFrameCalc = computeSleepPerCycleMs(dias, playbackMinutes, 1440 / saMinutes, false, saMinutes) / saMinutes;
+                        msPerFrameCalc = Math.max(1L, msPerFrameCalc);
+
+                        // Capacidad = 22.5s de colchón / ms por frame. Para 5d (500ms/frame) da exactamente 45.
+                        long capacidadCalc = Math.round(22_500.0 / msPerFrameCalc);
+                        int capacidad = (int) Math.max(10, Math.min(capacidadCalc, 600)); // clamp de seguridad
+
+                        session.initFrameQueue(capacidad, msPerFrameCalc);
+                        log.info("[PRODUCTOR-CONSUMIDOR] msPerFrame={} capacidadCola={} (buffer≈{}s)",
+                                msPerFrameCalc, capacidad, (capacidad * msPerFrameCalc) / 1000.0);
+                }
+
                 if (startTimeStr != null && !startTimeStr.isBlank()) {
                         session.setStatus(SimulationProgressHolder.Status.RECONSTRUCTING);
                 }
@@ -199,6 +225,9 @@ public class SimulationService {
 //              es provisional y ALNS puede reasignarlas libremente cada ciclo.
                 Set<String> bagIdsComprometidos = new HashSet<>();
                 Set<String> bagIdsConLotArrivalEmitido = new HashSet<>();
+                Map<String, Long> bagDeadlines = new HashMap<>();
+                Set<String> bagIdsViolatedSla = new HashSet<>();
+
                 int day = 0;
                 while (day < dias) {
                         LocalDate fechaDia = fechaInicio.plusDays(day);
@@ -346,6 +375,12 @@ public class SimulationService {
                                                 lot.isIntercontinental(), lot.getPriority(), bagIdsRealmenteNuevos);
 
                                     planifiablePool.put(lotFiltrado.getId(), lotFiltrado);
+                                        // Deadline REAL de cada maleta nueva (readyTime+sla del envío original).
+                                        // El merge de ALNS puede acortar deadlines para fines de ruteo, pero el
+                                        // compromiso de negocio es el del envío original, no el del lote fusionado.
+                                    for (String bagId : lotFiltrado.getBagIds()) {
+                                         bagDeadlines.putIfAbsent(bagId, lotFiltrado.getDeadline());
+                                    }
                                     if (countedArrivalLotKeysToday.add(lot.getKey())) totalMaletasDia += lotFiltrado.getTotalMaletas();
 
                                     //Tracking la maleta ya esperá en almacén de origen, independiente de si ALNS asignó ruta
@@ -362,7 +397,6 @@ public class SimulationService {
                                 Solution sol = alnsPlanner.plan(superLotService.mergeLots(new ArrayList<>(planifiablePool.values())), 5000L,
                                                 globalState.getCapacidadVuelo(), globalState.getCargaAeropuerto(), currentSimTime);
                                 session.setLastTaMs(System.currentTimeMillis() - tPlanStart);
-                                long tiempoPlanificadorMs = session.getLastTaMs();
                                 masterPlan = sol.getRoutes();
                                 session.setCurrentPlanId(sol.getPlanId());
 
@@ -383,9 +417,7 @@ public class SimulationService {
                                 int microSteps = isRealTime ? currentSa * 60 : currentSa; 
                                 long stepDurationMs = isRealTime ? 1000L : 60_000L;
                                 long sleepPerCycleMsDynamic = computeSleepPerCycleMs(dias, playbackMinutes, 1440 / currentSa, isRealTime, currentSa);
-
-                                long tiempoDisponibleParaDormirMs = Math.max(0, sleepPerCycleMsDynamic - tiempoPlanificadorMs);
-                                long sleepPerMicroStep = (tiempoDisponibleParaDormirMs / microSteps) ;
+                                long sleepPerMicroStep = (sleepPerCycleMsDynamic / microSteps) ;
 
                                 for (int step = 0; step < microSteps; step++) {
                                         long tMicroStart = System.nanoTime();
@@ -441,6 +473,16 @@ public class SimulationService {
                                                 Event event = globalEventQueue.poll();
                                                 globalState.apply(event, airportMap);
                                                 shipmentTracker.observe(event);
+
+                                                // violación real solo si la recogida ocurrió DESPUÉS del deadline
+                                                if (event.getType() == EventType.BAGGAGE_PICKUP && event.getBagIds() != null) {
+                                                        for (String bagId : event.getBagIds()) {
+                                                                Long deadline = bagDeadlines.get(bagId);
+                                                                if (deadline != null && event.getTime() > deadline) {
+                                                                        bagIdsViolatedSla.add(bagId);
+                                                                }
+                                                        }
+                                                }
                                         }
 
                                         if (globalState.isColapsado()) {
@@ -449,16 +491,48 @@ public class SimulationService {
                                         }
 
                                         int mPercent = (int) ((((day * 1440.0) + currentSimMinuteOfDay + step) / (dias * 1440.0)) * 100);
-                                        if (microEnd >= targetEpoch || (isCatchingUp && step == microSteps - 1)) {
-                                                updateProgress(session, day + 1, dias, mPercent, simulatedTimeStr, slaPercent, globalState, airportMap, inTransitRoutes, microEnd, startTime, algorithm, session.getCurrentPlanId(), masterPlan, todosLosVuelos, planifiablePool, isRealTime);
-                                        }
 
-                                        long workTimeMs = (System.nanoTime() - tMicroStart) / 1_000_000;
-                                        long adjustedSleep = Math.max(0, sleepPerMicroStep - workTimeMs);
-                                        if (microEnd >= targetEpoch && adjustedSleep > 0) try { Thread.sleep(adjustedSleep); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                                        if (isRealTime) {
+                                                //  Modo día a día: SIN CAMBIOS, comportamiento original
+                                                if (microEnd >= targetEpoch || (isCatchingUp && step == microSteps - 1)) {
+                                                        updateProgress(session, day + 1, dias, mPercent, simulatedTimeStr, slaPercent, globalState, airportMap, inTransitRoutes, microEnd, startTime, algorithm, session.getCurrentPlanId(), masterPlan, todosLosVuelos, planifiablePool, isRealTime);
+                                                }
+                                                long workTimeMs = (System.nanoTime() - tMicroStart) / 1_000_000;
+                                                long adjustedSleep = Math.max(0, sleepPerMicroStep - workTimeMs);
+                                                if (microEnd >= targetEpoch && adjustedSleep > 0) try { Thread.sleep(adjustedSleep); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                                        } else {
+                                                // ── Productor: construye el frame y lo ENCOLA (bloqueante).
+                                                // Sin Thread.sleep aquí — el backpressure de la cola es el único ritmo.
+                                                // Cuando la cola esté llena (45 frames en 5d), put() bloquea hasta que
+                                                // el consumidor libere espacio, garantizando que el backend nunca se
+                                                // adelante más de "capacidad" minutos simulados al frontend.
+                                                SimulationProgressHolder.WsFrame frame = buildFrame(session.getSessionId(), day + 1, dias,
+                                                        mPercent, simulatedTimeStr, slaPercent, globalState, airportMap, inTransitRoutes,
+                                                        microEnd, startTime, algorithm, session.getCurrentPlanId(), todosLosVuelos,
+                                                        session.isCollapseMode(), session.getRescuedFlights(), session.getErrorMessage(),
+                                                        session.getLastTaMs(), session.getCurrentSaMinutes());
+                                                try {
+                                                        session.getFrameQueue().put(frame);
+                                                } catch (InterruptedException e) {
+                                                        Thread.currentThread().interrupt();
+                                                }
+                                        }
                                 }
                                 currentSimMinuteOfDay += currentSa;
                         }
+                        long finDeDia = dayStartEpochMs + 1440L * 60_000L;
+                        for (Map.Entry<String, Long> e : bagDeadlines.entrySet()) {
+                                String bagId = e.getKey();
+                                long deadline = e.getValue();
+                                if (deadline > finDeDia) continue;                    // aún no vence
+                                if (bagIdsViolatedSla.contains(bagId)) continue;       // ya contada (recogida tarde)
+
+                                var estado = shipmentTracker.getBag(bagId);
+                                if (estado == null || estado.getEstado() != ShipmentStatus.ENTREGADO) {
+                                        bagIdsViolatedSla.add(bagId);
+                                }
+                        }
+
                         //Chequea si llegó al colaspo
                         SimulationDayReport reportProvisional = new SimulationDayReport();
                         reportProvisional.setDayIndex(day);
@@ -468,7 +542,7 @@ public class SimulationService {
                         reportProvisional.setMalatetasAtendidas(malatetasAtendidasDia);
 
                         CollapseHelper.CollapseCheckResult collapseCheck = collapseHelper.checkEndCondition(
-                                session, reportProvisional, globalState, airportMap);
+                                session, reportProvisional, globalState, airportMap,bagIdsViolatedSla.size());
 
                         if (collapseCheck.terminated()) {
                                 log.warn("[COLAPSO] Día {} — {}", day + 1, collapseCheck.reason());
@@ -524,102 +598,14 @@ public class SimulationService {
                 session.setSlaPercent(slaPercent);
                 session.setCurrentEpochTime(currentSimTime);
 
-                Map<String, Integer> airportBags = new HashMap<>();
+                SimulationProgressHolder.WsFrame frame = buildFrame(session.getSessionId(), completedDays, totalDays,
+                        currentPercent, simulatedTime, slaPercent, state, airportMap, activeRoutesList, currentSimTime,
+                        session.getStartEpoch(), algorithm, planId, todosLosVuelos, session.isCollapseMode(),
+                        session.getRescuedFlights(), session.getErrorMessage(), session.getLastTaMs(), session.getCurrentSaMinutes());
 
-                Map<String, Map<String, Object>> loads = new HashMap<>();
-                int totalWaitingBags = 0;
-                for (String icao : airportMap.keySet()) {
-                    Map<String, Object> data = new HashMap<>();
-                    int bags = state.getLoadAt(icao);
-                    totalWaitingBags += bags;
-                    Aeropuerto ap = airportMap.get(icao);
-                    double occ = ap.getStorageCapacity() > 0 ? (bags * 100.0) / ap.getStorageCapacity() : 0;
-                    data.put("bags", bags);
-                    data.put("occupancy", occ);
-                    loads.put(icao, data);
-                }
-                session.setAirportLoads(loads);
-
-                Map<String, Map<String, Object>> vuelosFisicos = new HashMap<>();
-                long currentDayStartEpoch = session.getStartEpoch() + ((long) (completedDays - 1) * 86400000L);
-                
-                // 1. Capa Base: Todos los vuelos del catálogo que deberían estar en el aire
-                for (Vuelo v : todosLosVuelos) {
-                        long dep = v.getDepartureEpoch(currentDayStartEpoch);
-                        long arr = v.getArrivalEpoch(currentDayStartEpoch);
-                        if (currentSimTime >= dep && currentSimTime < arr) {
-                                /*
-                                System.out.println(String.format(
-                                        "[FISICO-HOY] vueloId=%d dep=%d key=%s currentDayStartEpoch=%d",
-                                        v.getId(), dep, v.getId() + "-" + dep, currentDayStartEpoch
-                                ));
-                                */
-                                vuelosFisicos.put(v.getId() + "-" + dep, createAvionMap(v, dep, arr, currentSimTime, "normal"));
-                        }
-                        // Cruce de medianoche (Vuelo que despegó ayer pero aterriza hoy)
-                        long prevDep = v.getDepartureEpoch(currentDayStartEpoch - 86400000L);
-                        long prevArr = v.getArrivalEpoch(currentDayStartEpoch - 86400000L);
-                        if (currentSimTime >= prevDep && currentSimTime < prevArr) {
-                                /*
-                                System.out.println(String.format(
-                                        "[FISICO-AYER] vueloId=%d dep=%d key=%s",
-                                        v.getId(), prevDep, v.getId() + "-" + prevDep
-                                ));
-                                */
-
-                                vuelosFisicos.put(v.getId() + "-" + prevDep, createAvionMap(v, prevDep, prevArr, currentSimTime, "normal"));
-                        }
-                }
-
-                // 2. Capa de Carga: Superponer ocupación real sobre los vuelos base (Deduplicación Estricta)
-                for (Route r : activeRoutesList) {
-                        if (r.getFlights() == null) continue;
-
-                        List<Long> legDeps = r.getLegDepartures();
-                        List<Long> legArrs = r.getLegArrivals();
-                        if (legDeps == null || legArrs == null || legDeps.size() != r.getFlights().size()) continue;
-
-                        for (int i = 0; i < r.getFlights().size(); i++) {
-                                Vuelo v = r.getFlights().get(i);
-                                long d = legDeps.get(i);
-                                long a = legArrs.get(i);
-
-                                if (currentSimTime < d || currentSimTime >= a) continue; // este tramo no está activo ahora
-
-                                String key = v.getId() + "-" + d;   // ← MISMA key que usa EventEngine/ShipmentTracker, siempre
-
-                                Map<String, Object> existing = vuelosFisicos.get(key);
-                                if (existing == null) {
-                                        existing = createAvionMap(v, d, a, currentSimTime, r.getStatus());
-                                        vuelosFisicos.put(key, existing);
-                                }
-                                existing.put("ocupacionReal", (int) existing.get("ocupacionReal") + r.getCapacidadAsignada());
-                                if (isHigherPriority(r.getStatus(), (String) existing.get("status"))) {
-                                        existing.put("status", r.getStatus());
-                                }
-                        }
-                }
-
-                long totalCap = 0, totalCarga = 0;
-                for (Map<String, Object> a : vuelosFisicos.values()) {
-                        int oc = (int) a.get("ocupacionReal"), mx = (int) a.get("capacidadMax");
-                        totalCarga += oc; totalCap += mx;
-                        a.put("capacityPercent", (oc * 100.0) / Math.max(1, mx));
-                }
-
-                // Ordenamiento de salida: Priorizar vuelos con carga para que sobrevivan al límite visual
-                List<Map<String, Object>> active = vuelosFisicos.values().stream()
-                        .sorted((a, b) -> {
-                            int ocA = (int) a.get("ocupacionReal");
-                            int ocB = (int) b.get("ocupacionReal");
-                            if (ocA != ocB) return Integer.compare(ocB, ocA); // Más cargados primero
-                            return ((String)a.get("status")).compareTo((String)b.get("status")); // Luego por criticidad
-                        })
-                        .collect(Collectors.toList());
-
-                double fleetOcc = totalCap == 0 ? 0 : (totalCarga * 100.0) / totalCap;
-                session.setActiveRoutes(active);
-                session.setWsFrame(new SimulationProgressHolder.WsFrame(session.getSessionId(), session.getStatus().name(), currentSimTime, simulatedTime, currentPercent, completedDays, totalDays, slaPercent, (int)loads.values().stream().filter(d -> (double)d.get("occupancy") >= 90).count(), loads, totalWaitingBags, session.isCollapseMode(), session.getRescuedFlights(), session.getErrorMessage(), session.getStartEpoch(), active, algorithm, session.getLastTaMs(), session.getCurrentSaMinutes(), planId, new ArrayList<>(), fleetOcc));
+                session.setAirportLoads(frame.airportLoads());
+                session.setActiveRoutes(frame.activeRoutes());
+                session.setWsFrame(frame);
         }
 
         private Map<String, Object> createAvionMap(Vuelo v, long dep, long arr, long now, String status) {
@@ -702,4 +688,96 @@ public class SimulationService {
                 }
                 return new ArrayList<>(byFlight.values());
         }
+
+        /**
+         * Construye un WsFrame inmutable con el estado del instante dado, SIN mutar session.
+         * Usado por el productor en modo no-realtime para encolar frames de forma desacoplada.
+         */
+        private SimulationProgressHolder.WsFrame buildFrame(
+                String sessionId, int completedDays, int totalDays, int currentPercent,
+                String simulatedTime, double slaPercent, SimulationState state,
+                Map<String, Aeropuerto> airportMap, List<Route> activeRoutesList,
+                long currentSimTime, long startEpoch, String algorithm, String planId,
+                List<Vuelo> todosLosVuelos, boolean isCollapseMode, int rescuedFlights, String errorMessage,
+                Long lastTaMs, Integer currentSaMinutes) {
+
+                Map<String, Map<String, Object>> loads = new HashMap<>();
+                int totalWaitingBags = 0;
+                for (String icao : airportMap.keySet()) {
+                        Map<String, Object> data = new HashMap<>();
+                        int bags = state.getLoadAt(icao);
+                        totalWaitingBags += bags;
+                        Aeropuerto ap = airportMap.get(icao);
+                        double occ = ap.getStorageCapacity() > 0 ? (bags * 100.0) / ap.getStorageCapacity() : 0;
+                        data.put("bags", bags);
+                        data.put("occupancy", occ);
+                        loads.put(icao, data);
+                }
+
+                Map<String, Map<String, Object>> vuelosFisicos = new HashMap<>();
+                long currentDayStartEpoch = startEpoch + ((long) (completedDays - 1) * 86400000L);
+
+                for (Vuelo v : todosLosVuelos) {
+                        long dep = v.getDepartureEpoch(currentDayStartEpoch);
+                        long arr = v.getArrivalEpoch(currentDayStartEpoch);
+                        if (currentSimTime >= dep && currentSimTime < arr) {
+                                vuelosFisicos.put(v.getId() + "-" + dep, createAvionMap(v, dep, arr, currentSimTime, "normal"));
+                        }
+                        long prevDep = v.getDepartureEpoch(currentDayStartEpoch - 86400000L);
+                        long prevArr = v.getArrivalEpoch(currentDayStartEpoch - 86400000L);
+                        if (currentSimTime >= prevDep && currentSimTime < prevArr) {
+                                vuelosFisicos.put(v.getId() + "-" + prevDep, createAvionMap(v, prevDep, prevArr, currentSimTime, "normal"));
+                        }
+                }
+
+                for (Route r : activeRoutesList) {
+                        if (r.getFlights() == null) continue;
+                        List<Long> legDeps = r.getLegDepartures();
+                        List<Long> legArrs = r.getLegArrivals();
+                        if (legDeps == null || legArrs == null || legDeps.size() != r.getFlights().size()) continue;
+
+                        for (int i = 0; i < r.getFlights().size(); i++) {
+                                Vuelo v = r.getFlights().get(i);
+                                long d = legDeps.get(i);
+                                long a = legArrs.get(i);
+                                if (currentSimTime < d || currentSimTime >= a) continue;
+
+                                String key = v.getId() + "-" + d;
+                                Map<String, Object> existing = vuelosFisicos.get(key);
+                                if (existing == null) {
+                                        existing = createAvionMap(v, d, a, currentSimTime, r.getStatus());
+                                        vuelosFisicos.put(key, existing);
+                                }
+                                existing.put("ocupacionReal", (int) existing.get("ocupacionReal") + r.getCapacidadAsignada());
+                                if (isHigherPriority(r.getStatus(), (String) existing.get("status"))) {
+                                        existing.put("status", r.getStatus());
+                                }
+                        }
+                }
+
+                long totalCap = 0, totalCarga = 0;
+                for (Map<String, Object> a : vuelosFisicos.values()) {
+                        int oc = (int) a.get("ocupacionReal"), mx = (int) a.get("capacidadMax");
+                        totalCarga += oc; totalCap += mx;
+                        a.put("capacityPercent", (oc * 100.0) / Math.max(1, mx));
+                }
+
+                List<Map<String, Object>> active = vuelosFisicos.values().stream()
+                        .sorted((a, b) -> {
+                                int ocA = (int) a.get("ocupacionReal");
+                                int ocB = (int) b.get("ocupacionReal");
+                                if (ocA != ocB) return Integer.compare(ocB, ocA);
+                                return ((String) a.get("status")).compareTo((String) b.get("status"));
+                        })
+                        .collect(Collectors.toList());
+
+                double fleetOcc = totalCap == 0 ? 0 : (totalCarga * 100.0) / totalCap;
+                int criticalNodes = (int) loads.values().stream().filter(d -> (double) d.get("occupancy") >= 90).count();
+
+                return new SimulationProgressHolder.WsFrame(sessionId, "RUNNING", currentSimTime, simulatedTime,
+                        currentPercent, completedDays, totalDays, slaPercent, criticalNodes, loads, totalWaitingBags,
+                        isCollapseMode, rescuedFlights, errorMessage, startEpoch, active, algorithm, lastTaMs,
+                        currentSaMinutes, planId, new ArrayList<>(), fleetOcc);
+        }
+
 }

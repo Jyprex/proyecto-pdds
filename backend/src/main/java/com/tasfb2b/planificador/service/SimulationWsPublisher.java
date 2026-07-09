@@ -45,14 +45,41 @@ public class SimulationWsPublisher {
 
     @Scheduled(fixedDelayString = "${tasf.sim.stream.intervalMs:500}")
     public void publishAllSessions() {
+        long now = System.currentTimeMillis();
+
         for (String sessionId : progressHolder.getAllSessionIds()) {
             SimulationSessionState session = progressHolder.get(sessionId);
             if (session == null) continue;
 
             SimulationProgressHolder.Status status = session.getStatus();
-            boolean isRunning = status == SimulationProgressHolder.Status.RUNNING || status == SimulationProgressHolder.Status.RECONSTRUCTING;
+            boolean isRunning = status == SimulationProgressHolder.Status.RUNNING
+                    || status == SimulationProgressHolder.Status.RECONSTRUCTING;
+
+            java.util.concurrent.BlockingQueue<SimulationProgressHolder.WsFrame> queue = session.getFrameQueue();
+
+            if (isRunning && queue != null) {
+                // ── Consumidor: extrae frames al ritmo exacto de session.msPerFrame,
+                // sin importar cuán rápido/lento vaya el productor. Un tick global
+                // de 500ms puede liberar 1 frame (5d, 500ms/frame) o varios (colapso,
+                // ~42ms/frame) — cada uno se publica y aplica a session en orden.
+                while (now >= session.getNextFrameDueAtMs()) {
+                    SimulationProgressHolder.WsFrame frame = queue.poll();
+                    if (frame == null) break; // el productor no ha generado suficiente aún
+
+                    applyFrameToSession(session, frame);
+                    pushImmediate(sessionId, session);
+                    session.setNextFrameDueAtMs(session.getNextFrameDueAtMs() + session.getMsPerFrame());
+                }
+
+                if (session.isProducerFinished() && queue.isEmpty()) {
+                    progressHolder.markDone(sessionId);
+                    pushImmediate(sessionId, session);
+                }
+                continue;
+            }
+
             if (isRunning) {
-                // Seguimos permitiendo el polling de KPIs globales/logs
+                // isRealTime: sin cola, comportamiento original
                 pushImmediate(sessionId, session);
                 continue;
             }
@@ -65,6 +92,18 @@ public class SimulationWsPublisher {
                 trackedBySession.remove(sessionId);
             }
         }
+    }
+
+    /** Aplica el contenido de un frame consumido al estado visible de la sesión. */
+    private void applyFrameToSession(SimulationSessionState session, SimulationProgressHolder.WsFrame frame) {
+        session.setCurrentDay(frame.currentDay());
+        session.setPercent(frame.percent());
+        session.setSimulatedTime(frame.simulatedTime());
+        session.setSlaPercent(frame.slaPercent());
+        session.setCurrentEpochTime(frame.currentEpochTime());
+        session.setAirportLoads(frame.airportLoads());
+        session.setActiveRoutes(frame.activeRoutes());
+        session.setWsFrame(frame);
     }
 
     /** Publicación inmediata bajo demanda (Direct Push) */

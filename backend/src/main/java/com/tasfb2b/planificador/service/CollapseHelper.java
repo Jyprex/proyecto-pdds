@@ -154,7 +154,8 @@ public class CollapseHelper {
             SimulationProgressHolder.SimulationSessionState session,
             SimulationDayReport report,
             SimulationState endOfDayState,
-            Map<String, Aeropuerto> airportMap) {
+            Map<String, Aeropuerto> airportMap,
+            int slaViolationsCount) {
 
         // ── CONDICIÓN 1: Almacén excedido ──────────────────────────────────
         if (endOfDayState.isColapsado()) {
@@ -171,13 +172,11 @@ public class CollapseHelper {
         // ── CONDICIÓN 3: SLA incumplido ────────────────────────────────────
         // Cualquier maleta que no llegó a tiempo es violación de negocio.
         // report.getSlaPercent() < 100 significa que al menos 1 maleta no cumplió su ventana.
-        if (report.getTotalMaletas() > 0 && report.getSlaPercent() < 100.0) {
-            return new CollapseCheckResult(true,
-                    String.format("SLA_INCUMPLIDO: Solo %.1f%% de entregas cumplieron su deadline " +
-                                    "(%d/%d maletas). Se requiere 100%%.",
-                            report.getSlaPercent(),
-                            report.getMalatetasAtendidas(),
-                            report.getTotalMaletas()));
+        if (slaViolationsCount > 0) {
+            return new CollapseCheckResult(true, String.format(
+                    "SLA_INCUMPLIDO: %d maleta(s) superaron su ventana de entrega " +
+                            "(24h continental / 48h intercontinental) sin ser recogidas a tiempo.",
+                    slaViolationsCount));
         }
 
         return new CollapseCheckResult(false, "NONE");

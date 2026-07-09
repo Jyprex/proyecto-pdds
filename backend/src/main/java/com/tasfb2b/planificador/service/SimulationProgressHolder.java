@@ -4,7 +4,7 @@ import com.tasfb2b.planificador.domain.CollapseEndCondition;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import lombok.Data;
 import org.springframework.stereotype.Component;
-
+import java.util.concurrent.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +59,25 @@ public class SimulationProgressHolder {
      */
     @Data
     public static class SimulationSessionState {
+
+        /** Cola acotada de frames pendientes de mostrar (Productor-Consumidor). Null si el modo no la usa (isRealTime=true). */
+        private java.util.concurrent.BlockingQueue<WsFrame> frameQueue;
+
+        /** ms reales que debe durar 1 frame (1 minuto simulado) en pantalla, según el ratio configurado. */
+        private long msPerFrame = 500L;
+
+        /** Próximo instante real (epoch ms) en que el consumidor debe extraer el siguiente frame. */
+        private volatile long nextFrameDueAtMs = 0L;
+
+        /** true cuando el productor terminó de generar todos los días (aún puede haber frames por consumir). */
+        private volatile boolean producerFinished = false;
+
+        public void initFrameQueue(int capacity, long msPerFrame) {
+            this.frameQueue = new java.util.concurrent.LinkedBlockingQueue<>(capacity);
+            this.msPerFrame = msPerFrame;
+            this.nextFrameDueAtMs = System.currentTimeMillis();
+        }
+
         private String sessionId;
         private Status status = Status.RUNNING;
         private int speedFactor = 1;

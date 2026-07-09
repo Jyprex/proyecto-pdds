@@ -59,15 +59,16 @@ public class SimulationController {
             @RequestParam(required = false, defaultValue = "60") int playbackMinutes,
             @RequestParam(required = false) String preCancelledFlightIds,
             @RequestParam(required = false) String startTime,
-            @RequestParam(required = false, defaultValue = "1440") int saMinutes,
-            @RequestParam(required = false, defaultValue = "1440") int planningHorizon,
+            @RequestParam(required = false, defaultValue = "60") int saMinutes,
+            @RequestParam(required = false, defaultValue = "480") int planningHorizon,
             @RequestParam(required = false, defaultValue = "false") boolean isRealTime) {
 
         //Limpiamos caché al inicio así limpiamos los envíos de la BD de otros escenarios
         envioRepository.deleteAllEnvios();
         //Prueba
         if (!isRealTime){
-            planningHorizon=14440;
+            saMinutes=60;
+            planningHorizon=480;
         }
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         String sessionId = UUID.randomUUID().toString();
