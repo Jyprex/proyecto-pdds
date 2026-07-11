@@ -31,7 +31,7 @@ import org.springframework.stereotype.Service;
 import com.tasfb2b.planificador.simulation.EventEngine;
 import com.tasfb2b.planificador.domain.EventType;
 import com.tasfb2b.tracking.domain.ShipmentStatus;
-
+import com.tasfb2b.tracking.domain.ShipmentState;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
@@ -412,7 +412,17 @@ public class SimulationService {
                                 inTransitRoutes = inTransitRoutes.stream().collect(Collectors.toMap(r -> r.getLot().getId(), r -> r, (a, b) -> b)).values()
                                                 .stream().filter(r -> r.getArrivalTime() > currentSimTime).collect(Collectors.toList());
 
-                                double slaPercent = totalMaletasDia == 0 ? 0 : (malatetasAtendidasDia * 100.0) / totalMaletasDia;
+                                for (Map.Entry<String, Long> e : bagDeadlines.entrySet()) {
+                                        String bagId = e.getKey();
+                                        if (bagIdsViolatedSla.contains(bagId)) continue;
+                                        if (e.getValue() > currentSimTime) continue; // aún no vence
+                                        ShipmentState estado = shipmentTracker.getBag(bagId);
+                                        if (estado == null || estado.getEstado() != ShipmentStatus.ENTREGADO) {
+                                                bagIdsViolatedSla.add(bagId);
+                                        }
+                                }
+
+                                double slaPercent = computeRealSlaPercent(bagDeadlines, bagIdsViolatedSla);
 
                                 int microSteps = isRealTime ? currentSa * 60 : currentSa; 
                                 long stepDurationMs = isRealTime ? 1000L : 60_000L;
@@ -506,15 +516,17 @@ public class SimulationService {
                                                 // Cuando la cola esté llena (45 frames en 5d), put() bloquea hasta que
                                                 // el consumidor libere espacio, garantizando que el backend nunca se
                                                 // adelante más de "capacidad" minutos simulados al frontend.
-                                                SimulationProgressHolder.WsFrame frame = buildFrame(session.getSessionId(), day + 1, dias,
-                                                        mPercent, simulatedTimeStr, slaPercent, globalState, airportMap, inTransitRoutes,
-                                                        microEnd, startTime, algorithm, session.getCurrentPlanId(), todosLosVuelos,
-                                                        session.isCollapseMode(), session.getRescuedFlights(), session.getErrorMessage(),
-                                                        session.getLastTaMs(), session.getCurrentSaMinutes());
-                                                try {
-                                                        session.getFrameQueue().put(frame);
-                                                } catch (InterruptedException e) {
-                                                        Thread.currentThread().interrupt();
+                                                if (microEnd >= targetEpoch) {
+                                                        SimulationProgressHolder.WsFrame frame = buildFrame(session.getSessionId(), day + 1, dias,
+                                                                mPercent, simulatedTimeStr, slaPercent, globalState, airportMap, inTransitRoutes,
+                                                                microEnd, startTime, algorithm, session.getCurrentPlanId(), todosLosVuelos,
+                                                                session.isCollapseMode(), session.getRescuedFlights(), session.getErrorMessage(),
+                                                                session.getLastTaMs(), session.getCurrentSaMinutes());
+                                                        try {
+                                                                session.getFrameQueue().put(frame);
+                                                        } catch (InterruptedException e) {
+                                                                Thread.currentThread().interrupt();
+                                                        }
                                                 }
                                         }
                                 }
@@ -523,21 +535,20 @@ public class SimulationService {
                         long finDeDia = dayStartEpochMs + 1440L * 60_000L;
                         for (Map.Entry<String, Long> e : bagDeadlines.entrySet()) {
                                 String bagId = e.getKey();
-                                long deadline = e.getValue();
-                                if (deadline > finDeDia) continue;                    // aún no vence
-                                if (bagIdsViolatedSla.contains(bagId)) continue;       // ya contada (recogida tarde)
-
-                                var estado = shipmentTracker.getBag(bagId);
+                                if (e.getValue() > finDeDia) continue;
+                                if (bagIdsViolatedSla.contains(bagId)) continue;
+                                ShipmentState estado = shipmentTracker.getBag(bagId);
                                 if (estado == null || estado.getEstado() != ShipmentStatus.ENTREGADO) {
                                         bagIdsViolatedSla.add(bagId);
                                 }
                         }
 
+                        double slaRealAcumulado = computeRealSlaPercent(bagDeadlines, bagIdsViolatedSla);
+
                         //Chequea si llegó al colaspo
                         SimulationDayReport reportProvisional = new SimulationDayReport();
                         reportProvisional.setDayIndex(day);
-                        reportProvisional.setSlaPercent(totalMaletasDia == 0 ? 100.0
-                                : (malatetasAtendidasDia * 100.0) / totalMaletasDia);
+                        reportProvisional.setSlaPercent(slaRealAcumulado);
                         reportProvisional.setTotalMaletas(totalMaletasDia);
                         reportProvisional.setMalatetasAtendidas(malatetasAtendidasDia);
 
@@ -554,7 +565,7 @@ public class SimulationService {
                                 // Guardar el reporte del día del colapso y salir
                                 SimulationDayReport collapseReport = new SimulationDayReport();
                                 collapseReport.setDayIndex(day);
-                                collapseReport.setSlaPercent(reportProvisional.getSlaPercent());
+                                collapseReport.setSlaPercent(slaRealAcumulado);
                                 collapseReport.setTotalMaletas(totalMaletasDia);
                                 collapseReport.setMalatetasAtendidas(malatetasAtendidasDia);
                                 history.add(collapseReport);
@@ -567,7 +578,7 @@ public class SimulationService {
 
                         SimulationDayReport report = new SimulationDayReport();
                         report.setDayIndex(day);
-                        report.setSlaPercent(totalMaletasDia == 0 ? 0 : (malatetasAtendidasDia * 100.0) / totalMaletasDia);
+                        report.setSlaPercent(slaRealAcumulado);
                         report.setTotalMaletas(totalMaletasDia);
                         report.setMalatetasAtendidas(malatetasAtendidasDia);
                         report.setMaletasEntregadas(globalState.getMaletasEntregadas() - maletasEntregadasAlEmpezarDia);
@@ -633,6 +644,12 @@ public class SimulationService {
 
         private double computeFlightProgress(long c, long d, long a) {
                 return (d <= 0 || a <= 0 || a <= d) ? 0.0 : Math.max(0.0, Math.min(1.0, (c - d) / (double) (a - d)));
+        }
+
+        /** SLA real acumulado: % de maletas que NO han violado su deadline hasta ahora. */
+        private double computeRealSlaPercent(Map<String, Long> bagDeadlines, Set<String> bagIdsViolatedSla) {
+                if (bagDeadlines.isEmpty()) return 100.0;
+                return (1.0 - (bagIdsViolatedSla.size() / (double) bagDeadlines.size())) * 100.0;
         }
 
         private void restaurarVuelosEnBD() {
