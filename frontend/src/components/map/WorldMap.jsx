@@ -475,7 +475,7 @@ const WorldMap = ({
         </button>
 
         <div style={{
-          background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '10px', width: 'max-content',
+          background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '8px', width: 'max-content',
           opacity: isFilterPanelOpen ? 1 : 0,
           transform: isFilterPanelOpen ? 'translateY(0) scale(1)' : 'translateY(-10px) scale(0.95)',
           pointerEvents: isFilterPanelOpen ? 'auto' : 'none',
@@ -483,46 +483,46 @@ const WorldMap = ({
           transformOrigin: 'top right'
         }}>
           {/* Vuelos Section */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>✈️</span> Vuelos</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>✈️</span> Vuelos</div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.gray} onChange={(e) => setFlightColorFilters(p => ({...p, gray: e.target.checked}))} style={{ accentColor: '#64748b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span> Sin envíos
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.green} onChange={(e) => setFlightColorFilters(p => ({...p, green: e.target.checked}))} style={{ accentColor: '#10b981', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span> {'< 70%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.yellow} onChange={(e) => setFlightColorFilters(p => ({...p, yellow: e.target.checked}))} style={{ accentColor: '#f59e0b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span> 70% - 90%
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.red} onChange={(e) => setFlightColorFilters(p => ({...p, red: e.target.checked}))} style={{ accentColor: '#ef4444', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span> {'> 90%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
             </label>
           </div>
 
           <div style={{ height: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
 
           {/* Almacenes Section */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>🏭</span> Almacenes</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>🏭</span> Almacenes</div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.gray} onChange={(e) => setAirportColorFilters(p => ({...p, gray: e.target.checked}))} style={{ accentColor: '#64748b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span> Vacío / Normal
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.green} onChange={(e) => setAirportColorFilters(p => ({...p, green: e.target.checked}))} style={{ accentColor: '#10b981', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span> {'< 70%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.yellow} onChange={(e) => setAirportColorFilters(p => ({...p, yellow: e.target.checked}))} style={{ accentColor: '#f59e0b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span> 70% - 90%
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.red} onChange={(e) => setAirportColorFilters(p => ({...p, red: e.target.checked}))} style={{ accentColor: '#ef4444', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span> {'> 90%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
             </label>
           </div>
         </div>
