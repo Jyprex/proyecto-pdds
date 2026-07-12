@@ -484,7 +484,7 @@ const WorldMap = ({
         }}>
           {/* Vuelos Section */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>✈️</span> Vuelos</div>
+            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>✈️</span></div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.gray} onChange={(e) => setFlightColorFilters(p => ({...p, gray: e.target.checked}))} style={{ accentColor: '#64748b', transform: 'scale(0.9)' }} />
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span>
@@ -507,7 +507,7 @@ const WorldMap = ({
 
           {/* Almacenes Section */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>🏭</span> Almacenes</div>
+            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>🏭</span></div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.gray} onChange={(e) => setAirportColorFilters(p => ({...p, gray: e.target.checked}))} style={{ accentColor: '#64748b', transform: 'scale(0.9)' }} />
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span>
