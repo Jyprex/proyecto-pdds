@@ -33,9 +33,10 @@ const RoleSelection = () => {
         
         // Hardcoded example profiles
         const predefinedProfiles = {
-            'LIM-001': 'SPIM',
-            'AMS-001': 'EHAM',
-            'BOG-001': 'SKBO'
+            'LIM-001': 'SPIM', // Lima
+            'BUE-001': 'SABE', // Buenos Aires
+            'CPH-001': 'EKCH', // Copenhague
+            'DEL-001': 'VIDP'  // Delhi
         };
 
         if (predefinedProfiles[code]) {
@@ -141,7 +142,7 @@ const RoleSelection = () => {
                             <form onSubmit={handleLoginRegistrador} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                                 <input 
                                     type="text" 
-                                    placeholder="Ej: LIM-001 o OP-SPIM" 
+                                    placeholder="Ej: LIM-001, BUE-001, CPH-001 o DEL-001"
                                     value={registradorCode}
                                     onChange={(e) => { setRegistradorCode(e.target.value); setError(''); }}
                                     style={styles.input}
