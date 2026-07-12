@@ -136,147 +136,19 @@ export const useControlTowerController = () => {
     lastSeq: -1,
     ratio: (5 * 24 * 60) / 30 
   });
-
+  const frameRatioRef = useRef(null);
+  const lastFrameArrivalRealRef = useRef(null);
+  const lastFrameEpochRef = useRef(null);
   /** Loop de interpolación suave para el mapa y el reloj */
   useEffect(() => {
-    let raf;
-    let lastRealTime = performance.now();
-
-    const update = () => {
-      const now = performance.now();
-      const delta = now - lastRealTime;
-      lastRealTime = now;
-
-      const isStillRunning = (simState === "running");
-
-      if (isStillRunning) {
-        const buffer = snapshotBufferRef.current;
-        
-        let maxTargetTime = smoothSimTimeRef.current;
-        if (buffer.length > 0) {
-            maxTargetTime = Math.max(smoothSimTimeRef.current, buffer[buffer.length - 1].epoch);
-        }
-
-        if (smoothSimTimeRef.current > 0) {
-            const timeDiff = maxTargetTime - smoothSimTimeRef.current;
-            let nextTime = smoothSimTimeRef.current;
-            
-            if (timeDiff > 0) {
-                const totalDays = meta.totalDays > 0 ? meta.totalDays : 5;
-                const totalSimulatedMs = totalDays * 24 * 60 * 60 * 1000;
-                const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
-                let baseRatio = meta.isRealTime ? 1 : (totalSimulatedMs / Math.max(1000, targetPlaybackMs));
-
-                const idealDelayMs = baseRatio * 500; 
-                let dynamicRatio = baseRatio;
-
-                if (timeDiff > idealDelayMs * 3) {
-                    nextTime = maxTargetTime - idealDelayMs;
-                } else if (timeDiff > idealDelayMs * 1.5) {
-                    dynamicRatio = baseRatio * 1.15; 
-                } else if (timeDiff < idealDelayMs * 0.5) {
-                    dynamicRatio = baseRatio * 0.85; 
-                }
-
-                nextTime += (delta * dynamicRatio);
-            }
-            
-            if (nextTime > maxTargetTime) {
-                nextTime = maxTargetTime;
-            }
-            
-            smoothSimTimeRef.current = nextTime;
-            setSmoothSimTime(smoothSimTimeRef.current);
-        }
-
-        let appliedClock = null;
-        let appliedEpoch = null;
-        let appliedRoutes = null;
-        let appliedAirportLoads = null;
-        let appliedKpis = null;
-        let appliedPlanId = null;
-        let appliedMasterPlan = null;
-        
-        while (buffer.length > 0 && buffer[0].epoch <= smoothSimTimeRef.current) {
-          const snap = buffer.shift();
-          if (snap.clock !== undefined) appliedClock = snap.clock;
-          if (snap.epoch !== undefined) appliedEpoch = snap.epoch;
-          if (snap.routes !== undefined) appliedRoutes = snap.routes;
-          if (snap.airportLoads !== undefined) appliedAirportLoads = snap.airportLoads;
-          if (snap.kpis !== undefined) appliedKpis = snap.kpis;
-          if (snap.planId !== undefined) appliedPlanId = snap.planId;
-          if (snap.masterPlan !== undefined) appliedMasterPlan = snap.masterPlan;
-        }
-        
-        if (appliedClock !== null && appliedEpoch !== null) {
-           setClock({ simulatedTime: appliedClock, currentEpochTime: appliedEpoch });
-        }
-        if (appliedRoutes !== null) {
-           setAircraft(appliedRoutes);
-        }
-        if (appliedPlanId !== null && appliedMasterPlan !== null) {
-            setMasterPlan(prev => {
-                if (prev.planId === appliedPlanId) return prev;
-                console.info(`[Fase 4] Nuevo Plan Maestro detectado: ${appliedPlanId}. Sincronizando horizontes futuros.`);
-                return { planId: appliedPlanId, routes: appliedMasterPlan };
-            });
-        }
-        if (appliedAirportLoads !== null) {
-           setAirportLoads(appliedAirportLoads);
-        }
-        if (appliedKpis !== null) {
-           const data = appliedKpis;
-           if (data.startEpoch) {
-               setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
-           }
-           setKpis({
-                slaPercent: data.slaPercent,
-                globalOccupancy: data.globalOccupancy,
-                criticalNodes: data.criticalNodes,
-                totalBagsWaiting: data.totalBagsWaiting,
-                rescuedFlights: data.rescuedFlights,
-                comparisonResults: data.comparisonResults || null,
-                taMs: data.taMs ?? 0,
-                saMinutes: data.saMinutes ?? 10,
-            });
-           setMeta(prev => ({
-               ...prev,
-               status: data.status,
-               percent: data.percent,
-               currentDay: data.currentDay,
-               totalDays: data.totalDays,
-               isCollapseMode: data.isCollapseMode,
-               errorMessage: data.errorMessage,
-               startEpoch: data.startEpoch || prev.startEpoch
-           }));
-
-           if (data.status === 'DONE') {
-               setSimState('completed');
-               apiFetch(`/api/v1/simulation/status/${sessionId}`).then(res => {
-                   if (res.ok) {
-                       res.json().then(finalStatus => {
-                           setMeta(prev => ({ ...prev, ...finalStatus }));
-                           setFinalMasterPlan(finalStatus.finalMasterPlan || []);
-                       });
-                   }
-               });
-           } else if (data.status === 'FAILED') {
-               setSimState('idle');
-           } else if (data.status === 'RUNNING' || data.status === 'RECONSTRUCTING') {
-               setSimState(prev => prev !== 'running' ? 'running' : prev);
-           }
-        }
-      }
-      
-      if (realStartRef.current && isStillRunning) {
+    const interval = setInterval(() => {
+      setRealTimeTicker(Date.now());
+      if (realStartRef.current && simState === "running") {
         setRealElapsedSecs(Math.floor((Date.now() - realStartRef.current) / 1000));
       }
-
-      raf = requestAnimationFrame(update);
-    };
-    raf = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(raf);
-  }, [simState, sessionId, targetPlaybackMinutes, meta.totalDays]);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [simState]);
 
   const togglePanel = useCallback((panelName = "") => {
     if (!panelName) return;
@@ -312,6 +184,9 @@ export const useControlTowerController = () => {
     setAircraft([]);
     setClock({ simulatedTime: "--:--", currentEpochTime: 0 });
     setSmoothSimTime(0);
+    frameRatioRef.current = null;
+    lastFrameArrivalRealRef.current = null;
+    lastFrameEpochRef.current = null;
     smoothSimTimeRef.current = 0;
     setRealElapsedSecs(0);
     realStartRef.current = null;
@@ -341,7 +216,9 @@ export const useControlTowerController = () => {
       snapshotBufferRef.current = [];
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
-
+      frameRatioRef.current = null;
+      lastFrameArrivalRealRef.current = null;
+      lastFrameEpochRef.current = null;
       const res = await apiFetch(`/api/v1/simulation/run/${dias}?algorithm=${selectedAlgorithm}&playbackMinutes=${targetPlaybackMinutes}`, {
         method: "POST",
       });
@@ -413,7 +290,9 @@ export const useControlTowerController = () => {
       snapshotBufferRef.current = [];
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
-
+      frameRatioRef.current = null;
+      lastFrameArrivalRealRef.current = null;
+      lastFrameEpochRef.current = null;
       // startEpoch siempre al inicio del día (00:00) para que el reloj muestre la hora correcta
       const startEpoch = new Date(`${finalStartDate}T00:00:00`).getTime();
       setMeta({
@@ -724,31 +603,61 @@ export const useControlTowerController = () => {
       const pendingBySeq = new Map();
       const BUFFER_MAX_FRAMES = 240;
 
+      const applyFrame = (f) => {
+        if (f.clock !== undefined && f.epoch !== undefined) {
+          setClock({ simulatedTime: f.clock, currentEpochTime: f.epoch });
+          smoothSimTimeRef.current = f.epoch;
+          setSmoothSimTime(f.epoch);
+        }
+        if (f.routes !== undefined) setAircraft(f.routes);
+        if (f.planId !== undefined && f.masterPlan !== undefined) {
+          setMasterPlan(prev => prev.planId === f.planId ? prev : { planId: f.planId, routes: f.masterPlan });
+        }
+        if (f.airportLoads !== undefined) setAirportLoads(f.airportLoads);
+        if (f.kpis !== undefined) {
+          const data = f.kpis;
+          if (data.startEpoch) setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
+          setKpis({
+            slaPercent: data.slaPercent, globalOccupancy: data.globalOccupancy, criticalNodes: data.criticalNodes,
+            totalBagsWaiting: data.totalBagsWaiting, rescuedFlights: data.rescuedFlights,
+            comparisonResults: data.comparisonResults || null, taMs: data.taMs ?? 0, saMinutes: data.saMinutes ?? 10,
+          });
+          setMeta(prev => ({
+            ...prev, status: data.status, percent: data.percent, currentDay: data.currentDay,
+            totalDays: data.totalDays, isCollapseMode: data.isCollapseMode, errorMessage: data.errorMessage,
+            startEpoch: data.startEpoch || prev.startEpoch,
+          }));
+
+          if (data.status === 'DONE') {
+            setSimState('completed');
+            apiFetch(`/api/v1/simulation/status/${sessionId}`).then(res => {
+              if (res.ok) res.json().then(finalStatus => {
+                setMeta(prev => ({ ...prev, ...finalStatus }));
+                setFinalMasterPlan(finalStatus.finalMasterPlan || []);
+              });
+            });
+          } else if (data.status === 'FAILED') {
+            setSimState('idle');
+          } else if (data.status === 'RUNNING' || data.status === 'RECONSTRUCTING') {
+            setSimState(prev => prev !== 'running' ? 'running' : prev);
+          }
+        }
+      };
+
       const pushCompleteFrame = (seq) => {
         const f = pendingBySeq.get(seq);
         if (!f) return;
         if (f.clock === undefined || f.routes === undefined || f.kpis === undefined) return;
-
-        snapshotBufferRef.current.push(f);
-        snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
-        if (snapshotBufferRef.current.length > BUFFER_MAX_FRAMES) {
-          snapshotBufferRef.current.splice(0, snapshotBufferRef.current.length - BUFFER_MAX_FRAMES);
-        }
         pendingBySeq.delete(seq);
-
-        if (smoothSimTimeRef.current === 0 && f.epoch) {
-          smoothSimTimeRef.current = f.epoch;
-          setSmoothSimTime(f.epoch);
-        }
+        applyFrame(f);
       };
-
       const upsertBySeq = (seq, type, data) => {
         const epoch = data?.currentEpochTime;
         if (!epoch) return;
         if (epoch < maxEpochReceived - 60000) return;
         if (epoch > maxEpochReceived) maxEpochReceived = epoch;
 
-let f = pendingBySeq.get(seq);
+        let f = pendingBySeq.get(seq);
         if (!f) {
           f = { seq, epoch };
           pendingBySeq.set(seq, f);

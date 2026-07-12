@@ -60,24 +60,6 @@ public class SimulationProgressHolder {
     @Data
     public static class SimulationSessionState {
 
-        /** Cola acotada de frames pendientes de mostrar (Productor-Consumidor). Null si el modo no la usa (isRealTime=true). */
-        private java.util.concurrent.BlockingQueue<WsFrame> frameQueue;
-
-        /** ms reales que debe durar 1 frame (1 minuto simulado) en pantalla, según el ratio configurado. */
-        private long msPerFrame = 500L;
-
-        /** Próximo instante real (epoch ms) en que el consumidor debe extraer el siguiente frame. */
-        private volatile long nextFrameDueAtMs = 0L;
-
-        /** true cuando el productor terminó de generar todos los días (aún puede haber frames por consumir). */
-        private volatile boolean producerFinished = false;
-
-        public void initFrameQueue(int capacity, long msPerFrame) {
-            this.frameQueue = new java.util.concurrent.LinkedBlockingQueue<>(capacity);
-            this.msPerFrame = msPerFrame;
-            this.nextFrameDueAtMs = System.currentTimeMillis();
-        }
-
         private String sessionId;
         private Status status = Status.RUNNING;
         private int speedFactor = 1;
@@ -181,6 +163,10 @@ public class SimulationProgressHolder {
 
         /** Vuelos cuya cancelación se difirió al día siguiente por la regla de 1h. */
         private final Set<Long> pendingNextDayCancellations = ConcurrentHashMap.newKeySet();
+
+        /** Snapshot del plan del bloque ACTUAL (se sobreescribe cada bloque, no solo al día).
+         *  Fuente de datos para /airport-plan/{sessionId}/{icao}. */
+        private volatile List<Map<String, Object>> currentMasterPlanSnapshot = new ArrayList<>();
     }
 
     private final ConcurrentHashMap<String, SimulationSessionState> sessions =

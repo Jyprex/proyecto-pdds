@@ -20,6 +20,8 @@ public class ShipmentState {
 
     private String vueloInstanceActual;
 
+    private ShipmentStatus pendingEstado;
+
     private long lastUpdateTime;
 
     public ShipmentState(String bagId) {

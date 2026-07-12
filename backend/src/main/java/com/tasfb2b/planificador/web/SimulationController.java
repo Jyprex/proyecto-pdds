@@ -65,11 +65,7 @@ public class SimulationController {
 
         //Limpiamos caché al inicio así limpiamos los envíos de la BD de otros escenarios
         envioRepository.deleteAllEnvios();
-        //Prueba
-        if (!isRealTime){
-            saMinutes=60;
-            planningHorizon=480;
-        }
+
         int totalDays = (dias != null && dias > 0) ? dias : 5;
         String sessionId = UUID.randomUUID().toString();
 
@@ -601,6 +597,41 @@ public class SimulationController {
 
         sb.append("\n---\n> Reporte detallado generado dinámicamente por **TASF-B2B Control Tower**.");
         return sb.toString();
+    }
+
+    @GetMapping("/airport-plan/{sessionId}/{icao}")
+    public ResponseEntity<Map<String, Object>> getAirportPlan(
+            @PathVariable String sessionId, @PathVariable String icao) {
+
+        SimulationProgressHolder.SimulationSessionState session = progressHolder.get(sessionId);
+        if (session == null) return ResponseEntity.notFound().build();
+
+        String icaoUpper = icao.toUpperCase();
+        List<Map<String, Object>> plan = session.getCurrentMasterPlanSnapshot();
+        if (plan == null) plan = List.of();
+
+        List<Map<String, Object>> departing = plan.stream()
+                .filter(f -> icaoUpper.equals(f.get("from")))
+                .sorted(java.util.Comparator.comparingLong(f -> (Long) f.get("departureTime")))
+                .collect(java.util.stream.Collectors.toList());
+
+        List<Map<String, Object>> arriving = plan.stream()
+                .filter(f -> icaoUpper.equals(f.get("to")))
+                .sorted(java.util.Comparator.comparingLong(f -> (Long) f.get("arrivalTime")))
+                .collect(java.util.stream.Collectors.toList());
+
+        int totalBagsDeparting = departing.stream().mapToInt(f -> (Integer) f.get("totalBags")).sum();
+        int totalBagsArriving = arriving.stream().mapToInt(f -> (Integer) f.get("totalBags")).sum();
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("icao", icaoUpper);
+        result.put("departingFlights", departing);
+        result.put("arrivingFlights", arriving);
+        result.put("totalBagsDeparting", totalBagsDeparting);
+        result.put("totalBagsArriving", totalBagsArriving);
+        result.put("snapshotAsOf", session.getCurrentEpochTime());
+
+        return ResponseEntity.ok(result);
     }
 
 }

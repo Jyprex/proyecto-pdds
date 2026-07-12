@@ -43,10 +43,11 @@ public class SimulationWsPublisher {
     private final ConcurrentHashMap<String, Set<String>> prevIdsBySession = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, List<String>> trackedBySession = new ConcurrentHashMap<>();
 
+    private final ConcurrentHashMap<String, Long> lastPushAtBySession = new ConcurrentHashMap<>();
+
     @Scheduled(fixedDelayString = "${tasf.sim.stream.intervalMs:500}")
     public void publishAllSessions() {
         long now = System.currentTimeMillis();
-
         for (String sessionId : progressHolder.getAllSessionIds()) {
             SimulationSessionState session = progressHolder.get(sessionId);
             if (session == null) continue;
@@ -55,32 +56,14 @@ public class SimulationWsPublisher {
             boolean isRunning = status == SimulationProgressHolder.Status.RUNNING
                     || status == SimulationProgressHolder.Status.RECONSTRUCTING;
 
-            java.util.concurrent.BlockingQueue<SimulationProgressHolder.WsFrame> queue = session.getFrameQueue();
-
-            if (isRunning && queue != null) {
-                // ── Consumidor: extrae frames al ritmo exacto de session.msPerFrame,
-                // sin importar cuán rápido/lento vaya el productor. Un tick global
-                // de 500ms puede liberar 1 frame (5d, 500ms/frame) o varios (colapso,
-                // ~42ms/frame) — cada uno se publica y aplica a session en orden.
-                while (now >= session.getNextFrameDueAtMs()) {
-                    SimulationProgressHolder.WsFrame frame = queue.poll();
-                    if (frame == null) break; // el productor no ha generado suficiente aún
-
-                    applyFrameToSession(session, frame);
-                    pushImmediate(sessionId, session);
-                    session.setNextFrameDueAtMs(session.getNextFrameDueAtMs() + session.getMsPerFrame());
-                }
-
-                if (session.isProducerFinished() && queue.isEmpty()) {
-                    progressHolder.markDone(sessionId);
-                    pushImmediate(sessionId, session);
-                }
-                continue;
-            }
-
             if (isRunning) {
-                // isRealTime: sin cola, comportamiento original
-                pushImmediate(sessionId, session);
+                // El hilo de simulación YA publica cada tick (~500ms) desde dentro
+                // de replayBlock. Este scheduler ahora es solo red de seguridad
+                // ante estancamientos (ALNS largo, catch-up, bloque inicial síncrono).
+                long lastPush = lastPushAtBySession.getOrDefault(sessionId, 0L);
+                if (now - lastPush >= 1500) {
+                    pushImmediate(sessionId, session);
+                }
                 continue;
             }
 
@@ -90,6 +73,7 @@ public class SimulationWsPublisher {
                 lastEventIdxBySession.remove(sessionId);
                 prevIdsBySession.remove(sessionId);
                 trackedBySession.remove(sessionId);
+                lastPushAtBySession.remove(sessionId);
             }
         }
     }
@@ -108,6 +92,7 @@ public class SimulationWsPublisher {
 
     /** Publicación inmediata bajo demanda (Direct Push) */
     public void pushImmediate(String sessionId, SimulationSessionState session) {
+        lastPushAtBySession.put(sessionId, System.currentTimeMillis());
         long tStart = System.currentTimeMillis();
         long seq = seqBySession.merge(sessionId, 1L, Long::sum);
         int safeLimit = sanitizeLimit(routeLimit);
@@ -133,7 +118,7 @@ public class SimulationWsPublisher {
 
         long tEnd = System.currentTimeMillis();
         int routesCount = (map.getActiveRoutes() != null) ? map.getActiveRoutes().size() : 0;
-        
+
         // Log de monitoreo interno (opcional)
         // System.out.printf("[PUBLISH] snapshotTime: %s | publishDelayMs: %d | Routes: %d%n", map.getSimulatedTime(), (tEnd - tStart), routesCount);
     }

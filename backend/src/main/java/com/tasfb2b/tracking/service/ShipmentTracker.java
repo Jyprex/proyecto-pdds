@@ -4,7 +4,6 @@ import com.tasfb2b.tracking.domain.ShipmentState;
 import com.tasfb2b.tracking.domain.ShipmentStatus;
 import com.tasfb2b.planificador.domain.Event;
 import com.tasfb2b.planificador.domain.Route;
-import com.tasfb2b.planificador.simulation.EventEngine;
 import com.tasfb2b.vuelo.domain.Vuelo;
 
 import java.util.*;
@@ -17,11 +16,8 @@ public class ShipmentTracker {
     private final Map<String, Set<String>> byAirport = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> byShipmentCode = new ConcurrentHashMap<>();
 
-    /** Cadena planeada de tramos por bagId — registrada una vez al hacer commit. */
-    public record HopInfo(
-            String origenIcao, String destinoIcao, Long vueloId,
-            String flightInstanceKey, long departureTime, long arrivalTime
-    ) {}
+    public record HopInfo(String origenIcao, String destinoIcao, Long vueloId,
+                          String flightInstanceKey, long departureTime, long arrivalTime) {}
 
     private final Map<String, List<HopInfo>> hopsByBag = new ConcurrentHashMap<>();
 
@@ -36,50 +32,36 @@ public class ShipmentTracker {
     public ShipmentState getBag(String bagId) { return bags.get(bagId); }
 
     public List<ShipmentState> getByShipment(String codigoPedido) {
-        return byShipmentCode.getOrDefault(codigoPedido, Set.of())
-                .stream().map(bags::get).filter(Objects::nonNull).toList();
+        return byShipmentCode.getOrDefault(codigoPedido, Set.of()).stream().map(bags::get).filter(Objects::nonNull).toList();
     }
 
     public Collection<ShipmentState> getAll() { return bags.values(); }
 
     public List<ShipmentState> getByFlightInstance(String instanceKey) {
-        return byFlightInstance.getOrDefault(instanceKey, Set.of())
-                .stream().map(bags::get).filter(Objects::nonNull).toList();
+        return byFlightInstance.getOrDefault(instanceKey, Set.of()).stream().map(bags::get).filter(Objects::nonNull).toList();
     }
 
     public List<ShipmentState> getByAirport(String icao) {
-        return byAirport.getOrDefault(icao, Set.of())
-                .stream().map(bags::get).filter(Objects::nonNull).toList();
+        return byAirport.getOrDefault(icao, Set.of()).stream().map(bags::get).filter(Objects::nonNull).toList();
     }
 
-    /** Registra la cadena COMPLETA de tramos planeados (única fuente: route.legDepartures/legArrivals). */
     public void registerPlannedHops(List<String> bagIds, Route route) {
         if (route.getFlights() == null || route.getLegDepartures() == null) return;
-
         List<HopInfo> hops = new ArrayList<>();
         for (int i = 0; i < route.getFlights().size(); i++) {
             Vuelo v = route.getFlights().get(i);
             long dep = route.getLegDepartures().get(i);
             long arr = route.getLegArrivals().get(i);
-            hops.add(new HopInfo(
-                    v.getOrigen().getIcaoCode(), v.getDestino().getIcaoCode(),
-                    v.getId(), v.getId() + "-" + dep, dep, arr
-            ));
+            hops.add(new HopInfo(v.getOrigen().getIcaoCode(), v.getDestino().getIcaoCode(), v.getId(), v.getId() + "-" + dep, dep, arr));
         }
-        for (String bagId : bagIds) {
-            hopsByBag.put(bagId, hops);
-        }
+        for (String bagId : bagIds) hopsByBag.put(bagId, hops);
     }
 
-    public List<HopInfo> getHops(String bagId) {
-        return hopsByBag.getOrDefault(bagId, List.of());
-    }
+    public List<HopInfo> getHops(String bagId) { return hopsByBag.getOrDefault(bagId, List.of()); }
 
     public Map<String, List<HopInfo>> getShipmentHops(String codigoPedido) {
         Map<String, List<HopInfo>> result = new LinkedHashMap<>();
-        for (String bagId : byShipmentCode.getOrDefault(codigoPedido, Set.of())) {
-            result.put(bagId, getHops(bagId));
-        }
+        for (String bagId : byShipmentCode.getOrDefault(codigoPedido, Set.of())) result.put(bagId, getHops(bagId));
         return result;
     }
 
@@ -98,12 +80,10 @@ public class ShipmentTracker {
         for (String bagId : event.getBagIds()) {
             ShipmentState s = getOrCreate(bagId);
             removeFromAirportIndex(bagId, s.getAeropuertoActual());
-
             s.setEstado(ShipmentStatus.EN_VUELO);
             s.setVueloActual(event.getVuelo().getId());
             s.setVueloInstanceActual(instanceKey);
             s.setAeropuertoActual(null);
-
             byFlightInstance.computeIfAbsent(instanceKey, k -> ConcurrentHashMap.newKeySet()).add(bagId);
         }
     }
@@ -111,25 +91,17 @@ public class ShipmentTracker {
     private void handleArrival(Event event) {
         String instanceKey = event.getFlightInstanceKey();
         String icao = event.getVuelo().getDestino().getIcaoCode();
-
-        // ── Punto 3: distingue escala intermedia vs destino final ──
-        ShipmentStatus nuevoEstado = event.isFinalLeg()
-                ? ShipmentStatus.EN_ALMACEN_DESTINO
-                : ShipmentStatus.EN_ALMACEN_INTERMEDIO;
+        ShipmentStatus nuevoEstado = event.isFinalLeg() ? ShipmentStatus.EN_ALMACEN_DESTINO : ShipmentStatus.EN_ALMACEN_INTERMEDIO;
 
         for (String bagId : event.getBagIds()) {
             ShipmentState s = getOrCreate(bagId);
-
             s.setEstado(nuevoEstado);
             s.setAeropuertoActual(icao);
             s.setVueloActual(null);
             s.setVueloInstanceActual(null);
 
             Set<String> set = byFlightInstance.get(instanceKey);
-            if (set != null) {
-                set.remove(bagId);
-                if (set.isEmpty()) byFlightInstance.remove(instanceKey);
-            }
+            if (set != null) { set.remove(bagId); if (set.isEmpty()) byFlightInstance.remove(instanceKey); }
 
             byAirport.computeIfAbsent(icao, k -> ConcurrentHashMap.newKeySet()).add(bagId);
         }
@@ -139,7 +111,6 @@ public class ShipmentTracker {
         for (String bagId : event.getBagIds()) {
             ShipmentState s = getOrCreate(bagId);
             removeFromAirportIndex(bagId, s.getAeropuertoActual());
-
             s.setEstado(ShipmentStatus.ENTREGADO);
             s.setAeropuertoActual(null);
             s.setVueloActual(null);
@@ -149,24 +120,18 @@ public class ShipmentTracker {
 
     private void handleLotArrival(Event event) {
         String icao = event.getLot().getOrigenIcao();
-
         for (String bagId : event.getBagIds()) {
             ShipmentState s = getOrCreate(bagId);
-
             s.setEstado(ShipmentStatus.EN_ALMACEN_ORIGEN);
             s.setAeropuertoActual(icao);
 
             String oldInstanceKey = s.getVueloInstanceActual();
             if (oldInstanceKey != null) {
                 Set<String> set = byFlightInstance.get(oldInstanceKey);
-                if (set != null) {
-                    set.remove(bagId);
-                    if (set.isEmpty()) byFlightInstance.remove(oldInstanceKey);
-                }
+                if (set != null) { set.remove(bagId); if (set.isEmpty()) byFlightInstance.remove(oldInstanceKey); }
             }
             s.setVueloActual(null);
             s.setVueloInstanceActual(null);
-
             byAirport.computeIfAbsent(icao, k -> ConcurrentHashMap.newKeySet()).add(bagId);
         }
     }
@@ -175,37 +140,5 @@ public class ShipmentTracker {
         if (icao == null) return;
         Set<String> set = byAirport.get(icao);
         if (set != null) set.remove(bagId);
-    }
-
-    public record AuditViolation(String bagId, String reason) {}
-
-    /** Verifica que cada maleta esté indexada en exactamente el lugar que su estado indica. */
-    public List<AuditViolation> auditConsistency() {
-        List<AuditViolation> violations = new ArrayList<>();
-
-        for (ShipmentState s : bags.values()) {
-            String bagId = s.getBagId();
-            boolean inFlightIndex = s.getVueloInstanceActual() != null
-                    && byFlightInstance.getOrDefault(s.getVueloInstanceActual(), Set.of()).contains(bagId);
-            boolean inAirportIndex = s.getAeropuertoActual() != null
-                    && byAirport.getOrDefault(s.getAeropuertoActual(), Set.of()).contains(bagId);
-
-            switch (s.getEstado()) {
-                case EN_VUELO -> {
-                    if (!inFlightIndex) violations.add(new AuditViolation(bagId, "EN_VUELO sin índice en byFlightInstance"));
-                    if (inAirportIndex) violations.add(new AuditViolation(bagId, "EN_VUELO pero sigue en byAirport"));
-                }
-                case EN_ALMACEN_ORIGEN, EN_ALMACEN_INTERMEDIO, EN_ALMACEN_DESTINO -> {
-                    if (!inAirportIndex) violations.add(new AuditViolation(bagId, s.getEstado() + " sin índice en byAirport"));
-                    if (inFlightIndex) violations.add(new AuditViolation(bagId, s.getEstado() + " pero sigue en byFlightInstance"));
-                }
-                case ENTREGADO -> {
-                    if (inFlightIndex) violations.add(new AuditViolation(bagId, "ENTREGADO pero sigue en byFlightInstance"));
-                    if (inAirportIndex) violations.add(new AuditViolation(bagId, "ENTREGADO pero sigue en byAirport"));
-                }
-                default -> {}
-            }
-        }
-        return violations;
     }
 }
