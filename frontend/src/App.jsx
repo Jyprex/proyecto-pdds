@@ -210,6 +210,8 @@ const App = () => {
         onTabChange={handleTabChange}
         systemClock={summary.systemClock}
         realClock={summary.realClock}
+        simulatedElapsed={summary.simulatedElapsed}
+        realTimeElapsed={summary.realTimeElapsed}
       />
 
 
@@ -241,13 +243,13 @@ const App = () => {
               onClose={() => handleToggleWindow("telemetry")}
               initialPosition={{ x: 20, y: 100 }}
               defaultSize={{
-                  width: 340,
-                  height: 400
+                  width: 280,
+                  height: 260
               }}
               isActive={openWindowsQueue[openWindowsQueue.length-1] === "telemetry"}
               onFocus={() => handleFocusWindow("telemetry")}
           >
-          <TelemetryPanel isVisible={true} summary={summary} elapsedOperationTime={elapsedOperationTime} kpis={formattedKpis} onHide={() => handleToggleWindow("telemetry")} />
+          <TelemetryPanel isVisible={true} kpis={formattedKpis} onHide={() => handleToggleWindow("telemetry")} />
         </DraggableWindow>
       )}
       {isWindowOpen("occupancy") && (

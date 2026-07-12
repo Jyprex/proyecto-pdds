@@ -46,6 +46,7 @@ export const createRoutesLayers = ({
     const isGreenPlane = colorRgb[0] === 16 && colorRgb[1] === 185 && colorRgb[2] === 129; 
 
     const isSelected = selectedAircraftId === plane.id;
+    const pathWidth = isSelected ? 3 : 1;
     const isAircraftSelected = selectedAircraftId != null;
     const isTrackingActive = trackedRoute?.hops?.length > 0;
     const isDimmed = isAircraftSelected || isTrackingActive;
@@ -60,13 +61,15 @@ export const createRoutesLayers = ({
     if (progress > 0.02) {
       trailLines.push({
         path: getStraightPath(from.coordinates, position),
-        color: trailColor
+        color: trailColor,
+        width: pathWidth
       });
     }
 
     remainingLines.push({
       path: getStraightPath(position, to.coordinates),
-      color: remainingColor
+      color: remainingColor,
+      width: pathWidth
     });
   });
 
@@ -76,7 +79,7 @@ export const createRoutesLayers = ({
       data: trailLines,
       getPath: d => d.path,
       getColor: d => d.color,
-      getWidth: 1,
+      getWidth: d => d.width,
       widthUnits: 'pixels',
       jointRounded: true,
       capRounded: true
@@ -89,11 +92,30 @@ export const createRoutesLayers = ({
       data: remainingLines,
       getPath: d => d.path,
       getColor: d => d.color,
-      getWidth: 1,
+      getWidth: d => d.width,
       widthUnits: 'pixels',
       jointRounded: true,
       capRounded: true
     }));
+  }
+
+  // Selected aircraft full route overlay
+  const selectedPlane = selectedAircraftId ? activeAircraft.find(p => p.id === selectedAircraftId) : null
+  if (selectedPlane) {
+    const selFrom = airportByIcao[selectedPlane.from] || AIRPORT_BY_ICAO[selectedPlane.from]
+    const selTo = airportByIcao[selectedPlane.to] || AIRPORT_BY_ICAO[selectedPlane.to]
+    if (selFrom && selTo) {
+      layers.push(new PathLayer({
+        id: 'selected-aircraft-full-route',
+        data: [{ path: getStraightPath(selFrom.coordinates, selTo.coordinates) }],
+        getPath: d => d.path,
+        getColor: [129, 140, 248, 180],
+        getWidth: 3,
+        widthUnits: 'pixels',
+        jointRounded: true,
+        capRounded: true
+      }))
+    }
   }
 
   // 2. Selected Route (from panel)
