@@ -68,6 +68,30 @@ function useBagTracking(sessionId, kind, id) {
   return { bags, loading, error };
 }
 
+function useAirportPlan(sessionId, icao) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchPlan = useCallback(() => {
+    if (!sessionId || !icao) return;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/v1/simulation/airport-plan/${sessionId}/${icao}`)
+        .then(res => { if (!res.ok) throw new Error('No se pudo cargar la planificación'); return res.json(); })
+        .then(setData)
+        .catch(err => setError(err))
+        .finally(() => setLoading(false));
+  }, [sessionId, icao]);
+
+  return { data, loading, error, fetchPlan };
+}
+
+const fmtTimeLong = (ts) => {
+  if (!ts) return '--:--';
+  return new Date(ts).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+};
+
 // ── Resumen agregado (siempre liviano, sin importar cuántas maletas haya) ──
 function BagTrackingSummary({ bags, loading, error, onShowDetail }) {
   if (loading) {
@@ -166,6 +190,42 @@ function BagDetailModal({ title, bags, onClose }) {
               </List>
           ) : (
               <div style={{ fontSize: '11px', color: '#64748b', padding: '8px 0' }}>Sin resultados</div>
+          )}
+        </div>
+      </div>
+  );
+}
+
+function AirportPlanModal({ icao, data, loading, error, onClose }) {
+  return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
+        <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '16px', width: '440px', maxHeight: '75vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#e2e8f0' }}>📋 Planificación — {icao}</span>
+            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          </div>
+
+          {loading && <div style={{ fontSize: '11px', color: '#64748b', padding: '10px 0' }}>Cargando plan...</div>}
+          {error && <div style={{ fontSize: '11px', color: '#ef4444', padding: '10px 0' }}>Error cargando plan</div>}
+
+          {data && (
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '10px' }}>
+                  📥 Entrantes: <strong style={{ color: '#e2e8f0' }}>{data.totalBagsArriving}</strong> maletas ·
+                  📤 Salientes: <strong style={{ color: '#e2e8f0' }}>{data.totalBagsDeparting}</strong> maletas
+                  <br /><span style={{ fontSize: '9px', color: '#475569' }}>Click en un vuelo para ver sus maletas específicas (código origen_pedido-N)</span>
+                </div>
+
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#f59e0b', marginBottom: '6px' }}>📤 SALIDAS ({data.departingFlights.length})</div>
+                {data.departingFlights.length === 0
+                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic', marginBottom: '12px' }}>Sin salidas en este bloque</div>
+                    : <div style={{ marginBottom: '12px' }}>{data.departingFlights.map((f, i) => <AirportPlanFlightRow key={i} flight={f} direction="departure" />)}</div>}
+
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#3b82f6', marginBottom: '6px' }}>📥 LLEGADAS ({data.arrivingFlights.length})</div>
+                {data.arrivingFlights.length === 0
+                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic' }}>Sin llegadas en este bloque</div>
+                    : data.arrivingFlights.map((f, i) => <AirportPlanFlightRow key={i} flight={f} direction="arrival" />)}
+              </div>
           )}
         </div>
       </div>
@@ -358,7 +418,7 @@ const WarehouseRow = React.memo(function WarehouseRow({ index, style, data }) {
       && prev.data.focusedEntity?.id === next.data.focusedEntity?.id;
 });
 
-function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelectFlight, bagSummary }) {
+function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelectFlight, bagSummary, onShowPlan }) {
   if (!warehouse) return null;
 
   return (
@@ -378,8 +438,14 @@ function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelect
 
       <div style={{ fontSize: '12px', color: '#e2e8f0', marginBottom: '8px', fontWeight: 'bold' }}>
         🏭 {warehouse.icao} — {warehouse.city}
-      </div>
 
+      </div>
+      <button
+          onClick={onShowPlan}
+          style={{ marginBottom: '10px', padding: '5px 10px', fontSize: '10px', fontWeight: 'bold', border: '1px solid rgba(96,165,250,0.4)', borderRadius: '4px', background: 'rgba(96,165,250,0.1)', color: '#60a5fa', cursor: 'pointer' }}
+      >
+        📋 Ver planificación completa
+      </button>
       <div style={{ fontSize: '11px', color: '#cbd5e1', marginBottom: '8px', fontWeight: 'bold' }}>
         📥 VUELOS ENTRANTES ({incoming?.length || 0})
       </div>
@@ -423,6 +489,46 @@ function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelect
   );
 }
 
+function AirportPlanFlightRow({ flight, direction }) {
+  const [showBags, setShowBags] = useState(false);
+  const bagIds = flight.bagIds || [];
+  const isDeparture = direction === 'departure';
+
+  return (
+      <div style={{ borderBottom: '1px dashed rgba(255,255,255,0.05)', padding: '4px 0' }}>
+        <div
+            onClick={() => bagIds.length > 0 && setShowBags(v => !v)}
+            style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ca3af', cursor: bagIds.length > 0 ? 'pointer' : 'default' }}
+        >
+        <span>
+          ✈ #{flight.vueloId} {isDeparture ? `→ ${flight.to}` : `← ${flight.from}`}
+          {bagIds.length > 0 && <span style={{ marginLeft: '4px', color: '#60a5fa' }}>{showBags ? '▴' : '▾'}</span>}
+        </span>
+          <span>{fmtTimeLong(isDeparture ? flight.departureTime : flight.arrivalTime)} · {flight.totalBags} maletas</span>
+        </div>
+        {showBags && bagIds.length > 0 && (
+            <div style={{
+              marginTop: '4px', marginBottom: '2px', padding: '6px',
+              background: 'rgba(0,0,0,0.25)', borderRadius: '4px',
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '3px',
+              maxHeight: '140px', overflowY: 'auto',
+            }}>
+              {bagIds.map(bagId => (
+                  // bagId ya viene como "AEROPUERTO_CODPEDIDO-N" desde el backend
+                  <span key={bagId} style={{
+                    fontSize: '9px', fontFamily: 'monospace', color: '#94a3b8',
+                    padding: '2px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: '3px',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }} title={bagId}>
+              {bagId}
+            </span>
+              ))}
+            </div>
+        )}
+      </div>
+  );
+}
+
 const getLevelName = (percent) => {
   if (percent >= 90) return 'red';
   if (percent >= 70) return 'amber';
@@ -458,6 +564,14 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
 
   // ── Modal de detalle de maletas (compartido entre vuelo/almacén) ──────
   const [bagDetailTarget, setBagDetailTarget] = useState(null); // { title, bags } | null
+
+  const [airportPlanTarget, setAirportPlanTarget] = useState(null);
+  const { data: airportPlanData, loading: airportPlanLoading, error: airportPlanError, fetchPlan: fetchAirportPlan } =
+      useAirportPlan(sessionId, airportPlanTarget);
+
+  useEffect(() => {
+    if (airportPlanTarget) fetchAirportPlan();
+  }, [airportPlanTarget]);
 
   const {
     focusedEntity,
@@ -852,6 +966,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                           outgoing={getWarehouseFlights(expandedWh).outgoing}
                           onClose={() => { setExpandedWh(null); clearFocusedEntity(); dispatchMapCommand('resetView'); }}
                           onSelectFlight={handleSelectUT}
+                          onShowPlan={() => setAirportPlanTarget(selectedWarehouseDetail.icao)}
                           bagSummary={
                             <BagTrackingSummary
                                 bags={warehouseBags}
@@ -967,6 +1082,15 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                 title={bagDetailTarget.title}
                 bags={bagDetailTarget.bags}
                 onClose={() => setBagDetailTarget(null)}
+            />
+        )}
+        {airportPlanTarget && (
+            <AirportPlanModal
+                icao={airportPlanTarget}
+                data={airportPlanData}
+                loading={airportPlanLoading}
+                error={airportPlanError}
+                onClose={() => setAirportPlanTarget(null)}
             />
         )}
       </aside>

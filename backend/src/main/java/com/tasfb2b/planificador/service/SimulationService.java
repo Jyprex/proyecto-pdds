@@ -181,6 +181,7 @@ public class SimulationService {
                 if (startTimeStr != null && startTimeStr.contains(":")) {
                         targetEpoch = startTime + (initHour * 3600_000L) + (initMin * 60_000L);
                 }
+                Map<String, ActiveFlight> activeOverlay = new HashMap<>();
                 if (targetEpoch > ctx.currentGlobalSimTime()) {
                         long catchUpMinutes = (targetEpoch - ctx.currentGlobalSimTime()) / 60_000L;
                         long tCatchUpStart = System.currentTimeMillis();
@@ -189,7 +190,7 @@ public class SimulationService {
                         log.info("[CATCH-UP] {} minutos simulados calculados en {} ms reales",
                                 catchUpMinutes, System.currentTimeMillis() - tCatchUpStart);
                         publishMasterPlanSnapshot(session, catchUpBlock);
-                        replayBlock(catchUpBlock, session, shipmentTracker, airportMap, todosLosVuelos, algorithm, dias, 0L);
+                        replayBlock(catchUpBlock, session, shipmentTracker, airportMap, todosLosVuelos, algorithm, dias, 0L, activeOverlay);
                         history.addAll(catchUpBlock.closedDayReports());
                         if (catchUpBlock.collapsed()) {
                                 finalizeCollapse(session, ctx, catchUpBlock);
@@ -210,7 +211,7 @@ public class SimulationService {
                                         computeBlock(ctx, session, shipmentTracker,siguienteInicio, scMinutes, false), blockComputeExecutor);
                         }
 
-                        replayBlock(current, session, shipmentTracker, airportMap, todosLosVuelos, algorithm, dias, saRealMs);
+                        replayBlock(current, session, shipmentTracker, airportMap, todosLosVuelos, algorithm, dias, saRealMs, activeOverlay);
                         history.addAll(current.closedDayReports());
 
                         if (current.collapsed()) {
@@ -566,7 +567,8 @@ public class SimulationService {
 
         private void replayBlock(SimBlock block, SimulationProgressHolder.SimulationSessionState session,
                                  ShipmentTracker tracker, Map<String, Aeropuerto> airportMap,
-                                 List<Vuelo> todosLosVuelos, String algorithm, int dias, long paceRealMs) {
+                                 List<Vuelo> todosLosVuelos, String algorithm, int dias, long paceRealMs,
+                                 Map<String, ActiveFlight> activeOverlay) {
 
                 session.setCurrentSaMinutes(block.lastCurrentSa());
                 session.setLastTaMs(block.lastTaMs());
@@ -591,7 +593,6 @@ public class SimulationService {
                 }
                 long sleepPerTick = ticks == 0 ? 0 : paceRealMs / ticks;
 
-                Map<String, ActiveFlight> activeOverlay = new HashMap<>();
                 int idx = 0;
                 long startEpoch = session.getStartEpoch();
 
