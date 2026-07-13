@@ -656,7 +656,15 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
 
     if (utSearch) {
       const q = utSearch.toLowerCase();
-      result = result.filter(ut => ut.id?.toLowerCase().includes(q));
+      result = result.filter(ut => {
+        if (!ut.id) return false;
+
+        // Extraemos ESTRICTAMENTE el ID que el usuario ve en la tarjeta (ej: "506")
+        const visibleId = ut.id.toString().replace("vuelo-", "").split("-")[0].toLowerCase();
+
+        // Buscamos solo dentro de ese ID visible, ignorando el resto del texto del backend
+        return visibleId.startsWith(q);
+      });
     }
     if (utSearchOrigin) {
       const q = utSearchOrigin.toLowerCase();
