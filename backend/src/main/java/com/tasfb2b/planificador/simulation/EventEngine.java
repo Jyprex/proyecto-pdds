@@ -86,10 +86,27 @@ public class EventEngine {
         List<Event> events = new ArrayList<>();
         if (bagIdsSubset.isEmpty()) return events;
 
-        events.add(new Event(
-                lot.getReadyTime(), EventType.LOT_ARRIVAL, lot, null,
-                bagIdsSubset.size(), bagIdsSubset, null, false
-        ));
+        Map<String, Long> bagReadyTimes = lot.getBagReadyTimes();
+
+        // Agrupar bagIds por su readyTime individual real
+        Map<Long, List<String>> byReadyTime = new TreeMap<>();
+        for (String bagId : bagIdsSubset) {
+            Long rt = (bagReadyTimes != null) ? bagReadyTimes.get(bagId) : null;
+            long effectiveReadyTime = (rt != null) ? rt : lot.getReadyTime();
+            byReadyTime.computeIfAbsent(effectiveReadyTime, k -> new ArrayList<>()).add(bagId);
+        }
+
+        // Un evento LOT_ARRIVAL por cada grupo de maletas que comparten
+        // exactamente el mismo readyTime
+        for (Map.Entry<Long, List<String>> entry : byReadyTime.entrySet()) {
+            long readyTime = entry.getKey();
+            List<String> bags = entry.getValue();
+            events.add(new Event(
+                    readyTime, EventType.LOT_ARRIVAL, lot, null,
+                    bags.size(), bags, null, false
+            ));
+        }
+
         return events;
     }
 

@@ -167,6 +167,8 @@ public class SimulationProgressHolder {
         /** Snapshot del plan del bloque ACTUAL (se sobreescribe cada bloque, no solo al día).
          *  Fuente de datos para /airport-plan/{sessionId}/{icao}. */
         private volatile List<Map<String, Object>> currentMasterPlanSnapshot = new ArrayList<>();
+
+        private Long actualStartEpoch;
     }
 
     private final ConcurrentHashMap<String, SimulationSessionState> sessions =

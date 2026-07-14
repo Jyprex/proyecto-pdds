@@ -23,6 +23,7 @@ public class SuperLot {
     /** Códigos de envío individuales que componen este lote, con su carga real. */
     private List<String> bagIds = new ArrayList<>();
     private Map<String, Long> bagDeadlines = new HashMap<>();
+    private Map<String, Long> bagReadyTimes = new HashMap<>();
     /**
      * Constructor LEGACY — para mantener compatibilidad con todo el código existente
      * que construye SuperLot sin lista de shipments (queda vacía).
@@ -57,8 +58,10 @@ public class SuperLot {
 
     /** Copia con readyTime distinto, preservando bagIds. Útil para perturbaciones (regret). */
     public SuperLot withReadyTime(long newReadyTime) {
-        return new SuperLot(id, origenIcao, destinoIcao, totalMaletas,
-                newReadyTime, sla, intercontinental, priority, bagIds,bagDeadlines);
+        SuperLot copy = new SuperLot(id, origenIcao, destinoIcao, totalMaletas,
+                newReadyTime, sla, intercontinental, priority, bagIds, bagDeadlines);
+        copy.bagReadyTimes = this.bagReadyTimes;
+        return copy;
     }
 
     /** Códigos de envío distintos contenidos en este lote para trabajar con maletas . */

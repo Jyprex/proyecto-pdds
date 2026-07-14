@@ -76,8 +76,8 @@ public class SimulationService {
 
         // ← CAMBIO: 60 → 120. Con sa=60s y sc=120min: 7200 min (5 días) / 120 min-por-bloque
         // = 60 bloques × 60s = 3600s = 60 minutos totales, exactamente lo pedido.
-        private static final long SC_MINUTES_PERIODO = 120L;
-
+        private static final long SC_MINUTES_PERIODO = 30L;
+        private static final long SA_SECONDS_PERIODO = 15L; //para mantener 60 min
         private static final long SC_MINUTES_COLAPSO = 480L;
 
         private static final long TARGET_FRAME_INTERVAL_MS = 500L;
@@ -162,18 +162,35 @@ public class SimulationService {
                 updateProgress(session, 1, dias, 0, "Inicializando...", 100.0,
                         new SimulationState(new ArrayList<>(airportMap.values()), List.of(), initialDisplayTime, bloqueoService),
                         airportMap, List.of(), initialDisplayTime, startTime, algorithm, null, todosLosVuelos,
-                        session.isCollapseMode(), 0, null, 0L, 0);
+                        session.isCollapseMode(), 0, null, 0L, 0, Set.of());
                 wsPublisher.pushImmediate(session.getSessionId(), session);
 
                 boolean colapso = session.isCollapseMode();
-                long scMinutes = isRealTime ? SC_MINUTES_REALTIME : (colapso ? SC_MINUTES_COLAPSO : SC_MINUTES_PERIODO);
-                long saRealMs = SA_SECONDS * 1000L;
-                log.info("[DOBLE-BUFFER] isRealTime={} colapso={} sa={}s sc={} min/bloque",
-                        isRealTime, colapso, SA_SECONDS, scMinutes);
+                long scMinutes;
+                long saSecondsForBlock;
+                if (isRealTime) {
+                        scMinutes = SC_MINUTES_REALTIME;
+                        saSecondsForBlock = SA_SECONDS;
+                } else if (colapso) {
+                        scMinutes = SC_MINUTES_COLAPSO;
+                        saSecondsForBlock = SA_SECONDS;
+                } else {
+                        scMinutes = SC_MINUTES_PERIODO;
+                        saSecondsForBlock = SA_SECONDS_PERIODO;
+                }
+                long saRealMs = saSecondsForBlock * 1000L;
+                log.info("[DOBLE-BUFFER] isRealTime={} colapso={} sa={}s sc={} min/bloque (lookahead máx≈{}min)",
+                        isRealTime, colapso, saSecondsForBlock, scMinutes, scMinutes * 2);
+
+                // El % de avance y el fin real de la simulación deben medirse desde la
+                // hora EXACTA elegida por el usuario (initialDisplayTime), no desde
+                // medianoche — arrancar a las 12:00 no debe "contar" medio día gratis.
+                session.setActualStartEpoch(initialDisplayTime);
+                long targetEndEpoch = initialDisplayTime + ((long) dias * 1440L * 60_000L);
 
                 SimContext ctx = new SimContext(fechaInicio, dias, isRealTime, saMinutes, planningHorizon, dataPath,
                         new SimulationState(new ArrayList<>(airportMap.values()), todosLosVuelos, startTime, bloqueoService),
-                        todosLosVuelos, airportMap);
+                        todosLosVuelos, airportMap, targetEndEpoch);
 
                 List<SimulationDayReport> history = new ArrayList<>();
 
@@ -202,7 +219,7 @@ public class SimulationService {
                 publishMasterPlanSnapshot(session, current);
 
                 while (true) {
-                        boolean esTerminal = current.collapsed() || ctx.day >= ctx.dias;
+                        boolean esTerminal = current.collapsed() || ctx.isPastTarget();
 
                         CompletableFuture<SimBlock> futuro = null;
                         if (!esTerminal) {
@@ -218,7 +235,10 @@ public class SimulationService {
                                 finalizeCollapse(session, ctx, current);
                                 break;
                         }
-                        if (esTerminal) break;
+                        if (esTerminal) {
+                                finalizeNormalCompletion(session, ctx, current);
+                                break;
+                        }
 
                         current = futuro.join();
                         publishMasterPlanSnapshot(session, current);
@@ -236,6 +256,14 @@ public class SimulationService {
                 log.warn("[COLAPSO] {}", block.collapseReason());
         }
 
+        private void finalizeNormalCompletion(SimulationProgressHolder.SimulationSessionState session, SimContext ctx, SimBlock block) {
+                if (block.lastMasterPlanRoutes() != null && !block.lastMasterPlanRoutes().isEmpty()) {
+                        session.setFinalMasterPlan(buildFinalPlanSnapshot(block.lastMasterPlanRoutes(), ctx.dayStartEpochMs()));
+                }
+                log.info("[COMPLETADO] Simulación terminó normalmente en día {}. Plan final con {} vuelos.",
+                        block.dayAtEnd() + 1, session.getFinalMasterPlan().size());
+        }
+
         private void publishMasterPlanSnapshot(SimulationProgressHolder.SimulationSessionState session, SimBlock block) {
                 session.setCurrentMasterPlanSnapshot(buildFinalPlanSnapshot(block.lastMasterPlanRoutes(), block.startSimTime()));
         }
@@ -247,6 +275,7 @@ public class SimulationService {
                 final int saMinutes;
                 final int planningHorizon;
                 final String dataPath;
+                final long targetEndEpoch;
 
                 int day = 0;
                 int currentSimMinuteOfDay = 0;
@@ -278,7 +307,7 @@ public class SimulationService {
 
                 SimContext(LocalDate fechaInicio, int dias, boolean isRealTime, int saMinutes, int planningHorizon,
                            String dataPath, SimulationState logicalState, List<Vuelo> todosLosVuelos,
-                           Map<String, Aeropuerto> airportMap) {
+                           Map<String, Aeropuerto> airportMap, long targetEndEpoch) {
                         this.fechaInicio = fechaInicio;
                         this.dias = dias;
                         this.isRealTime = isRealTime;
@@ -288,17 +317,19 @@ public class SimulationService {
                         this.logicalState = logicalState;
                         this.todosLosVuelos = todosLosVuelos;
                         this.airportMap = airportMap;
+                        this.targetEndEpoch = targetEndEpoch;
                 }
 
                 long dayStartEpochMs() { return fechaInicio.plusDays(day).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(); }
                 long currentGlobalSimTime() { return dayStartEpochMs() + currentSimMinuteOfDay * 60_000L; }
+                boolean isPastTarget() { return currentGlobalSimTime() >= targetEndEpoch; }
         }
 
         private record SimBlock(
                 long startSimTime, long endSimTimeActual, List<Event> events, SimulationState visualStartSnapshot,
                 boolean collapsed, String collapseReason, Long collapseTime, List<SimulationDayReport> closedDayReports,
                 boolean isFullyDone, double slaPercentAtEnd, List<Route> lastMasterPlanRoutes, Long lastTaMs,
-                String lastPlanId, int dayAtEnd, int lastCurrentSa) {}
+                String lastPlanId, int dayAtEnd, int lastCurrentSa, Set<Long> cancelledFlightIds) {}
 
         /**
          * @param isCatchUp true SOLO durante el arranque síncrono en frío (día 0 con
@@ -321,7 +352,7 @@ public class SimulationService {
                 Long collapseTime = null;
                 long alnsWindowForThisBlock = isCatchUp ? CATCHUP_ALNS_WINDOW_MS : ALNS_WINDOW_MS;
 
-                while (ctx.day < ctx.dias && ctx.currentGlobalSimTime() < blockEndTarget) {
+                while (!ctx.isPastTarget() && ctx.currentGlobalSimTime() < blockEndTarget) {
 
                         if (ctx.currentSimMinuteOfDay == 0) {
                                 if (ctx.day > 0) {
@@ -351,12 +382,15 @@ public class SimulationService {
 
                         int currentSa;
                         if (isCatchUp) {
-                                // ← Rápido: un solo ciclo grande cubre todo el catch-up (o hasta medianoche)
-                                currentSa = (int) Math.min(1440 - ctx.currentSimMinuteOfDay, minutesLeftInBlock);
+                                int maxCatchUpCycle = 120;
+                                currentSa = (int) Math.min(maxCatchUpCycle, Math.min(1440 - ctx.currentSimMinuteOfDay, minutesLeftInBlock));
                         } else {
                                 currentSa = Math.min(ctx.saMinutes, 1440 - ctx.currentSimMinuteOfDay);
                                 currentSa = (int) Math.min(currentSa, minutesLeftInBlock);
                         }
+                        // Precisión de fin: no dejar que un ciclo se pase de largo del final real elegido.
+                        long minutesLeftUntilTarget = Math.max(1, (ctx.targetEndEpoch - currentSimTime) / 60_000L);
+                        currentSa = (int) Math.min(currentSa, minutesLeftUntilTarget);
                         ctx.lastCurrentSa = currentSa;
                         long cycleEnd = currentSimTime + currentSa * 60_000L;
 
@@ -386,7 +420,8 @@ public class SimulationService {
                                 currentSimTime, currentSimTime + ((long) ctx.planningHorizon * 60_000L));
                         Set<String> bagIdsYaEnPool = ctx.planifiablePool.values().stream()
                                 .flatMap(l -> l.getBagIds().stream()).collect(Collectors.toSet());
-
+                        log.info("[VENTANA] t={} lotesEnVentana={} poolTotal={}",
+                                Instant.ofEpochMilli(currentSimTime), nuevosEnHorizonte.size(), ctx.planifiablePool.size());
                         for (SuperLot lot : nuevosEnHorizonte) {
                                 List<String> nuevos = lot.getBagIds().stream()
                                         .filter(b -> !bagIdsYaEnPool.contains(b))
@@ -398,7 +433,9 @@ public class SimulationService {
                                         : new SuperLot(lot.getId(), lot.getOrigenIcao(), lot.getDestinoIcao(), nuevos.size(),
                                         lot.getReadyTime(), lot.getSla(), lot.isIntercontinental(), lot.getPriority(), nuevos,
                                         filterDeadlines(lot.getBagDeadlines(), nuevos));
-
+                                if (lotFiltrado != lot) {
+                                        lotFiltrado.setBagReadyTimes(filterDeadlines(lot.getBagReadyTimes(), nuevos));
+                                }
                                 ctx.planifiablePool.put(lotFiltrado.getId(), lotFiltrado);
                                 for (String bagId : lotFiltrado.getBagIds()) {
                                         Long d = lotFiltrado.getBagDeadlines().get(bagId);
@@ -468,10 +505,12 @@ public class SimulationService {
                                 if (pendientes.isEmpty()) {
                                         ctx.planifiablePool.remove(key);
                                 } else if (pendientes.size() != original.getBagIds().size()) {
-                                        ctx.planifiablePool.put(key, new SuperLot(original.getId(), original.getOrigenIcao(),
+                                        SuperLot actualizado = new SuperLot(original.getId(), original.getOrigenIcao(),
                                                 original.getDestinoIcao(), pendientes.size(), original.getReadyTime(), original.getSla(),
                                                 original.isIntercontinental(), original.getPriority(), pendientes,
-                                                filterDeadlines(original.getBagDeadlines(), pendientes)));
+                                                filterDeadlines(original.getBagDeadlines(), pendientes));
+                                        actualizado.setBagReadyTimes(filterDeadlines(original.getBagReadyTimes(), pendientes));
+                                        ctx.planifiablePool.put(key, actualizado);
                                 }
                         }
 
@@ -551,8 +590,9 @@ public class SimulationService {
                 double slaPercentAtEnd = computeRealSlaPercent(ctx.bagDeadlines, ctx.bagIdsViolatedSla);
 
                 return new SimBlock(blockStart, endSimTimeActual, blockEvents, visualStartSnapshot, collapsed,
-                        collapseReason, collapseTime, closedDayReports, ctx.day >= ctx.dias, slaPercentAtEnd,
-                        ctx.lastMasterPlanRoutes, ctx.lastTaMs, ctx.lastPlanId, ctx.day, ctx.lastCurrentSa);
+                        collapseReason, collapseTime, closedDayReports, ctx.isPastTarget(), slaPercentAtEnd,
+                        ctx.lastMasterPlanRoutes, ctx.lastTaMs, ctx.lastPlanId, ctx.day, ctx.lastCurrentSa,
+                        new HashSet<>(ctx.processedCancelledFlightIds));
         }
 
         private SimulationDayReport buildDayReport(SimContext ctx) {
@@ -603,7 +643,7 @@ public class SimulationService {
                         idx = applyEventsUpTo(events, idx, tickTarget, replayState, tracker, airportMap, activeOverlay, arrivalByInstance);
 
                         publishTick(session, block, tickTarget, startEpoch, dias, replayState, airportMap, todosLosVuelos,
-                                algorithm, activeOverlay.values());
+                                algorithm, activeOverlay.values(), block.cancelledFlightIds());
 
                         if (paceRealMs > 0) {
                                 long worked = System.currentTimeMillis() - tickRealStart;
@@ -615,7 +655,7 @@ public class SimulationService {
                 }
                 idx = applyEventsUpTo(events, idx, block.endSimTimeActual(), replayState, tracker, airportMap, activeOverlay, arrivalByInstance);
                 publishTick(session, block, block.endSimTimeActual(), startEpoch, dias, replayState, airportMap,
-                        todosLosVuelos, algorithm, activeOverlay.values());
+                        todosLosVuelos, algorithm, activeOverlay.values(), block.cancelledFlightIds());
         }
 
         private record ActiveFlight(Vuelo vuelo, long dep, long arr, int load, String status) {}
@@ -646,12 +686,15 @@ public class SimulationService {
         private void publishTick(SimulationProgressHolder.SimulationSessionState session, SimBlock block,
                                  long tickTarget, long startEpoch, int dias, SimulationState replayState,
                                  Map<String, Aeropuerto> airportMap, List<Vuelo> todosLosVuelos, String algorithm,
-                                 Collection<ActiveFlight> activeFlights) {
+                                 Collection<ActiveFlight> activeFlights, Set<Long> cancelledFlightIds) {
 
                 long daysSinceStart = (tickTarget - startEpoch) / 86_400_000L;
                 long minuteOfDay = ((tickTarget - startEpoch) % 86_400_000L) / 60_000L;
                 int completedDaysDisplay = (int) daysSinceStart + 1;
-                int mPercent = (int) Math.max(0, Math.min(100, ((daysSinceStart * 1440.0 + minuteOfDay) / (dias * 1440.0)) * 100));
+
+                long actualStart = session.getActualStartEpoch() != null ? session.getActualStartEpoch() : startEpoch;
+                long totalTargetMs = (long) dias * 1440L * 60_000L;
+                int mPercent = (int) Math.max(0, Math.min(100, ((tickTarget - actualStart) * 100.0) / totalTargetMs));
 
                 java.time.ZonedDateTime zdt = Instant.ofEpochMilli(tickTarget).atZone(ZoneOffset.UTC);
                 String simulatedTimeStr = String.format("Día %d - %02d:%02d", completedDaysDisplay, zdt.getHour(), zdt.getMinute());
@@ -659,14 +702,15 @@ public class SimulationService {
                 updateProgress(session, completedDaysDisplay, dias, mPercent, simulatedTimeStr, block.slaPercentAtEnd(),
                         replayState, airportMap, activeFlights, tickTarget, startEpoch, algorithm, block.lastPlanId(),
                         todosLosVuelos, session.isCollapseMode(), session.getRescuedFlights(), session.getErrorMessage(),
-                        block.lastTaMs(), block.lastCurrentSa());
+                        block.lastTaMs(), block.lastCurrentSa(),cancelledFlightIds);
         }
 
         private void updateProgress(SimulationProgressHolder.SimulationSessionState session, int completedDays,
                                     int totalDays, int currentPercent, String simulatedTime, double slaPercent, SimulationState state,
                                     Map<String, Aeropuerto> airportMap, Collection<ActiveFlight> activeFlights, long currentSimTime,
                                     long startEpoch, String algorithm, String planId, List<Vuelo> todosLosVuelos, boolean isCollapseMode,
-                                    int rescuedFlights, String errorMessage, Long lastTaMs, Integer currentSaMinutes) {
+                                    int rescuedFlights, String errorMessage, Long lastTaMs, Integer currentSaMinutes,
+                                    Set<Long> cancelledFlightIds) {
 
                 session.setCurrentDay(completedDays);
                 session.setPercent(currentPercent);
@@ -692,6 +736,7 @@ public class SimulationService {
                 long currentDayStartEpoch = startEpoch + ((long) (completedDays - 1) * 86400000L);
 
                 for (Vuelo v : todosLosVuelos) {
+                        if (cancelledFlightIds.contains(v.getId())) continue; //no se dibuja los cancelados hoy
                         long dep = v.getDepartureEpoch(currentDayStartEpoch);
                         long arr = v.getArrivalEpoch(currentDayStartEpoch);
                         if (currentSimTime >= dep && currentSimTime < arr) {
@@ -755,8 +800,10 @@ public class SimulationService {
                 SuperLot lot = r.getLot();
                 List<String> bagIds = r.getBagIds() != null ? r.getBagIds() : List.of();
                 Map<String, Long> filteredDeadlines = filterDeadlines(lot.getBagDeadlines(), bagIds);
-                return new SuperLot(lot.getId(), lot.getOrigenIcao(), lot.getDestinoIcao(), bagIds.size(),
+                SuperLot elevated = new SuperLot(lot.getId(), lot.getOrigenIcao(), lot.getDestinoIcao(), bagIds.size(),
                         currentTime + 86400000L, lot.getSla(), lot.isIntercontinental(), Integer.MAX_VALUE, bagIds, filteredDeadlines);
+                elevated.setBagReadyTimes(filterDeadlines(lot.getBagReadyTimes(), bagIds));
+                return elevated;
         }
 
         public void inyectarVueloEnVivo(Vuelo vuelo) {

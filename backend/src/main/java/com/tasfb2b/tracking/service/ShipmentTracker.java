@@ -42,7 +42,15 @@ public class ShipmentTracker {
     }
 
     public List<ShipmentState> getByAirport(String icao) {
-        return byAirport.getOrDefault(icao, Set.of()).stream().map(bags::get).filter(Objects::nonNull).toList();
+        // Filtro defensivo: una maleta ENTREGADA nunca debe aparecer en la
+        // trazabilidad de un almacén — ya salió físicamente de la red, por
+        // regla de negocio solo debe verse en el histórico de envíos. Esto
+        // protege incluso ante una condición de carrera residual del índice.
+        return byAirport.getOrDefault(icao, Set.of()).stream()
+                .map(bags::get)
+                .filter(Objects::nonNull)
+                .filter(s -> s.getEstado() != ShipmentStatus.ENTREGADO)  // ← NUEVO
+                .toList();
     }
 
     public void registerPlannedHops(List<String> bagIds, Route route) {

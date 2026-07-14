@@ -43,26 +43,34 @@ function useBagTracking(sessionId, kind, id) {
       return;
     }
 
+    let cancelled = false;
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
 
-    const url = kind === 'flight'
-        ? `/api/shipments/${sessionId}/flight-instance/${id}`
-        : `/api/shipments/${sessionId}/airport/${id}`;
+    const fetchBags = (isFirst) => {
+      if (isFirst) setLoading(true);
+      setError(null);
+      const url = kind === 'flight'
+          ? `/api/shipments/${sessionId}/flight-instance/${id}`
+          : `/api/shipments/${sessionId}/airport/${id}`;
 
-    fetch(url, { signal: controller.signal })
-        .then(res => {
-          if (!res.ok) throw new Error('No se pudo cargar trazabilidad');
-          return res.json();
-        })
-        .then(data => setBags(Array.isArray(data) ? data : []))
-        .catch(err => {
-          if (err.name !== 'AbortError') setError(err);
-        })
-        .finally(() => setLoading(false));
+      fetch(url, { signal: controller.signal })
+          .then(res => {
+            if (!res.ok) throw new Error('No se pudo cargar trazabilidad');
+            return res.json();
+          })
+          .then(data => { if (!cancelled) setBags(Array.isArray(data) ? data : []); })
+          .catch(err => { if (!cancelled && err.name !== 'AbortError') setError(err); })
+          .finally(() => { if (!cancelled && isFirst) setLoading(false); });
+    };
 
-    return () => controller.abort();
+    fetchBags(true);
+    // Refresco periódico: la trazabilidad NO llega por WebSocket, es un
+    // fetch puntual. Sin este polling, un panel dejado abierto se queda
+    // congelado en la foto del momento en que se abrió — de ahí que
+    // parezca "no sincronizado" o que muestre maletas ya entregadas.
+    const interval = setInterval(() => fetchBags(false), 3000);
+
+    return () => { cancelled = true; controller.abort(); clearInterval(interval); };
   }, [sessionId, kind, id]);
 
   return { bags, loading, error };

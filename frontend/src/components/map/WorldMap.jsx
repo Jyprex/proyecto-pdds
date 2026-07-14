@@ -127,6 +127,7 @@ const WorldMap = ({
   isDayToDay = false,
   onBackgroundClick = () => {},
   onReset = () => {},
+  suppressCompletionOverlay = false,
 }) => {
   // flightColorFilters y airportColorFilters ahora vienen del SelectionBridge (compartidos)
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
@@ -584,7 +585,7 @@ const WorldMap = ({
       </DeckGL>
 
 
-      {simState === "completed" && !isModalDismissed && (
+      {simState === "completed" && !isModalDismissed && !suppressCompletionOverlay &&(
         <div style={{
           position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
           background: "rgba(15, 23, 42, 0.95)", border: `2px solid ${isCollapseScenario ? "#ef4444" : "#10b981"}`,

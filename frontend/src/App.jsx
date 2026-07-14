@@ -454,6 +454,7 @@ const App = () => {
             activeAircraft={activeAircraft}
             masterPlan={masterPlan}
             airportByIcao={airportByCode}
+            suppressCompletionOverlay={isWindowOpen('finalPlan')}
             isCollapseScenario={isCollapseScenario}
             selectedAirportCode={selectedAirportCode}
             selectedFromAirport={selectedFromAirport}

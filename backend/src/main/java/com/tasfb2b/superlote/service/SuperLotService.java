@@ -132,16 +132,10 @@ public class SuperLotService {
 
             SuperLot lot = new SuperLot(
                     megaLotIdCounter.getAndIncrement(),
-                    partes[0],
-                    partes[1],
-                    acc.totalMaletas,
-                    acc.minReadyTime,
-                    sla,
-                    intercontinental,
-                    0,
-                    acc.bagIds,
-                    bagDeadlines
+                    partes[0], partes[1], acc.totalMaletas, acc.minReadyTime, sla,
+                    intercontinental, 0, acc.bagIds, bagDeadlines
             );
+            lot.setBagReadyTimes(new HashMap<>(acc.bagReadyTimes));
 
             lot.validate();
             superLots.add(lot);
@@ -182,11 +176,13 @@ public class SuperLotService {
             int maxPriority = 0;
             List<String> mergedBagIds = new ArrayList<>();
             Map<String, Long> mergedBagDeadlines = new HashMap<>();
+            Map<String, Long> mergedBagReadyTimes = new HashMap<>();
 
             for (SuperLot lot : grupo) {
                 totalMaletas += lot.getTotalMaletas();
                 mergedBagIds.addAll(lot.getBagIds());
                 mergedBagDeadlines.putAll(lot.getBagDeadlines());
+                mergedBagReadyTimes.putAll(lot.getBagReadyTimes());
                 if (lot.getReadyTime() < minReadyTime) minReadyTime = lot.getReadyTime();
                 if (lot.getDeadline() < minDeadline) minDeadline = lot.getDeadline();
                 if (lot.getPriority() > maxPriority) maxPriority = lot.getPriority();
@@ -207,6 +203,7 @@ public class SuperLotService {
                     mergedBagIds,
                     mergedBagDeadlines
             );
+            mergedLot.setBagReadyTimes(mergedBagReadyTimes);
             result.add(mergedLot);
         }
         return result;
