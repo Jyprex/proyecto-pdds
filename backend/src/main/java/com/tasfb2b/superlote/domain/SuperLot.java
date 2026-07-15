@@ -5,6 +5,8 @@ import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -20,7 +22,8 @@ public class SuperLot {
     private int priority;
     /** Códigos de envío individuales que componen este lote, con su carga real. */
     private List<String> bagIds = new ArrayList<>();
-
+    private Map<String, Long> bagDeadlines = new HashMap<>();
+    private Map<String, Long> bagReadyTimes = new HashMap<>();
     /**
      * Constructor LEGACY — para mantener compatibilidad con todo el código existente
      * que construye SuperLot sin lista de shipments (queda vacía).
@@ -46,10 +49,19 @@ public class SuperLot {
         this.bagIds = (bagIds != null) ? bagIds : new ArrayList<>();
     }
 
+    public SuperLot(int id, String origenIcao, String destinoIcao, int totalMaletas,
+                    long readyTime, long sla, boolean intercontinental, int priority,
+                    List<String> bagIds, Map<String, Long> bagDeadlines) {
+        this(id, origenIcao, destinoIcao, totalMaletas, readyTime, sla, intercontinental, priority, bagIds);
+        this.bagDeadlines = (bagDeadlines != null) ? bagDeadlines : new HashMap<>();
+    }
+
     /** Copia con readyTime distinto, preservando bagIds. Útil para perturbaciones (regret). */
     public SuperLot withReadyTime(long newReadyTime) {
-        return new SuperLot(id, origenIcao, destinoIcao, totalMaletas,
-                newReadyTime, sla, intercontinental, priority, bagIds);
+        SuperLot copy = new SuperLot(id, origenIcao, destinoIcao, totalMaletas,
+                newReadyTime, sla, intercontinental, priority, bagIds, bagDeadlines);
+        copy.bagReadyTimes = this.bagReadyTimes;
+        return copy;
     }
 
     /** Códigos de envío distintos contenidos en este lote para trabajar con maletas . */

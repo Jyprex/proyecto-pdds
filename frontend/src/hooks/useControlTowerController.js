@@ -36,7 +36,12 @@ const readStoredKpiCollapsed = () => {
 };
 
 export const useControlTowerController = () => {
-  const { airports: globalAirports, airportByIcao } = useAirports();
+  const { airports: globalAirports, airportByIcao, refreshAirports } = useAirports();
+
+  useEffect(() => {
+    refreshAirports();
+  }, [refreshAirports]);
+
   const location = useLocation();
   const [activeTab, setActiveTab] = useState("vivo");
   const isCollapseScenario = activeTab === "colapso";
@@ -97,6 +102,7 @@ export const useControlTowerController = () => {
   const [clock, setClock] = useState({ simulatedTime: "--:--", currentEpochTime: 0 });
   const [smoothSimTime, setSmoothSimTime] = useState(0);
   const smoothSimTimeRef = useRef(0);
+  const animRef = useRef({ prevEpoch: 0, targetEpoch: 0, targetReceivedAt: 0, interval: 500 });
   const [realElapsedSecs, setRealElapsedSecs] = useState(0);
   const realStartRef = useRef(null);
   const [logs, setLogs] = useState([]);
@@ -134,149 +140,48 @@ export const useControlTowerController = () => {
     serverEpoch: 0,
     receivedAt: 0,
     lastSeq: -1,
-    ratio: (5 * 24 * 60) / 30 
+    ratio: (5 * 24 * 60) / 30
   });
 
   /** Loop de interpolación suave para el mapa y el reloj */
+  // Ticker de 1s: actualiza reloj de pared y tiempo transcurrido real
   useEffect(() => {
-    let raf;
-    let lastRealTime = performance.now();
-
-    const update = () => {
-      const now = performance.now();
-      const delta = now - lastRealTime;
-      lastRealTime = now;
-
-      const isStillRunning = (simState === "running");
-
-      if (isStillRunning) {
-        const buffer = snapshotBufferRef.current;
-        
-        let maxTargetTime = smoothSimTimeRef.current;
-        if (buffer.length > 0) {
-            maxTargetTime = Math.max(smoothSimTimeRef.current, buffer[buffer.length - 1].epoch);
-        }
-
-        if (smoothSimTimeRef.current > 0) {
-            const timeDiff = maxTargetTime - smoothSimTimeRef.current;
-            let nextTime = smoothSimTimeRef.current;
-            
-            if (timeDiff > 0) {
-                const totalDays = meta.totalDays > 0 ? meta.totalDays : 5;
-                const totalSimulatedMs = totalDays * 24 * 60 * 60 * 1000;
-                const targetPlaybackMs = (targetPlaybackMinutes || 30) * 60 * 1000;
-                let baseRatio = meta.isRealTime ? 1 : (totalSimulatedMs / Math.max(1000, targetPlaybackMs));
-
-                const idealDelayMs = baseRatio * 500; 
-                let dynamicRatio = baseRatio;
-
-                if (timeDiff > idealDelayMs * 3) {
-                    nextTime = maxTargetTime - idealDelayMs;
-                } else if (timeDiff > idealDelayMs * 1.5) {
-                    dynamicRatio = baseRatio * 1.15; 
-                } else if (timeDiff < idealDelayMs * 0.5) {
-                    dynamicRatio = baseRatio * 0.85; 
-                }
-
-                nextTime += (delta * dynamicRatio);
-            }
-            
-            if (nextTime > maxTargetTime) {
-                nextTime = maxTargetTime;
-            }
-            
-            smoothSimTimeRef.current = nextTime;
-            setSmoothSimTime(smoothSimTimeRef.current);
-        }
-
-        let appliedClock = null;
-        let appliedEpoch = null;
-        let appliedRoutes = null;
-        let appliedAirportLoads = null;
-        let appliedKpis = null;
-        let appliedPlanId = null;
-        let appliedMasterPlan = null;
-        
-        while (buffer.length > 0 && buffer[0].epoch <= smoothSimTimeRef.current) {
-          const snap = buffer.shift();
-          if (snap.clock !== undefined) appliedClock = snap.clock;
-          if (snap.epoch !== undefined) appliedEpoch = snap.epoch;
-          if (snap.routes !== undefined) appliedRoutes = snap.routes;
-          if (snap.airportLoads !== undefined) appliedAirportLoads = snap.airportLoads;
-          if (snap.kpis !== undefined) appliedKpis = snap.kpis;
-          if (snap.planId !== undefined) appliedPlanId = snap.planId;
-          if (snap.masterPlan !== undefined) appliedMasterPlan = snap.masterPlan;
-        }
-        
-        if (appliedClock !== null && appliedEpoch !== null) {
-           setClock({ simulatedTime: appliedClock, currentEpochTime: appliedEpoch });
-        }
-        if (appliedRoutes !== null) {
-           setAircraft(appliedRoutes);
-        }
-        if (appliedPlanId !== null && appliedMasterPlan !== null) {
-            setMasterPlan(prev => {
-                if (prev.planId === appliedPlanId) return prev;
-                console.info(`[Fase 4] Nuevo Plan Maestro detectado: ${appliedPlanId}. Sincronizando horizontes futuros.`);
-                return { planId: appliedPlanId, routes: appliedMasterPlan };
-            });
-        }
-        if (appliedAirportLoads !== null) {
-           setAirportLoads(appliedAirportLoads);
-        }
-        if (appliedKpis !== null) {
-           const data = appliedKpis;
-           if (data.startEpoch) {
-               setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
-           }
-           setKpis({
-                slaPercent: data.slaPercent,
-                globalOccupancy: data.globalOccupancy,
-                criticalNodes: data.criticalNodes,
-                totalBagsWaiting: data.totalBagsWaiting,
-                rescuedFlights: data.rescuedFlights,
-                comparisonResults: data.comparisonResults || null,
-                taMs: data.taMs ?? 0,
-                saMinutes: data.saMinutes ?? 10,
-            });
-           setMeta(prev => ({
-               ...prev,
-               status: data.status,
-               percent: data.percent,
-               currentDay: data.currentDay,
-               totalDays: data.totalDays,
-               isCollapseMode: data.isCollapseMode,
-               errorMessage: data.errorMessage,
-               startEpoch: data.startEpoch || prev.startEpoch
-           }));
-
-           if (data.status === 'DONE') {
-               setSimState('completed');
-               apiFetch(`/api/v1/simulation/status/${sessionId}`).then(res => {
-                   if (res.ok) {
-                       res.json().then(finalStatus => {
-                           setMeta(prev => ({ ...prev, ...finalStatus }));
-                           setFinalMasterPlan(finalStatus.finalMasterPlan || []);
-                       });
-                   }
-               });
-           } else if (data.status === 'FAILED') {
-               setSimState('idle');
-           } else if (data.status === 'RUNNING' || data.status === 'RECONSTRUCTING') {
-               setSimState(prev => prev !== 'running' ? 'running' : prev);
-           }
-        }
-      }
-      
-      if (realStartRef.current && isStillRunning) {
+    const interval = setInterval(() => {
+      setRealTimeTicker(Date.now());
+      if (realStartRef.current && simState === "running") {
         setRealElapsedSecs(Math.floor((Date.now() - realStartRef.current) / 1000));
       }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [simState]);
 
-      raf = requestAnimationFrame(update);
+// Interpolación ACOTADA por RAF: suaviza SOLO entre el frame anterior y el
+// actual recibidos del backend — nunca extrapola más allá del último dato
+// real (a diferencia del sistema viejo, que asumía una duración total fija
+// y podía "adelantarse" al backend). Esto es lo que da fluidez sin volver
+// a introducir el freeze de 30s.
+  useEffect(() => {
+    let raf;
+    const tick = () => {
+      if (simState === 'running') {
+        const anim = animRef.current;
+        if (anim.targetReceivedAt > 0) {
+          const now = performance.now();
+          const t = anim.interval > 0
+              ? Math.min(1, (now - anim.targetReceivedAt) / anim.interval)
+              : 1;
+          const displayEpoch = anim.prevEpoch + (anim.targetEpoch - anim.prevEpoch) * t;
+          if (displayEpoch !== smoothSimTimeRef.current) {
+            smoothSimTimeRef.current = displayEpoch;
+            setSmoothSimTime(displayEpoch);
+          }
+        }
+      }
+      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(update);
+    raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [simState, sessionId, targetPlaybackMinutes, meta.totalDays]);
+  }, [simState]);
 
   const togglePanel = useCallback((panelName = "") => {
     if (!panelName) return;
@@ -319,6 +224,7 @@ export const useControlTowerController = () => {
     setFinalMasterPlan([]);
     setCancelledFlights([]);
     snapshotBufferRef.current = [];
+    animRef.current = { prevEpoch: 0, targetEpoch: 0, targetReceivedAt: 0, interval: 500 };
     simClockRef.current = { serverEpoch: 0, receivedAt: 0, ratio: 1 };
   }, [selectedAlgorithm]);
 
@@ -339,6 +245,7 @@ export const useControlTowerController = () => {
       realStartRef.current = Date.now();
       setRealElapsedSecs(0);
       snapshotBufferRef.current = [];
+      animRef.current = { prevEpoch: 0, targetEpoch: 0, targetReceivedAt: 0, interval: 500 };
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
@@ -393,16 +300,16 @@ export const useControlTowerController = () => {
   const startDayToDaySimulation = useCallback(async (startDate, dias = 5, preCancelledIds = [], startTime = null, options = {}) => {
     try {
       const { isRealTime = false, planningHorizon = 480 } = options;
-      
+
       let finalStartTime = startTime;
       let finalStartDate = startDate;
       if (isRealTime) {
-          const now = new Date();
-          finalStartTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-          finalStartDate = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          console.log(`[TASF.B2B] Sincronización automática: Iniciando simulación en vivo a las ${finalStartDate} ${finalStartTime}`);
+        const now = new Date();
+        finalStartTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        finalStartDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        console.log(`[TASF.B2B] Sincronización automática: Iniciando simulación en vivo a las ${finalStartDate} ${finalStartTime}`);
       } else if (!finalStartTime) {
-          finalStartTime = "00:00";
+        finalStartTime = "00:00";
       }
 
       setSimState("running");
@@ -411,6 +318,7 @@ export const useControlTowerController = () => {
       realStartRef.current = Date.now();
       setRealElapsedSecs(0);
       snapshotBufferRef.current = [];
+      animRef.current = { prevEpoch: 0, targetEpoch: 0, targetReceivedAt: 0, interval: 500 };
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
 
@@ -508,7 +416,7 @@ export const useControlTowerController = () => {
         if (!cancelled) setIsReconnecting(false);
       });
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Solo al montar
 
   // ── Auto-inicio de simulación día a día (vivo) ───────────────────────────
@@ -517,7 +425,7 @@ export const useControlTowerController = () => {
     if (isReconnecting) return;
     if (activeTab === "vivo" && simState === "idle" && !sessionId) {
       const now = new Date();
-      const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       startDayToDaySimulation(today, 1, [], null, { isRealTime: true, planningHorizon: 480 });
     }
   }, [activeTab, simState, sessionId, startDayToDaySimulation]);
@@ -531,9 +439,10 @@ export const useControlTowerController = () => {
       realStartRef.current = Date.now();
       setRealElapsedSecs(0);
       snapshotBufferRef.current = [];
+      animRef.current = { prevEpoch: 0, targetEpoch: 0, targetReceivedAt: 0, interval: 500 };
       smoothSimTimeRef.current = 0;
       setSmoothSimTime(0);
-      
+
       // En modo colapso, targetPlaybackMinutes = totalDays para tener 1 min por día real
       setTargetPlaybackMinutes(totalDays);
 
@@ -558,7 +467,7 @@ export const useControlTowerController = () => {
       const dateParam = startDate ? `&startDate=${startDate}` : "";
       const stressParam = stressFactor ? `&stressFactor=${stressFactor}` : "";
       const condParam = `&endCondition=${endCondition}`;
-      
+
       const res = await apiFetch(
         `/api/v1/simulation/run-collapse/${totalDays}?algorithm=${selectedAlgorithm}${dateParam}${stressParam}${condParam}&playbackMinutes=${totalDays}`,
         { method: "POST" }
@@ -606,7 +515,7 @@ export const useControlTowerController = () => {
       const res = await apiFetch(`/api/v1/simulation/status/${safeSid}`);
       if (!res.ok) throw new Error(`Error al obtener status: ${res.status}`);
       const finalStatus = await res.json();
-      
+
       const isCollapse = !!finalStatus.isCollapseMode;
       let modeText = '✅ **Operación Normal**';
       if (isCollapse) {
@@ -619,44 +528,44 @@ export const useControlTowerController = () => {
 
       let md = `# 📋 Reporte de Última Planificación Estable: ${safeName.replace(/_/g, ' ')}\n\n`;
       md += `> **Documento generado automáticamente por el Sistema de Control Logístico TASF-B2B.**\n\n`;
-      
+
       md += `## ⚙️ Metadatos de la Sesión\n`;
       md += `- **ID de Sesión**: \`${safeSid}\`\n`;
       md += `- **Fecha de Generación**: ${new Date().toLocaleString()}\n`;
       md += `- **Modo de Escenario**: ${modeText}\n`;
-      
+
       const algoName = (finalStatus.algorithm || selectedAlgorithm || "ALNS").toUpperCase();
       md += `- **Algoritmo de Optimización**: **${algoName}**\n\n`;
 
       md += `## 📦 Desglose de la Última Planificación Estable\n\n`;
-      
+
       if (finalStatus.finalMasterPlan && finalStatus.finalMasterPlan.length > 0) {
         md += `A continuación se muestra el plan maestro final (asignaciones de envío a vuelos).\n\n`;
         md += `| Lote ID | Origen | Destino | Maletas | Estado | Deadline | LLegada Estimada |\n`;
         md += `| :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n`;
-        
+
         finalStatus.finalMasterPlan.forEach(plan => {
-           const deadlineStr = plan.deadline ? new Date(plan.deadline).toLocaleString() : '-';
-           const arrivalStr = plan.arrivalTime ? new Date(plan.arrivalTime).toLocaleString() : '-';
-           md += `| **${plan.lotId}** | ${plan.origin} | ${plan.destination} | ${plan.assignedBags} / ${plan.totalBags} | ${plan.status} | ${deadlineStr} | ${arrivalStr} |\n`;
+          const deadlineStr = plan.deadline ? new Date(plan.deadline).toLocaleString() : '-';
+          const arrivalStr = plan.arrivalTime ? new Date(plan.arrivalTime).toLocaleString() : '-';
+          md += `| **${plan.lotId}** | ${plan.origin} | ${plan.destination} | ${plan.assignedBags} / ${plan.totalBags} | ${plan.status} | ${deadlineStr} | ${arrivalStr} |\n`;
         });
-        
+
         md += `\n### ✈️ Detalle de Tramos de Vuelo Asignados\n\n`;
-        
+
         finalStatus.finalMasterPlan.forEach(plan => {
-           md += `#### Lote **${plan.lotId}** (${plan.origin} ➔ ${plan.destination})\n`;
-           if (plan.hops && plan.hops.length > 0) {
-               md += `| Vuelo ID | Origen | Destino | Salida | Llegada |\n`;
-               md += `| :---: | :---: | :---: | :---: | :---: |\n`;
-               plan.hops.forEach(hop => {
-                   const depStr = hop.departureTime ? new Date(hop.departureTime).toLocaleString() : '-';
-                   const arrStr = hop.arrivalTime ? new Date(hop.arrivalTime).toLocaleString() : '-';
-                   md += `| ${hop.vueloId} | ${hop.from} | ${hop.to} | ${depStr} | ${arrStr} |\n`;
-               });
-           } else {
-               md += `*No hay tramos de vuelo registrados para este lote.*\n`;
-           }
-           md += `\n`;
+          md += `#### Lote **${plan.lotId}** (${plan.origin} ➔ ${plan.destination})\n`;
+          if (plan.hops && plan.hops.length > 0) {
+            md += `| Vuelo ID | Origen | Destino | Salida | Llegada |\n`;
+            md += `| :---: | :---: | :---: | :---: | :---: |\n`;
+            plan.hops.forEach(hop => {
+              const depStr = hop.departureTime ? new Date(hop.departureTime).toLocaleString() : '-';
+              const arrStr = hop.arrivalTime ? new Date(hop.arrivalTime).toLocaleString() : '-';
+              md += `| ${hop.vueloId} | ${hop.from} | ${hop.to} | ${depStr} | ${arrStr} |\n`;
+            });
+          } else {
+            md += `*No hay tramos de vuelo registrados para este lote.*\n`;
+          }
+          md += `\n`;
         });
 
       } else {
@@ -664,7 +573,7 @@ export const useControlTowerController = () => {
       }
 
       md += `---\n> 🔒 **Nota de Confidencialidad:** Propiedad exclusiva de **TASF-B2B**.`;
-      
+
       const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -673,7 +582,7 @@ export const useControlTowerController = () => {
       a.download = `UltimaPlanificacion_${safeName}_${safeSid.substring(0, 8)}.md`;
       document.body.appendChild(a);
       a.click();
-      
+
       setTimeout(() => {
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
@@ -691,14 +600,14 @@ export const useControlTowerController = () => {
       const res = await apiFetch(`/api/v1/simulation/export-details/${safeSid}`);
       if (!res.ok) throw new Error(`Error al exportar reporte detallado: ${res.status}`);
       const blob = await res.blob();
-      const url  = window.URL.createObjectURL(blob);
-      const a    = document.createElement("a");
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
       a.style.display = "none";
-      a.href     = url;
+      a.href = url;
       a.download = `ReporteDetalladoVuelos_${safeSid.substring(0, 8)}.md`;
       document.body.appendChild(a);
       a.click();
-      
+
       setTimeout(() => {
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
@@ -724,22 +633,74 @@ export const useControlTowerController = () => {
       const pendingBySeq = new Map();
       const BUFFER_MAX_FRAMES = 240;
 
+      const applyFrame = (f) => {
+        if (f.clock !== undefined && f.epoch !== undefined) {
+          setClock({ simulatedTime: f.clock, currentEpochTime: f.epoch });
+
+          const anim = animRef.current;
+          const now = performance.now();
+
+          // Punto de partida = dónde está VISUALMENTE ahora mismo (interpolando
+          // con los valores viejos), no el último target crudo — así la
+          // transición al nuevo dato siempre es continua.
+          const currentDisplay = anim.targetReceivedAt > 0
+              ? anim.prevEpoch + (anim.targetEpoch - anim.prevEpoch) *
+              Math.min(1, (now - anim.targetReceivedAt) / anim.interval)
+              : f.epoch;
+
+          anim.prevEpoch = currentDisplay;
+          anim.interval = anim.targetReceivedAt > 0
+              ? Math.min(2000, Math.max(150, now - anim.targetReceivedAt))
+              : 500;
+          anim.targetEpoch = f.epoch;
+          anim.targetReceivedAt = now;
+
+          if (smoothSimTimeRef.current === 0) {
+            smoothSimTimeRef.current = f.epoch;
+            setSmoothSimTime(f.epoch);
+          }
+        }
+        if (f.routes !== undefined) setAircraft(f.routes);
+        if (f.planId !== undefined && f.masterPlan !== undefined) {
+          setMasterPlan(prev => prev.planId === f.planId ? prev : { planId: f.planId, routes: f.masterPlan });
+        }
+        if (f.airportLoads !== undefined) setAirportLoads(f.airportLoads);
+        if (f.kpis !== undefined) {
+          const data = f.kpis;
+          if (data.startEpoch) setMeta(prev => ({ ...prev, startEpoch: data.startEpoch }));
+          setKpis({
+            slaPercent: data.slaPercent, globalOccupancy: data.globalOccupancy, criticalNodes: data.criticalNodes,
+            totalBagsWaiting: data.totalBagsWaiting, rescuedFlights: data.rescuedFlights,
+            comparisonResults: data.comparisonResults || null, taMs: data.taMs ?? 0, saMinutes: data.saMinutes ?? 10,
+          });
+          setMeta(prev => ({
+            ...prev, status: data.status, percent: data.percent, currentDay: data.currentDay,
+            totalDays: data.totalDays, isCollapseMode: data.isCollapseMode, errorMessage: data.errorMessage,
+            startEpoch: data.startEpoch || prev.startEpoch,
+          }));
+
+          if (data.status === 'DONE') {
+            setSimState('completed');
+            apiFetch(`/api/v1/simulation/status/${sessionId}`).then(res => {
+              if (res.ok) res.json().then(finalStatus => {
+                setMeta(prev => ({ ...prev, ...finalStatus }));
+                setFinalMasterPlan(finalStatus.finalMasterPlan || []);
+              });
+            });
+          } else if (data.status === 'FAILED') {
+            setSimState('idle');
+          } else if (data.status === 'RUNNING' || data.status === 'RECONSTRUCTING') {
+            setSimState(prev => prev !== 'running' ? 'running' : prev);
+          }
+        }
+      };
+
       const pushCompleteFrame = (seq) => {
         const f = pendingBySeq.get(seq);
         if (!f) return;
         if (f.clock === undefined || f.routes === undefined || f.kpis === undefined) return;
-
-        snapshotBufferRef.current.push(f);
-        snapshotBufferRef.current.sort((a, b) => a.epoch - b.epoch);
-        if (snapshotBufferRef.current.length > BUFFER_MAX_FRAMES) {
-          snapshotBufferRef.current.splice(0, snapshotBufferRef.current.length - BUFFER_MAX_FRAMES);
-        }
         pendingBySeq.delete(seq);
-
-        if (smoothSimTimeRef.current === 0 && f.epoch) {
-          smoothSimTimeRef.current = f.epoch;
-          setSmoothSimTime(f.epoch);
-        }
+        applyFrame(f);
       };
 
       const upsertBySeq = (seq, type, data) => {
@@ -748,7 +709,7 @@ export const useControlTowerController = () => {
         if (epoch < maxEpochReceived - 60000) return;
         if (epoch > maxEpochReceived) maxEpochReceived = epoch;
 
-let f = pendingBySeq.get(seq);
+        let f = pendingBySeq.get(seq);
         if (!f) {
           f = { seq, epoch };
           pendingBySeq.set(seq, f);
@@ -797,7 +758,7 @@ let f = pendingBySeq.get(seq);
 
       client.subscribe(`/topic/sim/${sessionId}/eventLog`, (msg) => {
         try {
-const envelope = JSON.parse(msg.body);
+          const envelope = JSON.parse(msg.body);
           const logEntry = envelope?.data;
           if (!logEntry) return;
           setLogs((prev) => {
@@ -851,7 +812,7 @@ const envelope = JSON.parse(msg.body);
 
   const activeShipments = useMemo(() => {
     if (!aircraft || aircraft.length === 0 || !currentEpochTime) return []
-const viewWindow = 12 * 3600 * 1000;
+    const viewWindow = 12 * 3600 * 1000;
     return aircraft
       .filter((r) => r.status !== "cancelled")
       .filter((r) => r.arrivalTime > currentEpochTime && r.departureTime <= currentEpochTime + viewWindow)
@@ -859,19 +820,19 @@ const viewWindow = 12 * 3600 * 1000;
   }, [aircraft, currentEpochTime])
 
   const activeAircraftAll = useMemo(() => {
-    const routes = aircraft?.filter(r => r.status !== "cancelled") ?? [] 
+    const routes = aircraft?.filter(r => r.status !== "cancelled") ?? []
     if (routes.length === 0) return []
     const byId = new Map()
     routes.forEach((r) => {
-      const next = { 
-        ...r, 
+      const next = {
+        ...r,
         status: r.status ?? "normal",
-        capacityPercent: r.capacityPercent ?? 0 
+        capacityPercent: r.capacityPercent ?? 0
       };
       const prev = byId.get(next.id);
-      if (!prev) { 
-        byId.set(next.id, next); 
-        return; 
+      if (!prev) {
+        byId.set(next.id, next);
+        return;
       }
       const nextP = STATUS_PRIORITY[next.status] ?? 0;
       const prevP = STATUS_PRIORITY[prev.status] ?? 0;
@@ -891,7 +852,7 @@ const viewWindow = 12 * 3600 * 1000;
   const searchShipment = useCallback(async (id) => {
     if (!id) return;
     setIsSearching(true);
-    
+
     // 1. Búsqueda Local (Caché activo)
     const local = activeAircraftAll.find(a => a.id === id || String(a.lotId) === id || a.id === `vuelo-${id}` || a.id.startsWith(`vuelo-${id}-`));
     if (local) {
@@ -989,28 +950,28 @@ const viewWindow = 12 * 3600 * 1000;
     const combined = [...inAir, ...onGround];
     const budget = Math.max(0, MAX_MAP_ROUTES - (selected ? 1 : 0));
     const finalSelection = combined.slice(0, budget);
-if (selected && !finalSelection.some((p) => p.id === selected.id)) {
+    if (selected && !finalSelection.some((p) => p.id === selected.id)) {
       finalSelection.push(selected);
     }
 
     // --- DIAGNOSTIC: Visual Lifecycle (Filter) ---
     const activeIds = new Set(finalSelection.map(a => a.id));
     const prevActiveIds = prevActiveIdsRef.current;
-    
-    prevActiveIds.forEach(id => {
-        if (!activeIds.has(id)) {
-          const stillExists =
-              activeAircraftAll.some(a => a.id === id);
 
-          console.log(
-              `[AIRCRAFT_REMOVE] ${id}`,
-              {
-                stillExists,
-                totalAircraft: aircraft.length,
-                totalVisible: finalSelection.length
-              }
-          );
-        }
+    prevActiveIds.forEach(id => {
+      if (!activeIds.has(id)) {
+        const stillExists =
+          activeAircraftAll.some(a => a.id === id);
+
+        console.log(
+          `[AIRCRAFT_REMOVE] ${id}`,
+          {
+            stillExists,
+            totalAircraft: aircraft.length,
+            totalVisible: finalSelection.length
+          }
+        );
+      }
     });
     prevActiveIdsRef.current = activeIds;
     return finalSelection;
@@ -1114,14 +1075,14 @@ if (selected && !finalSelection.some((p) => p.id === selected.id)) {
           subtitle: "Promedio red",
           status: globalOccupancyCalculated === 0 ? "idle"
             : globalOccupancyCalculated >= 90 ? "red"
-            : globalOccupancyCalculated >= 70 ? "amber" : "green",
+              : globalOccupancyCalculated >= 70 ? "amber" : "green",
         },
         fleetOccupancy: {
           value: fleetOccupancyPct.toFixed(1),
           subtitle: "Carga total / Capacidad máxima",
           status: fleetOccupancyPct === 0 ? "idle"
             : fleetOccupancyPct >= 90 ? "red"
-            : fleetOccupancyPct >= 70 ? "amber" : "green",
+              : fleetOccupancyPct >= 70 ? "amber" : "green",
         },
         sla: { value: kpis.slaPercent?.toFixed(1) ?? 0, subtitle: "Real", status: (kpis.slaPercent >= 90) ? "green" : "red" },
         criticalNodes: { value: kpis.criticalNodes ?? 0, subtitle: ">90% ocupación", status: (kpis.criticalNodes > 5) ? "red" : "green" },
@@ -1183,14 +1144,14 @@ if (selected && !finalSelection.some((p) => p.id === selected.id)) {
           subtitle: "Promedio red · datos reales",
           status: globalOccupancyCalculated === 0 ? "idle"
             : globalOccupancyCalculated >= 90 ? "red"
-            : globalOccupancyCalculated >= 70 ? "amber" : "green",
+              : globalOccupancyCalculated >= 70 ? "amber" : "green",
         },
         {
           key: "flights",
           title: "Vuelos en curso",
           value: aircraft.filter(r => r.status !== "cancelled").length ?? 0,
-          subtitle: isCollapseScenario 
-            ? `Rescatados: ${kpis.rescuedFlights ?? 0}` 
+          subtitle: isCollapseScenario
+            ? `Rescatados: ${kpis.rescuedFlights ?? 0}`
             : `Día ${meta.currentDay} de simulación`,
           status: "green",
         },
@@ -1260,7 +1221,7 @@ if (selected && !finalSelection.some((p) => p.id === selected.id)) {
   }, [isKpiCollapsed]);
 
   return {
-activeAircraft,
+    activeAircraft,
     activeAirportRows,
     activeMetrics,
     activeTab,

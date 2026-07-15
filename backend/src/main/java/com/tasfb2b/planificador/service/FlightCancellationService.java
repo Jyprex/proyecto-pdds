@@ -1,6 +1,5 @@
 package com.tasfb2b.planificador.service;
 
-import com.tasfb2b.planificador.domain.Solution;
 import com.tasfb2b.vuelo.domain.Vuelo;
 import com.tasfb2b.vuelo.service.VueloService;
 import lombok.RequiredArgsConstructor;
@@ -13,13 +12,18 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class FlightCancellationService {
 
-    /** Lead time mínimo requerido para cancelar la instancia de HOY. */
     private static final long MIN_LEAD_TIME_MS = 60L * 60 * 1000;
 
     private final VueloService vueloService;
-    private final ALNSPlannerService alnsPlanner;
     private final SimulationProgressHolder progressHolder;
-    private final PlanningSessionHolder sessionHolder;
+
+    // ⚠️ NO USADOS — pertenecían al mecanismo de replanificación ESTÁTICA
+    // (pre-doble-búfer). SimulationService.computeBlock() ya detecta el
+    // flag cancelled=true cada ciclo (vueloRepo.findByCancelledTrue()) y
+    // hace la replanificación REACTIVA dentro del propio bucle — invocar
+    // ALNS aquí no afecta a la simulación en curso, solo desperdicia CPU.
+    // private final ALNSPlannerService alnsPlanner;
+    // private final PlanningSessionHolder sessionHolder;
 
     @Transactional
     public void cancelarVuelo(Long vueloId, String sessionId) {
@@ -43,8 +47,6 @@ public class FlightCancellationService {
             long currentSimTime = session.getCurrentEpochTime();
 
             long leadTimeMs = todayDeparture - currentSimTime;
-            // Si ya despegó hoy (negativo) o faltan menos de 1h, no se puede
-            // cancelar la instancia de hoy: se difiere a la de mañana.
             diferirAManana = leadTimeMs < MIN_LEAD_TIME_MS;
         }
 
@@ -52,27 +54,13 @@ public class FlightCancellationService {
             session.getPendingNextDayCancellations().add(vueloId);
             log.info("Vuelo {} cancelado con menos de 1h de anticipación. " +
                     "Se difiere la cancelación a la instancia de mañana.", vueloId);
-            return; // el vuelo de hoy sigue operando con normalidad
+            return;
         }
 
-        log.info("Cancelando manualmente el vuelo {}", vueloId);
+        log.info("Cancelando manualmente el vuelo {} (efecto visible en el próximo ciclo del bloque actual).", vueloId);
         vueloService.cancelarVuelo(vueloId);
-
-        if (session != null) {
-            if (sessionHolder.hasSolution()) {
-                try {
-                    Solution replanned = alnsPlanner.replanificar(vueloId, 6_500L);
-                    if (replanned != null && !replanned.getRoutes().isEmpty()) {
-                        session.setRescuedFlights(session.getRescuedFlights() + 1);
-                        log.info("Replanificación estática exitosa para el vuelo cancelado {}", vueloId);
-                    }
-                } catch (Exception e) {
-                    log.warn("Fallo en replanificación ALNS para vuelo cancelado {}: {}",
-                            vueloId, e.getMessage());
-                }
-            } else {
-                log.info("Simulación activa detectada. La replanificación del vuelo {} se realizará de forma reactiva en el ciclo actual/siguiente.", vueloId);
-            }
-        }
+        // La replanificación reactiva de las maletas afectadas ocurre dentro
+        // de SimulationService.computeBlock() en su próximo ciclo — no
+        // requiere ninguna acción adicional aquí.
     }
 }

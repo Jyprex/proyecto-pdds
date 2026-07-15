@@ -7,6 +7,7 @@ const FlightManagement = ({ flights, setFlights }) => {
         return localStorage.getItem('profileAirport') || '';
     });
     const [status, setStatus] = useState({ type: '', message: '' });
+    const [deleteId, setDeleteId] = useState('');
     const [sessionLogs, setSessionLogs] = useState(() => {
         try {
             const saved = localStorage.getItem('flightSessionLogs');
@@ -132,6 +133,40 @@ const FlightManagement = ({ flights, setFlights }) => {
             });
         }
     };
+
+    const deleteFlight = async (id) => {
+        if (!window.confirm(`¿Estás seguro de que deseas eliminar el vuelo ID ${id} de la base de datos permanentemente?`)) return;
+        try {
+            const res = await apiFetch(`/api/v1/vuelos/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                setStatus({ type: 'success', message: `Vuelo ${id} eliminado correctamente.` });
+                fetchFlights();
+            } else {
+                const text = await res.text();
+                setStatus({ type: 'error', message: `Error al eliminar: ${text}` });
+            }
+        } catch (err) {
+            setStatus({ type: 'error', message: `Error de conexión: ${err.message}` });
+        }
+    };
+
+    const deleteAllFlights = async () => {
+        if (!window.confirm(`⚠️ ADVERTENCIA CRÍTICA ⚠️\n\n¿ESTÁS COMPLETAMENTE SEGURO de eliminar TODOS los vuelos de la base de datos?\nEsta acción vaciará por completo la tabla de vuelos y no se puede deshacer.`)) return;
+
+        try {
+            const res = await apiFetch('/api/v1/vuelos/delete-all', { method: 'DELETE' });
+            if (res.ok) {
+                setStatus({ type: 'success', message: '¡Todos los vuelos han sido eliminados correctamente!' });
+                fetchFlights();
+            } else {
+                const text = await res.text();
+                setStatus({ type: 'error', message: `Error al eliminar todos: ${text}` });
+            }
+        } catch (err) {
+            setStatus({ type: 'error', message: `Error de conexión: ${err.message}` });
+        }
+    };
+
     useEffect(() => {
         if (entryMode === 'list') {
             fetchFlights();
@@ -568,6 +603,27 @@ const FlightManagement = ({ flights, setFlights }) => {
                                 ⚙ Filtros
                             </button>
                             <button onClick={fetchFlights} style={btnStyleSecondary}>↻ Actualizar</button>
+                            <div style={{ display: 'flex', marginLeft: 'auto', gap: '0.5rem' }}>
+                                <input
+                                    type="text"
+                                    placeholder="ID a eliminar"
+                                    value={deleteId}
+                                    onChange={(e) => setDeleteId(e.target.value)}
+                                    style={{ ...inputStyle, padding: '6px 10px', width: '120px' }}
+                                />
+                                <button
+                                    onClick={() => { if(deleteId) { deleteFlight(deleteId); setDeleteId(''); } }}
+                                    style={{ ...btnStyleSecondary, color: '#f87171', borderColor: 'rgba(248, 113, 113, 0.3)', background: 'transparent' }}
+                                >
+                                    Eliminar Vuelo
+                                </button>
+                                <button
+                                    onClick={deleteAllFlights}
+                                    style={{ ...btnStyleSecondary, color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.5)', background: 'rgba(239, 68, 68, 0.1)' }}
+                                >
+                                    ⚠️ Limpiar Todos
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -652,6 +708,7 @@ const FlightManagement = ({ flights, setFlights }) => {
                                     <th style={{ padding: '12px' }}>Salida</th>
                                     <th style={{ padding: '12px' }}>Llegada</th>
                                     <th style={{ padding: '12px' }}>Capacidad</th>
+                                    <th style={{ padding: '12px', textAlign: 'center' }}>Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -666,6 +723,14 @@ const FlightManagement = ({ flights, setFlights }) => {
                                             <td style={{ padding: '12px' }}>{formatTime(vuelo.departureMinute)}</td>
                                             <td style={{ padding: '12px' }}>{formatTime(vuelo.arrivalMinute)}</td>
                                             <td style={{ padding: '12px' }}>{vuelo.capacity}</td>
+                                            <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                <button
+                                                    onClick={() => deleteFlight(vuelo.id)}
+                                                    style={{ background: 'transparent', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', transition: '0.2s' }}
+                                                >
+                                                    Eliminar
+                                                </button>
+                                            </td>
                                         </tr>
                                     ))
                                 )}

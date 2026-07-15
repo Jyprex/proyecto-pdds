@@ -125,17 +125,17 @@ public class SuperLotService {
             boolean intercontinental = !acc.origenCont.equals(acc.destinoCont);
             long sla = intercontinental ? 48L * 3600_000 : 24L * 3600_000;
 
+            Map<String, Long> bagDeadlines = new HashMap<>();
+            for (Map.Entry<String, Long> br : acc.bagReadyTimes.entrySet()) {
+                bagDeadlines.put(br.getKey(), br.getValue() + sla);
+            }
+
             SuperLot lot = new SuperLot(
                     megaLotIdCounter.getAndIncrement(),
-                    partes[0],
-                    partes[1],
-                    acc.totalMaletas,
-                    acc.minReadyTime,
-                    sla,
-                    intercontinental,
-                    0,
-                    acc.bagIds
+                    partes[0], partes[1], acc.totalMaletas, acc.minReadyTime, sla,
+                    intercontinental, 0, acc.bagIds, bagDeadlines
             );
+            lot.setBagReadyTimes(new HashMap<>(acc.bagReadyTimes));
 
             lot.validate();
             superLots.add(lot);
@@ -175,10 +175,14 @@ public class SuperLotService {
             long minDeadline = Long.MAX_VALUE;
             int maxPriority = 0;
             List<String> mergedBagIds = new ArrayList<>();
+            Map<String, Long> mergedBagDeadlines = new HashMap<>();
+            Map<String, Long> mergedBagReadyTimes = new HashMap<>();
 
             for (SuperLot lot : grupo) {
                 totalMaletas += lot.getTotalMaletas();
                 mergedBagIds.addAll(lot.getBagIds());
+                mergedBagDeadlines.putAll(lot.getBagDeadlines());
+                mergedBagReadyTimes.putAll(lot.getBagReadyTimes());
                 if (lot.getReadyTime() < minReadyTime) minReadyTime = lot.getReadyTime();
                 if (lot.getDeadline() < minDeadline) minDeadline = lot.getDeadline();
                 if (lot.getPriority() > maxPriority) maxPriority = lot.getPriority();
@@ -196,8 +200,10 @@ public class SuperLotService {
                     newSla,
                     first.isIntercontinental(),
                     maxPriority,
-                    mergedBagIds
+                    mergedBagIds,
+                    mergedBagDeadlines
             );
+            mergedLot.setBagReadyTimes(mergedBagReadyTimes);
             result.add(mergedLot);
         }
         return result;
@@ -214,6 +220,7 @@ public class SuperLotService {
         String destinoCont;
         long minReadyTime;
         List<String> bagIds = new ArrayList<>();
+        Map<String, Long> bagReadyTimes = new HashMap<>();
 
         Accumulator(String origenContName, String destinoContName, long readyTime) {
             this.totalMaletas = 0;
@@ -227,7 +234,9 @@ public class SuperLotService {
             this.minReadyTime = Math.min(this.minReadyTime, readyTime);
             String globalCode = origenIcao + "_" + codigoPedido;
             for (int i = 1; i <= bags; i++) {
-                this.bagIds.add(globalCode + "-" + i);
+                String bagId = globalCode + "-" + i;
+                this.bagIds.add(bagId);
+                this.bagReadyTimes.put(bagId, readyTime);
             }
         }
     }

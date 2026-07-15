@@ -33,4 +33,24 @@ public class VueloController {
             return org.springframework.http.ResponseEntity.badRequest().body("Error: " + e.getMessage());
         }
     }
+
+    @DeleteMapping("/{id}")
+    public org.springframework.http.ResponseEntity<?> eliminar(@PathVariable Long id) {
+        try {
+            service.eliminar(id);
+            return org.springframework.http.ResponseEntity.ok("Vuelo eliminado correctamente");
+        } catch (Exception e) {
+            return org.springframework.http.ResponseEntity.badRequest().body("Error: " + e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/delete-all")
+    public org.springframework.http.ResponseEntity<?> eliminarTodos() {
+        try {
+            service.eliminarTodos();
+            return org.springframework.http.ResponseEntity.ok("Todos los vuelos han sido eliminados correctamente.");
+        } catch (Exception e) {
+            return org.springframework.http.ResponseEntity.badRequest().body("Error: " + e.getMessage());
+        }
+    }
 }

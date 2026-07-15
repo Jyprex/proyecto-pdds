@@ -1,4 +1,4 @@
-package com.tasfb2b.vuelo.service;
+    package com.tasfb2b.vuelo.service;
 
 import com.tasfb2b.aeropuerto.domain.Aeropuerto;
 import com.tasfb2b.aeropuerto.repository.AeropuertoRepository;
@@ -246,5 +246,16 @@ public class VueloService {
     public Vuelo obtenerVuelo(Long id) {
         return vueloRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Vuelo no encontrado: " + id));
+    }
+
+    public void eliminar(Long id) {
+        if (!vueloRepo.existsById(id)) {
+            throw new RuntimeException("Vuelo no encontrado con ID: " + id);
+        }
+        vueloRepo.deleteById(id);
+    }
+
+    public void eliminarTodos() {
+        vueloRepo.deleteAll();
     }
 }

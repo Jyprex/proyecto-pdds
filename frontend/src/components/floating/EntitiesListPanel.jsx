@@ -43,30 +43,62 @@ function useBagTracking(sessionId, kind, id) {
       return;
     }
 
+    let cancelled = false;
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
 
-    const url = kind === 'flight'
-        ? `/api/shipments/${sessionId}/flight-instance/${id}`
-        : `/api/shipments/${sessionId}/airport/${id}`;
+    const fetchBags = (isFirst) => {
+      if (isFirst) setLoading(true);
+      setError(null);
+      const url = kind === 'flight'
+          ? `/api/shipments/${sessionId}/flight-instance/${id}`
+          : `/api/shipments/${sessionId}/airport/${id}`;
 
-    fetch(url, { signal: controller.signal })
-        .then(res => {
-          if (!res.ok) throw new Error('No se pudo cargar trazabilidad');
-          return res.json();
-        })
-        .then(data => setBags(Array.isArray(data) ? data : []))
-        .catch(err => {
-          if (err.name !== 'AbortError') setError(err);
-        })
-        .finally(() => setLoading(false));
+      fetch(url, { signal: controller.signal })
+          .then(res => {
+            if (!res.ok) throw new Error('No se pudo cargar trazabilidad');
+            return res.json();
+          })
+          .then(data => { if (!cancelled) setBags(Array.isArray(data) ? data : []); })
+          .catch(err => { if (!cancelled && err.name !== 'AbortError') setError(err); })
+          .finally(() => { if (!cancelled && isFirst) setLoading(false); });
+    };
 
-    return () => controller.abort();
+    fetchBags(true);
+    // Refresco periódico: la trazabilidad NO llega por WebSocket, es un
+    // fetch puntual. Sin este polling, un panel dejado abierto se queda
+    // congelado en la foto del momento en que se abrió — de ahí que
+    // parezca "no sincronizado" o que muestre maletas ya entregadas.
+    const interval = setInterval(() => fetchBags(false), 3000);
+
+    return () => { cancelled = true; controller.abort(); clearInterval(interval); };
   }, [sessionId, kind, id]);
 
   return { bags, loading, error };
 }
+
+function useAirportPlan(sessionId, icao) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchPlan = useCallback(() => {
+    if (!sessionId || !icao) return;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/v1/simulation/airport-plan/${sessionId}/${icao}`)
+        .then(res => { if (!res.ok) throw new Error('No se pudo cargar la planificación'); return res.json(); })
+        .then(setData)
+        .catch(err => setError(err))
+        .finally(() => setLoading(false));
+  }, [sessionId, icao]);
+
+  return { data, loading, error, fetchPlan };
+}
+
+const fmtTimeLong = (ts) => {
+  if (!ts) return '--:--';
+  return new Date(ts).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+};
 
 // ── Resumen agregado (siempre liviano, sin importar cuántas maletas haya) ──
 function BagTrackingSummary({ bags, loading, error, onShowDetail }) {
@@ -172,15 +204,53 @@ function BagDetailModal({ title, bags, onClose }) {
   );
 }
 
+function AirportPlanModal({ icao, data, loading, error, onClose }) {
+  return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
+        <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '16px', width: '440px', maxHeight: '75vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#e2e8f0' }}>📋 Planificación — {icao}</span>
+            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          </div>
+
+          {loading && <div style={{ fontSize: '11px', color: '#64748b', padding: '10px 0' }}>Cargando plan...</div>}
+          {error && <div style={{ fontSize: '11px', color: '#ef4444', padding: '10px 0' }}>Error cargando plan</div>}
+
+          {data && (
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '10px' }}>
+                  📥 Entrantes: <strong style={{ color: '#e2e8f0' }}>{data.totalBagsArriving}</strong> maletas ·
+                  📤 Salientes: <strong style={{ color: '#e2e8f0' }}>{data.totalBagsDeparting}</strong> maletas
+                  <br /><span style={{ fontSize: '9px', color: '#475569' }}>Click en un vuelo para ver sus maletas específicas (código origen_pedido-N)</span>
+                </div>
+
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#f59e0b', marginBottom: '6px' }}>📤 SALIDAS ({data.departingFlights.length})</div>
+                {data.departingFlights.length === 0
+                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic', marginBottom: '12px' }}>Sin salidas en este bloque</div>
+                    : <div style={{ marginBottom: '12px' }}>{data.departingFlights.map((f, i) => <AirportPlanFlightRow key={i} flight={f} direction="departure" />)}</div>}
+
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#3b82f6', marginBottom: '6px' }}>📥 LLEGADAS ({data.arrivingFlights.length})</div>
+                {data.arrivingFlights.length === 0
+                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic' }}>Sin llegadas en este bloque</div>
+                    : data.arrivingFlights.map((f, i) => <AirportPlanFlightRow key={i} flight={f} direction="arrival" />)}
+              </div>
+          )}
+        </div>
+      </div>
+  );
+}
+
 const getLevelColor = (percent) => {
   if (percent >= 90) return '#ef4444';
   if (percent >= 70) return '#f59e0b';
   return '#10b981';
 };
 
-const fmtTime = (ts) => {
-  if (!ts) return '--:--';
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const fmtTimeRange = (dep, arr) => {
+  if (!dep || !arr) return '--:--';
+  const t1 = new Date(dep).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+  const t2 = new Date(arr).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+  return `${t1} - ${t2} UTC`;
 };
 
 const FlightRow = React.memo(function FlightRow({ index, style, data }) {
@@ -218,7 +288,7 @@ const FlightRow = React.memo(function FlightRow({ index, style, data }) {
               <span>{ut.from} ➔ {ut.to}</span>
               {ut.departureTime && ut.arrivalTime && (
                 <span style={{ color: '#64748b', fontSize: '10px', background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px' }}>
-                  {fmtTime(ut.departureTime)} - {fmtTime(ut.arrivalTime)}
+                  {fmtTimeRange(ut.departureTime, ut.arrivalTime)}
                 </span>
               )}
             </div>
@@ -283,7 +353,7 @@ function FlightDetailPanel({ flight, onClose, bagSummary }) {
 }
 
 const WarehouseRow = React.memo(function WarehouseRow({ index, style, data }) {
-  const { warehouses, expandedWh, setExpandedWh, handleSelectWarehouse, focusedEntity, airportMetrics } = data;
+  const { warehouses, expandedWh, setExpandedWh, handleSelectWarehouse, focusedEntity, airportMetrics, warehouseNearestTimes } = data;
   const wh = warehouses[index];
   if (!wh) return null;
 
@@ -291,6 +361,14 @@ const WarehouseRow = React.memo(function WarehouseRow({ index, style, data }) {
   const pct = metrics.occupancy ?? 0;
   const semaforo = getLevelColor(pct);
   const isFocused = focusedEntity?.type === 'airport' && focusedEntity?.id === wh.icao;
+  const nextDep = warehouseNearestTimes?.dep[wh.icao];
+  const nextArr = warehouseNearestTimes?.arr[wh.icao];
+  const fmtNext = (info) => {
+    if (!info) return '--:--';
+    const fid = info.id?.toString().replace('vuelo-', '').split('-')[0] ?? '?';
+    const t = new Date(info.time).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+    return `V${fid} ${t}`;
+  };
 
   return (
     <div style={{ ...style, padding: '2px 4px', boxSizing: 'border-box' }}>
@@ -303,9 +381,9 @@ const WarehouseRow = React.memo(function WarehouseRow({ index, style, data }) {
           cursor: 'pointer',
           height: '100%',
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'flex-start',
           justifyContent: 'space-between',
-          padding: '10px 12px',
+          padding: '8px 10px',
           boxSizing: 'border-box',
         }}
         onClick={() => {
@@ -313,13 +391,21 @@ const WarehouseRow = React.memo(function WarehouseRow({ index, style, data }) {
           handleSelectWarehouse(wh);
         }}
       >
-        <div>
-          <div style={{ fontWeight: 'bold', color: '#e2e8f0', fontSize: '14px', marginBottom: '2px' }}>{wh.icao}</div>
-          <div style={{ fontSize: '11px', color: '#9ca3af' }}>{wh.city}</div>
+        <div style={{ flexShrink: 0 }}>
+          <div style={{ fontWeight: 'bold', color: '#e2e8f0', fontSize: '14px', marginBottom: '3px' }}>{wh.icao}</div>
+          <div style={{ fontSize: '11px', color: '#cbd5e1' }}>{wh.city}</div>
+        </div>
+        <div style={{ fontSize: '10px', color: '#9ca3af', textAlign: 'center' }}>
+          <div style={{ marginBottom: '2px' }}>
+            <span>→{fmtNext(nextDep)}</span>
+          </div>
+          <div>
+            <span>←{fmtNext(nextArr)}</span>
+          </div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: '14px', fontWeight: 'bold', color: semaforo }}>{Math.trunc(pct).toFixed(0)}%</div>
-          <div style={{ fontSize: '10px', color: '#94a3b8' }}>{metrics.storedBags ?? 0} / {metrics.warehouseCapacity ?? 0} stock</div>
+          <div style={{ fontSize: '10px', color: '#94a3b8' }}>{metrics.storedBags ?? 0} / {metrics.warehouseCapacity ?? 0}</div>
         </div>
       </div>
     </div>
@@ -329,14 +415,18 @@ const WarehouseRow = React.memo(function WarehouseRow({ index, style, data }) {
   const b = next.data.warehouses[next.index];
   const ma = prev.data.airportMetrics[a?.icao] || {};
   const mb = next.data.airportMetrics[b?.icao] || {};
+  const ta = prev.data.warehouseNearestTimes;
+  const tb = next.data.warehouseNearestTimes;
   return a?.icao === b?.icao
       && ma.occupancy === mb.occupancy
       && ma.storedBags === mb.storedBags
+      && ta?.dep[a?.icao] === tb?.dep[b?.icao]
+      && ta?.arr[a?.icao] === tb?.arr[b?.icao]
       && prev.data.expandedWh === next.data.expandedWh
       && prev.data.focusedEntity?.id === next.data.focusedEntity?.id;
 });
 
-function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelectFlight, bagSummary }) {
+function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelectFlight, bagSummary, onShowPlan }) {
   if (!warehouse) return null;
 
   return (
@@ -356,8 +446,14 @@ function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelect
 
       <div style={{ fontSize: '12px', color: '#e2e8f0', marginBottom: '8px', fontWeight: 'bold' }}>
         🏭 {warehouse.icao} — {warehouse.city}
-      </div>
 
+      </div>
+      <button
+          onClick={onShowPlan}
+          style={{ marginBottom: '10px', padding: '5px 10px', fontSize: '10px', fontWeight: 'bold', border: '1px solid rgba(96,165,250,0.4)', borderRadius: '4px', background: 'rgba(96,165,250,0.1)', color: '#60a5fa', cursor: 'pointer' }}
+      >
+        📋 Ver planificación completa
+      </button>
       <div style={{ fontSize: '11px', color: '#cbd5e1', marginBottom: '8px', fontWeight: 'bold' }}>
         📥 VUELOS ENTRANTES ({incoming?.length || 0})
       </div>
@@ -401,6 +497,46 @@ function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelect
   );
 }
 
+function AirportPlanFlightRow({ flight, direction }) {
+  const [showBags, setShowBags] = useState(false);
+  const bagIds = flight.bagIds || [];
+  const isDeparture = direction === 'departure';
+
+  return (
+      <div style={{ borderBottom: '1px dashed rgba(255,255,255,0.05)', padding: '4px 0' }}>
+        <div
+            onClick={() => bagIds.length > 0 && setShowBags(v => !v)}
+            style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ca3af', cursor: bagIds.length > 0 ? 'pointer' : 'default' }}
+        >
+        <span>
+          ✈ #{flight.vueloId} {isDeparture ? `→ ${flight.to}` : `← ${flight.from}`}
+          {bagIds.length > 0 && <span style={{ marginLeft: '4px', color: '#60a5fa' }}>{showBags ? '▴' : '▾'}</span>}
+        </span>
+          <span>{fmtTimeLong(isDeparture ? flight.departureTime : flight.arrivalTime)} · {flight.totalBags} maletas</span>
+        </div>
+        {showBags && bagIds.length > 0 && (
+            <div style={{
+              marginTop: '4px', marginBottom: '2px', padding: '6px',
+              background: 'rgba(0,0,0,0.25)', borderRadius: '4px',
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '3px',
+              maxHeight: '140px', overflowY: 'auto',
+            }}>
+              {bagIds.map(bagId => (
+                  // bagId ya viene como "AEROPUERTO_CODPEDIDO-N" desde el backend
+                  <span key={bagId} style={{
+                    fontSize: '9px', fontFamily: 'monospace', color: '#94a3b8',
+                    padding: '2px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: '3px',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }} title={bagId}>
+              {bagId}
+            </span>
+              ))}
+            </div>
+        )}
+      </div>
+  );
+}
+
 const getLevelName = (percent) => {
   if (percent >= 90) return 'red';
   if (percent >= 70) return 'amber';
@@ -436,6 +572,14 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
 
   // ── Modal de detalle de maletas (compartido entre vuelo/almacén) ──────
   const [bagDetailTarget, setBagDetailTarget] = useState(null); // { title, bags } | null
+
+  const [airportPlanTarget, setAirportPlanTarget] = useState(null);
+  const { data: airportPlanData, loading: airportPlanLoading, error: airportPlanError, fetchPlan: fetchAirportPlan } =
+      useAirportPlan(sessionId, airportPlanTarget);
+
+  useEffect(() => {
+    if (airportPlanTarget) fetchAirportPlan();
+  }, [airportPlanTarget]);
 
   const {
     focusedEntity,
@@ -520,7 +664,15 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
 
     if (utSearch) {
       const q = utSearch.toLowerCase();
-      result = result.filter(ut => ut.id?.toLowerCase().includes(q));
+      result = result.filter(ut => {
+        if (!ut.id) return false;
+
+        // Extraemos ESTRICTAMENTE el ID que el usuario ve en la tarjeta (ej: "506")
+        const visibleId = ut.id.toString().replace("vuelo-", "").split("-")[0].toLowerCase();
+
+        // Buscamos solo dentro de ese ID visible, ignorando el resto del texto del backend
+        return visibleId.startsWith(q);
+      });
     }
     if (utSearchOrigin) {
       const q = utSearchOrigin.toLowerCase();
@@ -540,7 +692,6 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
       });
     }
 
-    // Filtro por continente para los vuelos en la lista
     if (activeFilters.continent) {
       result = result.filter(ut => {
         const fromAirport = airports.find(a => a.icao === ut.from);
@@ -561,7 +712,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
     });
 
     return result;
-  }, [activeAircraft, utSearch, utSearchOrigin, utSearchDest, utSort, activeFilters.flightStatus, activeFilters.continent, airports]);
+  }, [activeTab, activeAircraft, utSearch, utSearchOrigin, utSearchDest, utSort, activeFilters.flightStatus, activeFilters.continent, airports]);
 
   const selectedFlightDetail = useMemo(() => {
     if (!expandedUt) return null;
@@ -603,6 +754,22 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
     return connected.size > 1 ? connected : null;
   }, [focusedEntity, activeAircraft]);
 
+  const warehouseNearestTimes = useMemo(() => {
+    const dep = {};
+    const arr = {};
+    (activeAircraft || []).forEach(f => {
+      if (f.from && f.departureTime) {
+        if (!dep[f.from] || f.departureTime < dep[f.from].time)
+          dep[f.from] = { time: f.departureTime, id: f.id };
+      }
+      if (f.to && f.arrivalTime) {
+        if (!arr[f.to] || f.arrivalTime < arr[f.to].time)
+          arr[f.to] = { time: f.arrivalTime, id: f.id };
+      }
+    });
+    return { dep, arr };
+  }, [activeAircraft]);
+
   const filteredWarehouses = useMemo(() => {
     if (activeTab !== 'wh') return [];
     let result = [...(airports || [])];
@@ -610,7 +777,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
     if (whSearch) {
       const q = whSearch.toLowerCase();
       result = result.filter(wh =>
-          wh.icao?.toLowerCase().includes(q) ||
+          wh.icao?.toLowerCase().startsWith(q) ||
           wh.city?.toLowerCase().includes(q)
       );
     }
@@ -653,7 +820,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
     });
 
     return result;
-  }, [airports, airportMetrics, activeAircraft, whSearch, activeFilters.continent, whSort, activeFilters.semaphoreLevel, connectedIcaoSet]);
+  }, [activeTab, airports, airportMetrics, activeAircraft, whSearch, activeFilters.continent, whSort, activeFilters.semaphoreLevel, connectedIcaoSet]);
 
   useEffect(() => {
     const last = lastMapSelectionRef.current;
@@ -752,26 +919,26 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                         ))}
                       </div>
 
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <input type="text" placeholder="ID..." value={utSearch} onChange={(e) => setUtSearch(e.target.value)}
-                               style={{ width: '60px', fontSize: '11px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', boxSizing: 'border-box' }} />
-                        <input type="text" placeholder="Origen..." value={utSearchOrigin} onChange={(e) => setUtSearchOrigin(e.target.value)}
-                               style={{ flex: 1, fontSize: '11px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', boxSizing: 'border-box' }} />
-                        <input type="text" placeholder="Destino..." value={utSearchDest} onChange={(e) => setUtSearchDest(e.target.value)}
-                               style={{ flex: 1, fontSize: '11px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', boxSizing: 'border-box' }} />
-                      </div>
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <select value={utSort} onChange={(e) => setUtSort(e.target.value)}
-                                style={{ flex: 1,  height: '30px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', fontSize: '11px' }}
-                        >
-                          <option value="occupancy_desc">Ocupación (Mayor a Menor)</option>
-                          <option value="occupancy_asc">Ocupación (Menor a Mayor)</option>
-                          <option value="dep_asc">Hora de Salida</option>
-                          <option value="arr_asc">Hora de Llegada</option>
-                          <option value="origin">Origen (A-Z)</option>
-                          <option value="dest">Destino (A-Z)</option>
-                        </select>
-                      </div>
+                       <div style={{ display: 'flex', gap: '4px' }}>
+                         <input type="text" placeholder="ID..." value={utSearch} onChange={(e) => setUtSearch(e.target.value)}
+                                style={{ width: '60px', fontSize: '11px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', boxSizing: 'border-box' }} />
+                         <input type="text" placeholder="Origen..." value={utSearchOrigin} onChange={(e) => setUtSearchOrigin(e.target.value)}
+                                style={{ flex: 1, fontSize: '11px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', boxSizing: 'border-box' }} />
+                         <input type="text" placeholder="Destino..." value={utSearchDest} onChange={(e) => setUtSearchDest(e.target.value)}
+                                style={{ flex: 1, fontSize: '11px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', boxSizing: 'border-box' }} />
+                       </div>
+                       <div style={{ display: 'flex', gap: '4px' }}>
+                         <select value={utSort} onChange={(e) => setUtSort(e.target.value)}
+                                 style={{ flex: 1,  height: '30px', padding: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', fontSize: '11px' }}
+                         >
+                           <option value="occupancy_desc">Ocupación (Mayor a Menor)</option>
+                           <option value="occupancy_asc">Ocupación (Menor a Mayor)</option>
+                           <option value="dep_asc">Hora de Salida</option>
+                           <option value="arr_asc">Hora de Llegada</option>
+                           <option value="origin">Origen (A-Z)</option>
+                           <option value="dest">Destino (A-Z)</option>
+                         </select>
+                       </div>
 
                       {filteredUTs.length > 0 && (
                           <List
@@ -779,7 +946,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                               width="100%"
                               itemCount={filteredUTs.length}
                               itemSize={72}
-                              itemData={{ flights: filteredUTs, expandedUt, setExpandedUt, handleSelectUT, focusedEntity }}
+                               itemData={{ flights: filteredUTs, expandedUt, setExpandedUt, handleSelectUT, focusedEntity }}
                           >
                             {FlightRow}
                           </List>
@@ -815,6 +982,7 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                           outgoing={getWarehouseFlights(expandedWh).outgoing}
                           onClose={() => { setExpandedWh(null); clearFocusedEntity(); dispatchMapCommand('resetView'); }}
                           onSelectFlight={handleSelectUT}
+                          onShowPlan={() => setAirportPlanTarget(selectedWarehouseDetail.icao)}
                           bagSummary={
                             <BagTrackingSummary
                                 bags={warehouseBags}
@@ -900,14 +1068,15 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                               height={420}
                               width="100%"
                               itemCount={filteredWarehouses.length}
-                              itemSize={56}
-                              itemData={{
+              itemSize={62}
+              itemData={{
                                 warehouses: filteredWarehouses,
                                 expandedWh,
                                 setExpandedWh,
                                 handleSelectWarehouse,
                                 focusedEntity,
                                 airportMetrics,
+                                warehouseNearestTimes,
                               }}
                           >
                             {WarehouseRow}
@@ -929,6 +1098,15 @@ export default function EntitiesListPanel({ activeAircraft, airports, airportMet
                 title={bagDetailTarget.title}
                 bags={bagDetailTarget.bags}
                 onClose={() => setBagDetailTarget(null)}
+            />
+        )}
+        {airportPlanTarget && (
+            <AirportPlanModal
+                icao={airportPlanTarget}
+                data={airportPlanData}
+                loading={airportPlanLoading}
+                error={airportPlanError}
+                onClose={() => setAirportPlanTarget(null)}
             />
         )}
       </aside>

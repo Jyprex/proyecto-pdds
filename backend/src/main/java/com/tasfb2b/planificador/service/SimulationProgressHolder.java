@@ -4,7 +4,7 @@ import com.tasfb2b.planificador.domain.CollapseEndCondition;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
 import lombok.Data;
 import org.springframework.stereotype.Component;
-
+import java.util.concurrent.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +59,7 @@ public class SimulationProgressHolder {
      */
     @Data
     public static class SimulationSessionState {
+
         private String sessionId;
         private Status status = Status.RUNNING;
         private int speedFactor = 1;
@@ -162,6 +163,12 @@ public class SimulationProgressHolder {
 
         /** Vuelos cuya cancelación se difirió al día siguiente por la regla de 1h. */
         private final Set<Long> pendingNextDayCancellations = ConcurrentHashMap.newKeySet();
+
+        /** Snapshot del plan del bloque ACTUAL (se sobreescribe cada bloque, no solo al día).
+         *  Fuente de datos para /airport-plan/{sessionId}/{icao}. */
+        private volatile List<Map<String, Object>> currentMasterPlanSnapshot = new ArrayList<>();
+
+        private Long actualStartEpoch;
     }
 
     private final ConcurrentHashMap<String, SimulationSessionState> sessions =

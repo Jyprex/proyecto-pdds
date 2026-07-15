@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { apiFetch } from '../../hooks/api';
 
 const UpcomingFlightsPanel = ({ currentEpochTime = 0 }) => {
@@ -55,12 +55,16 @@ const UpcomingFlightsPanel = ({ currentEpochTime = 0 }) => {
         }
     };
 
+    const currentUtcDay = currentEpochTime > 0 ? Math.floor(currentEpochTime / 86400000) : 0;
+    const fetchRef = useRef(fetchUpcomingFlights)
+    fetchRef.current = fetchUpcomingFlights
+
     useEffect(() => {
-        fetchUpcomingFlights();
+        fetchRef.current();
         // Recargar cada minuto
-        const interval = setInterval(fetchUpcomingFlights, 60000);
+        const interval = setInterval(() => fetchRef.current(), 60000);
         return () => clearInterval(interval);
-    }, []);
+    }, [currentUtcDay]);
 
     // Formatear minutos (0-1439) a HH:MM
     const formatTime = (minutes) => {

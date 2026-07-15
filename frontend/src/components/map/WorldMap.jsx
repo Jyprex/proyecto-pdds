@@ -5,7 +5,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 
 import { WebMercatorViewport } from "@deck.gl/core";
 import { useSelectionBridge } from "../../hooks/useSelectionBridge";
-import { AIRPORTS, AIRPORT_BY_ICAO, interpolateCoordinates } from "../../data/airportsData";
+import { AIRPORTS, AIRPORT_BY_ICAO } from "../../data/airportsData";
 
 function getFitViewState(width = 1200, height = 800) {
   const bounds = AIRPORTS.reduce((acc, ap) => {
@@ -127,6 +127,7 @@ const WorldMap = ({
   isDayToDay = false,
   onBackgroundClick = () => {},
   onReset = () => {},
+  suppressCompletionOverlay = false,
 }) => {
   // flightColorFilters y airportColorFilters ahora vienen del SelectionBridge (compartidos)
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
@@ -223,34 +224,44 @@ const WorldMap = ({
 
   const lastSelectedAircraftRef = useRef(null);
 
-  // Tracking del avión seleccionado
+  // Al seleccionar vuelo → zoom para ver ambos aeropuertos
   useEffect(() => {
     if (selectedAircraftId) {
       const plane = activeAircraft.find(p => p.id === selectedAircraftId);
       if (plane) {
         const from = airportByIcao[plane.from] || AIRPORT_BY_ICAO[plane.from];
         const to = airportByIcao[plane.to] || AIRPORT_BY_ICAO[plane.to];
-        if (from && to) {
+        if (from && to && from.coordinates && to.coordinates) {
           if (lastSelectedAircraftRef.current !== selectedAircraftId) {
             lastSelectedAircraftRef.current = selectedAircraftId;
-            // Comentado para evitar que la cámara haga auto-zoom al avión
-            /*
-            const pos = interpolateCoordinates(from, to, plane.progress ?? 0);
+            const bounds = {
+              minLng: Math.min(from.coordinates[0], to.coordinates[0]),
+              maxLng: Math.max(from.coordinates[0], to.coordinates[0]),
+              minLat: Math.min(from.coordinates[1], to.coordinates[1]),
+              maxLat: Math.max(from.coordinates[1], to.coordinates[1]),
+            };
+            const w = containerRef.current?.clientWidth || 1200;
+            const h = containerRef.current?.clientHeight || 800;
+            const padding = Math.min(w, h) * 0.15;
+            const viewport = new WebMercatorViewport({ width: w, height: h });
+            const fitted = viewport.fitBounds(
+              [[bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat]],
+              { padding }
+            );
             setViewState(prev => ({
               ...prev,
-              longitude: pos[0],
-              latitude: pos[1],
-              zoom: 4,
+              longitude: fitted.longitude,
+              latitude: fitted.latitude,
+              zoom: Math.min(fitted.zoom, 5),
               transitionDuration: 1000
             }));
-            */
           }
         }
       }
     } else {
       lastSelectedAircraftRef.current = null;
     }
-  }, [selectedAircraftId, airportByIcao]);
+  }, [selectedAircraftId, activeAircraft, airportByIcao]);
 
   const lastSelectedAirportRef = useRef(null);
 
@@ -465,7 +476,7 @@ const WorldMap = ({
         </button>
 
         <div style={{
-          background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '10px', width: 'max-content',
+          background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '8px', width: 'max-content',
           opacity: isFilterPanelOpen ? 1 : 0,
           transform: isFilterPanelOpen ? 'translateY(0) scale(1)' : 'translateY(-10px) scale(0.95)',
           pointerEvents: isFilterPanelOpen ? 'auto' : 'none',
@@ -473,46 +484,46 @@ const WorldMap = ({
           transformOrigin: 'top right'
         }}>
           {/* Vuelos Section */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>✈️</span> Vuelos</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>✈️</span></div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.gray} onChange={(e) => setFlightColorFilters(p => ({...p, gray: e.target.checked}))} style={{ accentColor: '#64748b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span> Sin envíos
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.green} onChange={(e) => setFlightColorFilters(p => ({...p, green: e.target.checked}))} style={{ accentColor: '#10b981', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span> {'< 70%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.yellow} onChange={(e) => setFlightColorFilters(p => ({...p, yellow: e.target.checked}))} style={{ accentColor: '#f59e0b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span> 70% - 90%
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={flightColorFilters.red} onChange={(e) => setFlightColorFilters(p => ({...p, red: e.target.checked}))} style={{ accentColor: '#ef4444', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span> {'> 90%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
             </label>
           </div>
 
           <div style={{ height: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
 
           {/* Almacenes Section */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>🏭</span> Almacenes</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span>🏭</span></div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.gray} onChange={(e) => setAirportColorFilters(p => ({...p, gray: e.target.checked}))} style={{ accentColor: '#64748b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span> Vacío / Normal
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.green} onChange={(e) => setAirportColorFilters(p => ({...p, green: e.target.checked}))} style={{ accentColor: '#10b981', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span> {'< 70%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.yellow} onChange={(e) => setAirportColorFilters(p => ({...p, yellow: e.target.checked}))} style={{ accentColor: '#f59e0b', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span> 70% - 90%
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
               <input type="checkbox" checked={airportColorFilters.red} onChange={(e) => setAirportColorFilters(p => ({...p, red: e.target.checked}))} style={{ accentColor: '#ef4444', transform: 'scale(0.9)' }} />
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span> {'> 90%'}
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
             </label>
           </div>
         </div>
@@ -574,7 +585,7 @@ const WorldMap = ({
       </DeckGL>
 
 
-      {simState === "completed" && !isModalDismissed && (
+      {simState === "completed" && !isModalDismissed && !suppressCompletionOverlay &&(
         <div style={{
           position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
           background: "rgba(15, 23, 42, 0.95)", border: `2px solid ${isCollapseScenario ? "#ef4444" : "#10b981"}`,

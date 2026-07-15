@@ -15,11 +15,15 @@ import java.util.Map;
 /**
  * Ejecuta la simulación basada en eventos sobre un conjunto de rutas.
  *
- * <p>Soporta dos modos de operación:
- * <ul>
- *   <li>{@link #run}: one-shot completo (para HGA/ALNS fitness evaluation)</li>
- *   <li>{@link #advanceTo}: incremental (para micro-batching en SimulationService)</li>
- * </ul>
+ * <p>Usado EXCLUSIVAMENTE por {@link com.tasfb2b.planificador.service.ALNSPlannerService}
+ * para evaluar el fitness de cada candidato durante el ALNS ({@code run}, "one-shot").
+ * Es crítico para el buen funcionamiento del algoritmo — cada iteración de ALNS lo
+ * invoca para simular una solución candidata y medir su calidad real.
+ *
+ * <p>{@code advanceTo} queda SIN USO ACTIVO desde la migración a la arquitectura de
+ * doble búfer por bloques: {@code SimulationService.computeBlock()} hace su propio
+ * avance incremental de eventos inline, sin pasar por este método. Se conserva por si
+ * se necesita reutilizar el mecanismo de avance incremental en el futuro.
  */
 @Component
 @RequiredArgsConstructor
@@ -30,10 +34,12 @@ public class SimulationRunner {
 
     /**
      * Simulación one-shot: crea un estado nuevo, genera todos los eventos
-     * y los aplica secuencialmente. Usado para evaluación de fitness en HGA/ALNS.
+     * y los aplica secuencialmente. Usado para evaluación de fitness en ALNS.
      *
-     * <p>Nota: el colapso YA NO aborta la simulación (colapso informativo).
-     * Todos los eventos se procesan hasta el final para obtener métricas completas.
+     * <p>Con la nueva SimulationState (colapso duro e inmediato), si una solución
+     * candidata viola capacidad de vuelo/almacén, el estado queda "congelado" en
+     * ese instante (apply() ignora eventos posteriores) — el fitness evaluator
+     * penaliza esto naturalmente vía isColapsado()/getCurrentTime().
      */
     public SimulationState run(List<Route> routes,
                                Map<String, Aeropuerto> airports,
@@ -45,45 +51,21 @@ public class SimulationRunner {
                 .distinct()
                 .toList();
 
-        SimulationState state =
-                new SimulationState(
-                        new ArrayList<>(airports.values()),
-                        vuelos,
-                        startTime,
-                        bloqueoService
-                );
+        SimulationState state = new SimulationState(
+                new ArrayList<>(airports.values()), vuelos, startTime, bloqueoService);
 
-        long t0 = System.nanoTime();
         List<Event> events = engine.buildEvents(routes, dayStartEpochMs);
-        long buildNanos = System.nanoTime() - t0;
-        state.setBuildEventsTimeNanos(buildNanos);
-
-        long t1 = System.nanoTime();
-        int applied = 0;
         for (Event e : events) {
             state.apply(e, airports);
-            applied++;
         }
-        long applyNanos = System.nanoTime() - t1;
-        state.setApplyEventsTimeNanos(applyNanos);
-        state.setEventCounts(events.size(), applied);
 
         return state;
     }
 
     /**
-     * Simulación incremental: avanza un estado EXISTENTE hasta {@code untilTime},
-     * registrando los vuelos de las rutas nuevas y aplicando solo eventos
-     * dentro de la ventana temporal {@code [state.currentTime, untilTime)}.
-     *
-     * <p>Usado por el micro-batching de SimulationService para avanzar
-     * ciclo a ciclo sin reconstruir el estado completo.
-     *
-     * @param state      estado mutable existente (persistente entre ciclos)
-     * @param allRoutes  TODAS las rutas conocidas hasta ahora (master solution)
-     * @param airports   mapa de aeropuertos
-     * @param dayStart   epoch del inicio del día actual (para EventEngine)
-     * @param untilTime  epoch hasta dónde avanzar
+     * Simulación incremental: avanza un estado EXISTENTE hasta {@code untilTime}.
+     * NO USADO ACTUALMENTE por el flujo principal (ver nota de clase) — se mantiene
+     * compilable y funcional por si se retoma en el futuro.
      */
     public void advanceTo(SimulationState state,
                           List<Route> allRoutes,
@@ -91,34 +73,20 @@ public class SimulationRunner {
                           long dayStart,
                           long untilTime) {
 
-        // Registrar vuelos de rutas nuevas (si los hay)
         for (Route r : allRoutes) {
             if (r.getFlights() != null) {
                 state.registerFlights(r.getFlights());
             }
         }
 
-        long t0 = System.nanoTime();
         List<Event> events = engine.buildEvents(allRoutes, dayStart);
-        long buildNanos = System.nanoTime() - t0;
-        state.setBuildEventsTimeNanos(buildNanos);
-
-        long t1 = System.nanoTime();
-        int total = events.size();
-        int applied = 0;
 
         for (Event e : events) {
-            // Solo aplicar eventos que están DENTRO de la ventana temporal
             if (e.getTime() < state.getCurrentTime()) continue;
             if (e.getTime() >= untilTime) break;
-
             state.apply(e, airports);
-            applied++;
         }
 
-        long applyNanos = System.nanoTime() - t1;
-        state.setApplyEventsTimeNanos(applyNanos);
-        state.setEventCounts(total, applied);
         state.setCurrentTime(untilTime);
     }
 }

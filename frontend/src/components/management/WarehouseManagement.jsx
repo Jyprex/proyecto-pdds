@@ -151,10 +151,8 @@ const WarehouseManagement = () => {
     };
 
     useEffect(() => {
-        if (entryMode === 'list') {
-            fetchWarehouses();
-        }
-    }, [entryMode]);
+        fetchWarehouses();
+    }, []);
 
     const [formData, setFormData] = useState({
         icaoCode: '',
@@ -170,6 +168,21 @@ const WarehouseManagement = () => {
     const handleInputChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
+
+        if (name === 'icaoCode' && value.length === 4) {
+            const airport = warehouses.find(w => w.icaoCode.toUpperCase() === value.toUpperCase());
+            if (airport) {
+                setFormData(prev => ({
+                    ...prev,
+                    city: airport.city || '',
+                    country: airport.country || '',
+                    continent: airport.continent || 'AMERICA',
+                    latitude: airport.latitude || '',
+                    longitude: airport.longitude || '',
+                    gmtOffset: airport.gmtOffset || ''
+                }));
+            }
+        }
     };
 
     const handleManualSubmit = (e) => {
@@ -377,15 +390,15 @@ const WarehouseManagement = () => {
                                 </div>
                                 <div>
                                     <label style={labelStyle}>CIUDAD</label>
-                                    <input type="text" name="city" value={formData.city} onChange={handleInputChange} required placeholder="Ej: Lima" style={inputStyle} />
+                                    <input type="text" name="city" required placeholder="Ej: Lima" value={formData.city} onChange={handleInputChange} style={inputStyle} readOnly />
                                 </div>
                                 <div>
                                     <label style={labelStyle}>PAÍS</label>
-                                    <input type="text" name="country" value={formData.country} onChange={handleInputChange} required placeholder="Ej: Peru" style={inputStyle} />
+                                    <input type="text" name="country" required placeholder="Ej: Peru" value={formData.country} onChange={handleInputChange} style={inputStyle} readOnly />
                                 </div>
                                 <div>
                                     <label style={labelStyle}>CONTINENTE</label>
-                                    <select name="continent" value={formData.continent} onChange={handleInputChange} style={inputStyle}>
+                                    <select name="continent" value={formData.continent} onChange={handleInputChange} style={inputStyle} disabled>
                                         <option value="AMERICA">América</option>
                                         <option value="EUROPE">Europa</option>
                                         <option value="ASIA">Asia</option>
@@ -395,15 +408,15 @@ const WarehouseManagement = () => {
                                 </div>
                                 <div>
                                     <label style={labelStyle}>LATITUD</label>
-                                    <input type="number" step="any" name="latitude" value={formData.latitude} onChange={handleInputChange} required placeholder="Ej: -12.01" style={inputStyle} />
+                                    <input type="number" step="any" name="latitude" required placeholder="Ej: -12.01" value={formData.latitude} onChange={handleInputChange} style={inputStyle} readOnly />
                                 </div>
                                 <div>
                                     <label style={labelStyle}>LONGITUD</label>
-                                    <input type="number" step="any" name="longitude" value={formData.longitude} onChange={handleInputChange} required placeholder="Ej: -77.06" style={inputStyle} />
+                                    <input type="number" step="any" name="longitude" required placeholder="Ej: -77.06" value={formData.longitude} onChange={handleInputChange} style={inputStyle} readOnly />
                                 </div>
                                 <div>
                                     <label style={labelStyle}>GMT OFFSET</label>
-                                    <input type="number" name="gmtOffset" value={formData.gmtOffset} onChange={handleInputChange} required placeholder="Ej: -5" style={inputStyle} />
+                                    <input type="number" name="gmtOffset" required placeholder="Ej: -5" value={formData.gmtOffset} onChange={handleInputChange} style={inputStyle} readOnly />
                                 </div>
 
                                 <div style={{ gridColumn: 'span 2' }}>

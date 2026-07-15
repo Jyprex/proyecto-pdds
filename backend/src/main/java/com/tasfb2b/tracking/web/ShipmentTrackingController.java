@@ -89,11 +89,7 @@ public class ShipmentTrackingController {
         return tracker != null ? tracker.getShipmentHops(codigo) : Map.of();
     }
 
-    @GetMapping("/{sessionId}/audit")
-    public List<ShipmentTracker.AuditViolation> audit(@PathVariable String sessionId) {
-        ShipmentTracker tracker = trackerRegistry.get(sessionId);
-        return tracker != null ? tracker.auditConsistency() : List.of();
-    }
+
 
     @GetMapping("/{sessionId}/codes-by-status/{status}")
     public List<String> getCodesByStatus(@PathVariable String sessionId, @PathVariable String status) {

@@ -43,17 +43,27 @@ public class SimulationWsPublisher {
     private final ConcurrentHashMap<String, Set<String>> prevIdsBySession = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, List<String>> trackedBySession = new ConcurrentHashMap<>();
 
+    private final ConcurrentHashMap<String, Long> lastPushAtBySession = new ConcurrentHashMap<>();
+
     @Scheduled(fixedDelayString = "${tasf.sim.stream.intervalMs:500}")
     public void publishAllSessions() {
+        long now = System.currentTimeMillis();
         for (String sessionId : progressHolder.getAllSessionIds()) {
             SimulationSessionState session = progressHolder.get(sessionId);
             if (session == null) continue;
 
             SimulationProgressHolder.Status status = session.getStatus();
-            boolean isRunning = status == SimulationProgressHolder.Status.RUNNING || status == SimulationProgressHolder.Status.RECONSTRUCTING;
+            boolean isRunning = status == SimulationProgressHolder.Status.RUNNING
+                    || status == SimulationProgressHolder.Status.RECONSTRUCTING;
+
             if (isRunning) {
-                // Seguimos permitiendo el polling de KPIs globales/logs
-                pushImmediate(sessionId, session);
+                // El hilo de simulación YA publica cada tick (~500ms) desde dentro
+                // de replayBlock. Este scheduler ahora es solo red de seguridad
+                // ante estancamientos (ALNS largo, catch-up, bloque inicial síncrono).
+                long lastPush = lastPushAtBySession.getOrDefault(sessionId, 0L);
+                if (now - lastPush >= 1500) {
+                    pushImmediate(sessionId, session);
+                }
                 continue;
             }
 
@@ -63,12 +73,26 @@ public class SimulationWsPublisher {
                 lastEventIdxBySession.remove(sessionId);
                 prevIdsBySession.remove(sessionId);
                 trackedBySession.remove(sessionId);
+                lastPushAtBySession.remove(sessionId);
             }
         }
     }
 
+    /** Aplica el contenido de un frame consumido al estado visible de la sesión. */
+    private void applyFrameToSession(SimulationSessionState session, SimulationProgressHolder.WsFrame frame) {
+        session.setCurrentDay(frame.currentDay());
+        session.setPercent(frame.percent());
+        session.setSimulatedTime(frame.simulatedTime());
+        session.setSlaPercent(frame.slaPercent());
+        session.setCurrentEpochTime(frame.currentEpochTime());
+        session.setAirportLoads(frame.airportLoads());
+        session.setActiveRoutes(frame.activeRoutes());
+        session.setWsFrame(frame);
+    }
+
     /** Publicación inmediata bajo demanda (Direct Push) */
     public void pushImmediate(String sessionId, SimulationSessionState session) {
+        lastPushAtBySession.put(sessionId, System.currentTimeMillis());
         long tStart = System.currentTimeMillis();
         long seq = seqBySession.merge(sessionId, 1L, Long::sum);
         int safeLimit = sanitizeLimit(routeLimit);
@@ -94,7 +118,7 @@ public class SimulationWsPublisher {
 
         long tEnd = System.currentTimeMillis();
         int routesCount = (map.getActiveRoutes() != null) ? map.getActiveRoutes().size() : 0;
-        
+
         // Log de monitoreo interno (opcional)
         // System.out.printf("[PUBLISH] snapshotTime: %s | publishDelayMs: %d | Routes: %d%n", map.getSimulatedTime(), (tEnd - tStart), routesCount);
     }
