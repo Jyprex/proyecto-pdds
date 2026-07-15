@@ -389,6 +389,19 @@ public class SimulationService {
                                 networkAdapter.invalidateGraph();
                         }
 
+                        // Aplicar actualizaciones manuales de capacidad de almacenes
+                        if (!session.getPendingCapacityUpdates().isEmpty()) {
+                                Map<String, Integer> updates = new HashMap<>(session.getPendingCapacityUpdates());
+                                session.getPendingCapacityUpdates().clear();
+                                for (Map.Entry<String, Integer> entry : updates.entrySet()) {
+                                        Aeropuerto ap = ctx.airportMap.get(entry.getKey());
+                                        if (ap != null) {
+                                                ap.setStorageCapacity(entry.getValue());
+                                                log.info("[VIVO] Capacidad de almacén {} actualizada a {} en la memoria de la simulación", entry.getKey(), entry.getValue());
+                                        }
+                                }
+                        }
+
                         long currentSimTime = ctx.currentGlobalSimTime();
                         long minutesLeftInBlock = Math.max(1, (blockEndTarget - currentSimTime) / 60_000L);
 

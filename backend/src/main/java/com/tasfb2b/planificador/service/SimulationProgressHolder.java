@@ -168,6 +168,9 @@ public class SimulationProgressHolder {
         /** Vuelos insertados en tiempo real que esperan integrarse en el próximo ciclo ALNS */
         private final List<Vuelo> pendingLiveFlights = new java.util.concurrent.CopyOnWriteArrayList<>();
 
+        /** Actualizaciones de capacidad de aeropuertos en tiempo real (ICAO -> Nueva Capacidad) */
+        private final Map<String, Integer> pendingCapacityUpdates = new ConcurrentHashMap<>();
+
         /** Snapshot del plan del bloque ACTUAL (se sobreescribe cada bloque, no solo al día).
          *  Fuente de datos para /airport-plan/{sessionId}/{icao}. */
         private volatile List<Map<String, Object>> currentMasterPlanSnapshot = new ArrayList<>();

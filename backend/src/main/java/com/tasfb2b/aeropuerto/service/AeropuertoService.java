@@ -7,6 +7,7 @@ import com.tasfb2b.aeropuerto.repository.AeropuertoRepository;
 import com.tasfb2b.shared.exception.AeropuertoNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import com.tasfb2b.planificador.service.SimulationProgressHolder;
 import com.tasfb2b.aeropuerto.util.AeropuertoParser;
 import com.tasfb2b.aeropuerto.util.ParsedAeropuerto;
 
@@ -23,6 +24,7 @@ import java.nio.file.Path;
 public class AeropuertoService {
 
     private final AeropuertoRepository repository;
+    private final SimulationProgressHolder progressHolder;
 
     public AeropuertoResponse crear(AeropuertoRequest request) {
         Aeropuerto aeropuerto = AeropuertoMapper.toEntity(request);
@@ -59,7 +61,18 @@ public class AeropuertoService {
         aeropuerto.setGmtOffset(request.gmtOffset());
         aeropuerto.setLatitude(request.latitude());
         aeropuerto.setLongitude(request.longitude());
-        return AeropuertoMapper.toResponse(repository.save(aeropuerto));
+        
+        Aeropuerto guardado = repository.save(aeropuerto);
+        
+        // Notificar a las simulaciones activas
+        for (String sid : progressHolder.getAllSessionIds()) {
+            SimulationProgressHolder.SimulationSessionState s = progressHolder.get(sid);
+            if (s != null && s.getStatus() == SimulationProgressHolder.Status.RUNNING) {
+                s.getPendingCapacityUpdates().put(guardado.getIcaoCode(), guardado.getStorageCapacity());
+            }
+        }
+        
+        return AeropuertoMapper.toResponse(guardado);
     }
 
     public void cargarDesdeArchivo(Path rutaArchivo) {
