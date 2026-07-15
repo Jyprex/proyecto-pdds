@@ -305,8 +305,8 @@ export const useControlTowerController = () => {
       let finalStartDate = startDate;
       if (isRealTime) {
         const now = new Date();
-        finalStartTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        finalStartDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        finalStartTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+        finalStartDate = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
         console.log(`[TASF.B2B] Sincronización automática: Iniciando simulación en vivo a las ${finalStartDate} ${finalStartTime}`);
       } else if (!finalStartTime) {
         finalStartTime = "00:00";
@@ -323,7 +323,7 @@ export const useControlTowerController = () => {
       setSmoothSimTime(0);
 
       // startEpoch siempre al inicio del día (00:00) para que el reloj muestre la hora correcta
-      const startEpoch = new Date(`${finalStartDate}T00:00:00`).getTime();
+      const startEpoch = new Date(`${finalStartDate}T00:00:00Z`).getTime();
       setMeta({
         status: "RUNNING",
         percent: 0,
@@ -425,7 +425,7 @@ export const useControlTowerController = () => {
     if (isReconnecting) return;
     if (activeTab === "vivo" && simState === "idle" && !sessionId) {
       const now = new Date();
-      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const today = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
       startDayToDaySimulation(today, 1, [], null, { isRealTime: true, planningHorizon: 480 });
     }
   }, [activeTab, simState, sessionId, startDayToDaySimulation]);
@@ -447,7 +447,7 @@ export const useControlTowerController = () => {
       setTargetPlaybackMinutes(totalDays);
 
       const resolvedDate = startDate || "2026-04-09";
-      const startEpoch = new Date(`${resolvedDate}T00:00:00`).getTime();
+      const startEpoch = new Date(`${resolvedDate}T00:00:00Z`).getTime();
       setMeta({
         status: "RUNNING",
         percent: 0,

@@ -377,6 +377,18 @@ public class SimulationService {
                                 ctx.maletasEntregadasAlEmpezarDia = ctx.logicalState.getMaletasEntregadas();
                         }
 
+                        // Integrar vuelos inyectados en vivo en el siguiente bloque ALNS
+                        if (!session.getPendingLiveFlights().isEmpty()) {
+                                List<Vuelo> vivos = new ArrayList<>(session.getPendingLiveFlights());
+                                session.getPendingLiveFlights().clear();
+                                for (Vuelo v : vivos) {
+                                        ctx.todosLosVuelos.add(v);
+                                        ctx.logicalState.getCapacidadVuelo().put(v.getId(), v.getCapacidadTotal());
+                                        log.info("[VIVO] Vuelo {} incorporado al estado lógico de la simulación", v.getId());
+                                }
+                                networkAdapter.invalidateGraph();
+                        }
+
                         long currentSimTime = ctx.currentGlobalSimTime();
                         long minutesLeftInBlock = Math.max(1, (blockEndTarget - currentSimTime) / 60_000L);
 
@@ -807,7 +819,13 @@ public class SimulationService {
         }
 
         public void inyectarVueloEnVivo(Vuelo vuelo) {
-                log.info("Vuelo inyectado en vivo (se incorporará en el próximo bloque): {}", vuelo.getId());
+                log.info("Vuelo inyectado en vivo (se incorporará en el próximo bloque ALNS): {}", vuelo.getId());
+                for (String sid : progressHolder.getAllSessionIds()) {
+                        SimulationProgressHolder.SimulationSessionState s = progressHolder.get(sid);
+                        if (s != null && s.getStatus() == SimulationProgressHolder.Status.RUNNING) {
+                                s.getPendingLiveFlights().add(vuelo);
+                        }
+                }
         }
 
         private Map<String, Object> createAvionMap(Vuelo v, long dep, long arr, long now, String status) {
