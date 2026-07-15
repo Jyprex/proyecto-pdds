@@ -2,6 +2,7 @@ package com.tasfb2b.planificador.service;
 
 import com.tasfb2b.planificador.domain.CollapseEndCondition;
 import com.tasfb2b.planificador.domain.SimulationDayReport;
+import com.tasfb2b.vuelo.domain.Vuelo;
 import lombok.Data;
 import org.springframework.stereotype.Component;
 import java.util.concurrent.*;
@@ -163,6 +164,9 @@ public class SimulationProgressHolder {
 
         /** Vuelos cuya cancelación se difirió al día siguiente por la regla de 1h. */
         private final Set<Long> pendingNextDayCancellations = ConcurrentHashMap.newKeySet();
+
+        /** Vuelos insertados en tiempo real que esperan integrarse en el próximo ciclo ALNS */
+        private final List<Vuelo> pendingLiveFlights = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         /** Snapshot del plan del bloque ACTUAL (se sobreescribe cada bloque, no solo al día).
          *  Fuente de datos para /airport-plan/{sessionId}/{icao}. */
