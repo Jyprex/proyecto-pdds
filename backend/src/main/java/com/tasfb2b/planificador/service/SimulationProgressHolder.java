@@ -168,6 +168,12 @@ public class SimulationProgressHolder {
         /** Vuelos insertados en tiempo real que esperan integrarse en el próximo ciclo ALNS */
         private final List<Vuelo> pendingLiveFlights = new java.util.concurrent.CopyOnWriteArrayList<>();
 
+        /** Vuelos eliminados en vivo que esperan ser removidos de la memoria de simulación */
+        private final Set<Long> pendingDeletedFlights = ConcurrentHashMap.newKeySet();
+
+        /** Flag para limpiar toda la memoria de vuelos en vivo */
+        private volatile boolean pendingClearAllFlights = false;
+
         /** Actualizaciones de capacidad de aeropuertos en tiempo real (ICAO -> Nueva Capacidad) */
         private final Map<String, Integer> pendingCapacityUpdates = new ConcurrentHashMap<>();
 

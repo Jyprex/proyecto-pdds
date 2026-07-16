@@ -253,9 +253,23 @@ public class VueloService {
             throw new RuntimeException("Vuelo no encontrado con ID: " + id);
         }
         vueloRepo.deleteById(id);
+        try {
+            if (simulationService != null) {
+                simulationService.inyectarVueloEliminadoEnVivo(id);
+            }
+        } catch (Exception e) {
+            System.err.println("Error notificando eliminación en vivo: " + e.getMessage());
+        }
     }
 
     public void eliminarTodos() {
         vueloRepo.deleteAll();
+        try {
+            if (simulationService != null) {
+                simulationService.limpiarTodosLosVuelosEnVivo();
+            }
+        } catch (Exception e) {
+            System.err.println("Error notificando limpieza de vuelos en vivo: " + e.getMessage());
+        }
     }
 }
