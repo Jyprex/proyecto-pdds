@@ -419,12 +419,40 @@ public class SimulationService {
                         ctx.lastCurrentSa = currentSa;
                         long cycleEnd = currentSimTime + currentSa * 60_000L;
 
+                        // 1. Aplicar eliminaciones masivas en vivo
+                        if (session.isPendingClearAllFlights()) {
+                                session.setPendingClearAllFlights(false);
+                                for (Vuelo v : ctx.todosLosVuelos) {
+                                        session.getPendingDeletedFlights().add(v.getId());
+                                }
+                        }
+
+                        // 2. Procesar vuelos eliminados en vivo
+                        Set<Long> eliminadosEnVivo = new HashSet<>();
+                        if (!session.getPendingDeletedFlights().isEmpty()) {
+                                eliminadosEnVivo.addAll(session.getPendingDeletedFlights());
+                                session.getPendingDeletedFlights().clear();
+                                
+                                // Remover de la memoria de vuelos RAM
+                                ctx.todosLosVuelos.removeIf(v -> eliminadosEnVivo.contains(v.getId()));
+                                // Remover capacidades lógicas asociadas
+                                for (Long vid : eliminadosEnVivo) {
+                                        ctx.logicalState.getCapacidadVuelo().remove(vid);
+                                }
+                                if (networkAdapter != null) networkAdapter.invalidateGraph();
+                                log.info("Se han eliminado de memoria {} vuelos en vivo.", eliminadosEnVivo.size());
+                        }
+
+                        // 3. Procesar cancelaciones DB + Eliminaciones en vivo
                         List<Vuelo> canceladosDb = vueloRepo.findByCancelledTrue();
-                        for (Vuelo vf : canceladosDb) {
-                                if (ctx.processedCancelledFlightIds.add(vf.getId())) {
+                        Set<Long> canceladosYeliminados = canceladosDb.stream().map(Vuelo::getId).collect(Collectors.toSet());
+                        canceladosYeliminados.addAll(eliminadosEnVivo);
+
+                        for (Long vfId : canceladosYeliminados) {
+                                if (ctx.processedCancelledFlightIds.add(vfId)) {
                                         List<Route> afectadas = ctx.inTransitRoutes.stream()
                                                 .filter(r -> r.getArrivalTime() > currentSimTime && !"cancelled".equals(r.getStatus()))
-                                                .filter(r -> r.getFlights().stream().anyMatch(f -> f.getId().equals(vf.getId())))
+                                                .filter(r -> r.getFlights().stream().anyMatch(f -> f.getId().equals(vfId)))
                                                 .toList();
                                         for (Route r : afectadas) {
                                                 r.setStatus("cancelled");
@@ -436,7 +464,7 @@ public class SimulationService {
                                                         && e.getBagIds() != null && e.getBagIds().stream().anyMatch(bagIdsAfectados::contains));
                                                 r.setCapacidadAsignada(0);
                                                 ctx.planifiablePool.put(replanLot.getId(), replanLot);
-                                                log.info("[CANCELACION] vuelo={} rescatando {} maletas", vf.getId(), bagIdsAfectados.size());
+                                                log.info("[CANCELACION/ELIMINACION] vuelo={} rescatando {} maletas", vfId, bagIdsAfectados.size());
                                         }
                                 }
                         }
@@ -837,6 +865,26 @@ public class SimulationService {
                         SimulationProgressHolder.SimulationSessionState s = progressHolder.get(sid);
                         if (s != null && s.getStatus() == SimulationProgressHolder.Status.RUNNING) {
                                 s.getPendingLiveFlights().add(vuelo);
+                        }
+                }
+        }
+
+        public void inyectarVueloEliminadoEnVivo(Long vueloId) {
+                log.info("Vuelo eliminado en vivo (se removerá en el próximo bloque ALNS): {}", vueloId);
+                for (String sid : progressHolder.getAllSessionIds()) {
+                        SimulationProgressHolder.SimulationSessionState s = progressHolder.get(sid);
+                        if (s != null && s.getStatus() == SimulationProgressHolder.Status.RUNNING) {
+                                s.getPendingDeletedFlights().add(vueloId);
+                        }
+                }
+        }
+
+        public void limpiarTodosLosVuelosEnVivo() {
+                log.info("Todos los vuelos eliminados en vivo (se removerán en el próximo bloque ALNS)");
+                for (String sid : progressHolder.getAllSessionIds()) {
+                        SimulationProgressHolder.SimulationSessionState s = progressHolder.get(sid);
+                        if (s != null && s.getStatus() == SimulationProgressHolder.Status.RUNNING) {
+                                s.setPendingClearAllFlights(true);
                         }
                 }
         }
