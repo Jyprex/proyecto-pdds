@@ -12,17 +12,19 @@ public class ShipmentState {
     //id del envío
     private final String shipmentCode;
 
-    private ShipmentStatus estado;
+    private volatile ShipmentStatus estado;
 
-    private String aeropuertoActual;
+    private volatile String aeropuertoActual;
 
-    private Long vueloActual;
+    private volatile Long vueloActual;
 
-    private String vueloInstanceActual;
+    private volatile String vueloInstanceActual;
 
     private ShipmentStatus pendingEstado;
 
     private long lastUpdateTime;
+
+    private volatile Long registeredAt;
 
     public ShipmentState(String bagId) {
         this.bagId = bagId;

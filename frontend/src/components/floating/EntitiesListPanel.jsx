@@ -85,7 +85,7 @@ function useAirportPlan(sessionId, icao) {
     if (!sessionId || !icao) return;
     setLoading(true);
     setError(null);
-    fetch(`/api/v1/simulation/airport-plan/${sessionId}/${icao}`)
+    fetch(`/api/shipments/${sessionId}/airport-plan/${icao}`)
         .then(res => { if (!res.ok) throw new Error('No se pudo cargar la planificación'); return res.json(); })
         .then(setData)
         .catch(err => setError(err))
@@ -205,9 +205,13 @@ function BagDetailModal({ title, bags, onClose }) {
 }
 
 function AirportPlanModal({ icao, data, loading, error, onClose }) {
+  const bags = data?.bags || [];
+  const origen = bags.filter(b => b.estado === 'EN_ALMACEN_ORIGEN');
+  const intermedio = bags.filter(b => b.estado === 'EN_ALMACEN_INTERMEDIO');
+
   return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
-        <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '16px', width: '440px', maxHeight: '75vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+        <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '16px', width: '460px', maxHeight: '75vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
             <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#e2e8f0' }}>📋 Planificación — {icao}</span>
             <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 14 }}>✕</button>
@@ -219,20 +223,18 @@ function AirportPlanModal({ icao, data, loading, error, onClose }) {
           {data && (
               <div style={{ overflowY: 'auto', flex: 1 }}>
                 <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '10px' }}>
-                  📥 Entrantes: <strong style={{ color: '#e2e8f0' }}>{data.totalBagsArriving}</strong> maletas ·
-                  📤 Salientes: <strong style={{ color: '#e2e8f0' }}>{data.totalBagsDeparting}</strong> maletas
-                  <br /><span style={{ fontSize: '9px', color: '#475569' }}>Click en un vuelo para ver sus maletas específicas (código origen_pedido-N)</span>
+                  Solo se muestran maletas YA registradas en este almacén — {data.totalBags} en total.
                 </div>
 
-                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#f59e0b', marginBottom: '6px' }}>📤 SALIDAS ({data.departingFlights.length})</div>
-                {data.departingFlights.length === 0
-                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic', marginBottom: '12px' }}>Sin salidas en este bloque</div>
-                    : <div style={{ marginBottom: '12px' }}>{data.departingFlights.map((f, i) => <AirportPlanFlightRow key={i} flight={f} direction="departure" />)}</div>}
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#f59e0b', marginBottom: '6px' }}>📦 EN ALMACÉN ORIGEN ({origen.length})</div>
+                {origen.length === 0
+                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic', marginBottom: '12px' }}>Sin maletas en origen</div>
+                    : <div style={{ marginBottom: '12px' }}>{origen.map(b => <AirportPlanBagRow key={b.bagId} bag={b} />)}</div>}
 
-                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#3b82f6', marginBottom: '6px' }}>📥 LLEGADAS ({data.arrivingFlights.length})</div>
-                {data.arrivingFlights.length === 0
-                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic' }}>Sin llegadas en este bloque</div>
-                    : data.arrivingFlights.map((f, i) => <AirportPlanFlightRow key={i} flight={f} direction="arrival" />)}
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#3b82f6', marginBottom: '6px' }}>🔄 EN TRÁNSITO (ESCALA) ({intermedio.length})</div>
+                {intermedio.length === 0
+                    ? <div style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic' }}>Sin maletas en escala</div>
+                    : intermedio.map(b => <AirportPlanBagRow key={b.bagId} bag={b} />)}
               </div>
           )}
         </div>
@@ -497,39 +499,32 @@ function WarehouseDetailPanel({ warehouse, incoming, outgoing, onClose, onSelect
   );
 }
 
-function AirportPlanFlightRow({ flight, direction }) {
-  const [showBags, setShowBags] = useState(false);
-  const bagIds = flight.bagIds || [];
-  const isDeparture = direction === 'departure';
+function AirportPlanBagRow({ bag }) {
+  const [expanded, setExpanded] = useState(false);
+  const hops = bag.remainingHops || [];
+  const nextHop = hops[0];
 
   return (
-      <div style={{ borderBottom: '1px dashed rgba(255,255,255,0.05)', padding: '4px 0' }}>
+      <div style={{ borderBottom: '1px dashed rgba(255,255,255,0.05)', padding: '6px 0' }}>
         <div
-            onClick={() => bagIds.length > 0 && setShowBags(v => !v)}
-            style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#9ca3af', cursor: bagIds.length > 0 ? 'pointer' : 'default' }}
+            onClick={() => hops.length > 0 && setExpanded(v => !v)}
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '10px', color: '#e2e8f0', cursor: hops.length > 0 ? 'pointer' : 'default' }}
         >
-        <span>
-          ✈ #{flight.vueloId} {isDeparture ? `→ ${flight.to}` : `← ${flight.from}`}
-          {bagIds.length > 0 && <span style={{ marginLeft: '4px', color: '#60a5fa' }}>{showBags ? '▴' : '▾'}</span>}
+        <span style={{ fontFamily: 'monospace' }}>
+          {bag.bagId}
+          {hops.length > 0 && <span style={{ marginLeft: '4px', color: '#60a5fa' }}>{expanded ? '▴' : '▾'}</span>}
         </span>
-          <span>{fmtTimeLong(isDeparture ? flight.departureTime : flight.arrivalTime)} · {flight.totalBags} maletas</span>
+          <span style={{ color: '#94a3b8' }}>
+          {nextHop ? `✈ #${nextHop.vueloId} → ${nextHop.to}` : 'Sin vuelo asignado'}
+        </span>
         </div>
-        {showBags && bagIds.length > 0 && (
-            <div style={{
-              marginTop: '4px', marginBottom: '2px', padding: '6px',
-              background: 'rgba(0,0,0,0.25)', borderRadius: '4px',
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '3px',
-              maxHeight: '140px', overflowY: 'auto',
-            }}>
-              {bagIds.map(bagId => (
-                  // bagId ya viene como "AEROPUERTO_CODPEDIDO-N" desde el backend
-                  <span key={bagId} style={{
-                    fontSize: '9px', fontFamily: 'monospace', color: '#94a3b8',
-                    padding: '2px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: '3px',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }} title={bagId}>
-              {bagId}
-            </span>
+        {expanded && hops.length > 0 && (
+            <div style={{ marginTop: '4px', marginLeft: '10px', borderLeft: '2px solid rgba(96,165,250,0.2)', paddingLeft: '8px' }}>
+              {hops.map((h, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#9ca3af', padding: '2px 0' }}>
+                    <span>{i + 1}. ✈ #{h.vueloId}: {h.from} → {h.to}</span>
+                    <span>{fmtTimeLong(h.departureTime)} → {fmtTimeLong(h.arrivalTime)}</span>
+                  </div>
               ))}
             </div>
         )}

@@ -41,6 +41,12 @@ public class ShipmentTracker {
         return byFlightInstance.getOrDefault(instanceKey, Set.of()).stream().map(bags::get).filter(Objects::nonNull).toList();
     }
 
+    private static final Set<ShipmentStatus> WAREHOUSE_VISIBLE_STATES = EnumSet.of(
+            ShipmentStatus.EN_ALMACEN_ORIGEN,
+            ShipmentStatus.EN_ALMACEN_INTERMEDIO,
+            ShipmentStatus.EN_ALMACEN_DESTINO
+    );
+
     public List<ShipmentState> getByAirport(String icao) {
         // Filtro defensivo: una maleta ENTREGADA nunca debe aparecer en la
         // trazabilidad de un almacén — ya salió físicamente de la red, por
@@ -49,7 +55,7 @@ public class ShipmentTracker {
         return byAirport.getOrDefault(icao, Set.of()).stream()
                 .map(bags::get)
                 .filter(Objects::nonNull)
-                .filter(s -> s.getEstado() != ShipmentStatus.ENTREGADO)  // ← NUEVO
+                .filter(s -> WAREHOUSE_VISIBLE_STATES.contains(s.getEstado()))
                 .toList();
     }
 
@@ -132,7 +138,9 @@ public class ShipmentTracker {
             ShipmentState s = getOrCreate(bagId);
             s.setEstado(ShipmentStatus.EN_ALMACEN_ORIGEN);
             s.setAeropuertoActual(icao);
-
+            if (s.getRegisteredAt() == null) {
+                s.setRegisteredAt(event.getTime());
+            }
             String oldInstanceKey = s.getVueloInstanceActual();
             if (oldInstanceKey != null) {
                 Set<String> set = byFlightInstance.get(oldInstanceKey);

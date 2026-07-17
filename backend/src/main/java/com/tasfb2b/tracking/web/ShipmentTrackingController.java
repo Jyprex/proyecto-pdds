@@ -4,7 +4,7 @@ import com.tasfb2b.tracking.service.ShipmentTracker;
 import com.tasfb2b.tracking.domain.ShipmentState;
 import com.tasfb2b.tracking.service.ShipmentTrackerRegistry;
 import com.tasfb2b.planificador.simulation.EventEngine;
-
+import com.tasfb2b.tracking.domain.ShipmentStatus;
 import org.springframework.web.bind.annotation.*;
 import lombok.RequiredArgsConstructor;
 
@@ -12,6 +12,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/shipments")
@@ -105,4 +107,61 @@ public class ShipmentTrackingController {
                     .collect(java.util.stream.Collectors.toList());
         } catch (IllegalArgumentException e) { return List.of(); }
     }
+
+    /** Planificación por aeropuerto — SOLO maletas YA registradas en almacén
+     *  origen/intermedio de este aeropuerto, con su cadena de hops RESTANTE
+     *  desde este punto (no el historial ya volado). El histórico completo
+     *  de cada envío sigue disponible en el panel de envíos vía getHops(). */
+    @GetMapping("/{sessionId}/airport-plan/{icao}")
+    public Map<String, Object> getAirportPlan(@PathVariable String sessionId, @PathVariable String icao) {
+        ShipmentTracker tracker = trackerRegistry.get(sessionId);
+        String icaoUpper = icao.toUpperCase();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("icao", icaoUpper);
+
+        if (tracker == null) {
+            result.put("bags", List.of());
+            result.put("totalBags", 0);
+            return result;
+        }
+
+        List<Map<String, Object>> bagsOut = new ArrayList<>();
+        for (ShipmentState s : tracker.getByAirport(icaoUpper)) {
+            // Solo origen e intermedio tienen "próximo vuelo" que mostrar.
+            if (s.getEstado() == ShipmentStatus.EN_ALMACEN_DESTINO) continue;
+
+            List<ShipmentTracker.HopInfo> allHops = tracker.getHops(s.getBagId());
+            // Recorta al primer hop cuyo ORIGEN coincide con la posición actual
+            // de la maleta — así en un almacén intermedio no se repite el
+            // tramo ya volado, solo lo que falta por delante.
+            List<ShipmentTracker.HopInfo> remaining = new ArrayList<>();
+            boolean started = false;
+            for (ShipmentTracker.HopInfo hop : allHops) {
+                if (!started && icaoUpper.equals(hop.origenIcao())) started = true;
+                if (started) remaining.add(hop);
+            }
+
+            Map<String, Object> bagOut = new LinkedHashMap<>();
+            bagOut.put("bagId", s.getBagId());
+            bagOut.put("shipmentCode", s.getShipmentCode());
+            bagOut.put("estado", s.getEstado().name());
+            bagOut.put("remainingHops", remaining.stream().map(h -> {
+                Map<String, Object> hm = new LinkedHashMap<>();
+                hm.put("vueloId", h.vueloId());
+                hm.put("from", h.origenIcao());
+                hm.put("to", h.destinoIcao());
+                hm.put("departureTime", h.departureTime());
+                hm.put("arrivalTime", h.arrivalTime());
+                return hm;
+            }).collect(Collectors.toList()));
+            bagsOut.add(bagOut);
+        }
+
+        bagsOut.sort(Comparator.comparing(b -> (String) b.get("shipmentCode")));
+
+        result.put("bags", bagsOut);
+        result.put("totalBags", bagsOut.size());
+        return result;
+    }
+
 }

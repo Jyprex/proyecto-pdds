@@ -3,11 +3,8 @@ import { apiFetch } from '../../hooks/api';
 import { useSelectionBridge } from '../../hooks/useSelectionBridge';
 import { useAirports } from '../../hooks/useAirports';
 import { AIRPORT_BY_ICAO } from '../../data/airportsData';
-
 // ── Constantes ────────────────────────────────────────────────────────────────
-
 const PAGE_SIZE = 15;
-
 const STATUS_META = {
     SIN_ASIGNAR:           { label: 'Sin asignar',       color: '#64748b', icon: '○' },
     PLANIFICADO:           { label: 'Planificado',       color: '#64748b', icon: '○' },
@@ -18,11 +15,9 @@ const STATUS_META = {
     ENTREGADO:             { label: 'Entregado',         color: '#22c55e', icon: '✓' },
     REPLANIFICACION:       { label: 'Replanificación',   color: '#ef4444', icon: '⚠' },
 };
-
 function buildGlobalCode(origenIcao, codigoPedido) {
     return `${origenIcao}_${codigoPedido}`;
 }
-
 function StatusBadge({ estado, small = false }) {
     const meta = STATUS_META[estado] || STATUS_META.SIN_ASIGNAR;
     return (
@@ -37,29 +32,24 @@ function StatusBadge({ estado, small = false }) {
     </span>
     );
 }
-
 function formatTime(ms) {
     if (!ms) return '—';
-    return new Date(ms).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    // timeZone: 'UTC' obligatorio — el backend, ALNS, tracking y el reloj
+    // del mapa operan enteramente en UTC. hour12: false para formato 24h.
+    return new Date(ms).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
 }
-
 // ── Sección: Rastreo ──────────────────────────────────────────────────────────
-
 function TrackingSection({ sessionId, airports }) {
     const { setTrackedRoute, clearTrackedRoute, dispatchMapCommand } = useSelectionBridge();
-
     const [term, setTerm]           = useState('');
     const [result, setResult]       = useState(null); // { type: 'bag'|'shipment', data }
     const [loading, setLoading]     = useState(false);
     const [error, setError]         = useState(null);
-
     const isBagSearch = useMemo(() => /[A-Z]{4}_.*-\d+$/i.test(term.trim()), [term]);
-
     const doSearch = useCallback(async () => {
         const q = term.trim();
         if (!q || !sessionId) return;
         setLoading(true); setError(null); setResult(null);
-
         try {
             if (isBagSearch) {
                 const [stRes, hRes] = await Promise.all([
@@ -88,7 +78,6 @@ function TrackingSection({ sessionId, airports }) {
             setLoading(false);
         }
     }, [term, sessionId, isBagSearch]);
-
     const activateMapRoute = (id, hops) => {
         setTrackedRoute({
             shipmentId: id,
@@ -103,21 +92,18 @@ function TrackingSection({ sessionId, airports }) {
             dispatchMapCommand('flyTo', { coordinates: [sum[0]/coords.length, sum[1]/coords.length], zoom: 3 });
         }
     };
-
     const renderHops = (hops) => hops.map((h, i) => (
         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#9ca3af', padding: '2px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <span><span style={{ color: '#64748b', marginRight: 4 }}>{i+1}.</span>✈ #{h.vueloId}: {h.origenIcao} → {h.destinoIcao}</span>
             <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{formatTime(h.departureTime)} → {formatTime(h.arrivalTime)}</span>
         </div>
     ));
-
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px' }}>
             <div style={{ fontSize: '10px', color: '#94a3b8', padding: '4px 6px', background: 'rgba(96,165,250,0.06)', borderRadius: '4px' }}>
                 Código sin guion final = envío completo · Con guion + número = maleta individual
                 (ej: <code style={{ fontSize: '10px', color: '#60a5fa' }}>UBBB_000002860</code> o <code style={{ fontSize: '10px', color: '#60a5fa' }}>UBBB_000002860-1</code>)
             </div>
-
             <div style={{ display: 'flex', gap: '4px' }}>
                 <input
                     value={term}
@@ -133,15 +119,12 @@ function TrackingSection({ sessionId, airports }) {
                     {loading ? '...' : 'Buscar'}
                 </button>
             </div>
-
             {!sessionId && (
                 <div style={{ fontSize: '10px', color: '#f59e0b', textAlign: 'center', padding: '8px' }}>
                     ⚠ Inicia una simulación para ver trazabilidad en tiempo real
                 </div>
             )}
-
             {error && <div style={{ fontSize: '10px', color: '#fca5a5' }}>{error}</div>}
-
             {result?.type === 'bag' && (
                 <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '6px', padding: '8px', border: '1px solid rgba(96,165,250,0.2)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -149,6 +132,11 @@ function TrackingSection({ sessionId, airports }) {
                         {result.state ? <StatusBadge estado={result.state.estado} /> : <span style={{ fontSize: '10px', color: '#64748b' }}>Sin estado</span>}
                     </div>
                     {result.state?.aeropuertoActual && <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '4px' }}>📍 {result.state.aeropuertoActual}</div>}
+                    {result.state?.registeredAt && (
+                        <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '4px' }}>
+                            🕐 Registrado en origen: <span style={{ color: '#cbd5e1' }}>{formatTime(result.state.registeredAt)}</span>
+                        </div>
+                    )}
                     <div style={{ fontSize: '9px', color: '#64748b', marginBottom: '4px' }}>Ruta ({result.hops.length} tramos):</div>
                     {result.hops.length > 0 ? renderHops(result.hops) : <div style={{ fontSize: '9px', color: '#64748b', fontStyle: 'italic' }}>Sin ruta comprometida.</div>}
                     <button onClick={() => { clearTrackedRoute(); setResult(null); }} style={{ marginTop: '6px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', cursor: 'pointer', width: '100%' }}>
@@ -156,7 +144,6 @@ function TrackingSection({ sessionId, airports }) {
                     </button>
                 </div>
             )}
-
             {result?.type === 'shipment' && (
                 <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '6px', padding: '8px', border: '1px solid rgba(16,185,129,0.2)', maxHeight: '300px', overflowY: 'auto' }}>
                     <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#10b981', marginBottom: '8px' }}>
@@ -183,9 +170,7 @@ function TrackingSection({ sessionId, airports }) {
         </div>
     );
 }
-
 // ── Sección: Listado con estados ──────────────────────────────────────────────
-
 const ESTADO_FILTERS = [
     { value: null,                   label: '⬜ Todos',      color: '#94a3b8' },
     { value: 'EN_ALMACEN_ORIGEN',    label: '🏭 Origen',    color: '#f59e0b' },
@@ -195,7 +180,6 @@ const ESTADO_FILTERS = [
     { value: 'ENTREGADO',            label: '✓ Recogido',   color: '#22c55e' },
     { value: 'REPLANIFICACION',      label: '⚠ Replaneando',color: '#ef4444' },
 ];
-
 function ListSection({ sessionId }) {
     const [shipments, setShipments]     = useState([]);
     const [currentPage, setCurrentPage] = useState(0);
@@ -208,7 +192,6 @@ function ListSection({ sessionId }) {
     const [statusFilter, setStatusFilter] = useState(null);
     const [filteredByStatus, setFilteredByStatus] = useState(null); // List<globalCode> | null
     const [filteredStatusData, setFilteredStatusData] = useState({});
-
     const fetchPage = useCallback(async (page = 0) => {
         setLoading(true);
         try {
@@ -224,9 +207,7 @@ function ListSection({ sessionId }) {
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
     }, [search]);
-
     useEffect(() => { fetchPage(0); }, [search]);
-
     const fetchStatus = useCallback(async (items) => {
         if (!sessionId || items.length === 0) return;
         const codes = items.map(s => buildGlobalCode(s.origenIcao, s.codigoPedido));
@@ -239,15 +220,12 @@ function ListSection({ sessionId }) {
             if (r.ok) { const d = await r.json(); setStatusByCode(prev => ({ ...prev, ...d })); }
         } catch (e) { console.error(e); }
     }, [sessionId]);
-
     useEffect(() => { if (shipments.length > 0) fetchStatus(shipments); }, [sessionId, shipments]);
-
     useEffect(() => {
         if (!sessionId || shipments.length === 0) return;
         const id = setInterval(() => fetchStatus(shipments), 5000);
         return () => clearInterval(id);
     }, [sessionId, shipments, fetchStatus]);
-
     useEffect(() => {
         if (!statusFilter || !sessionId) { setFilteredByStatus(null); return; }
         const fetch_ = async () => {
@@ -268,7 +246,6 @@ function ListSection({ sessionId }) {
         };
         fetch_();
     }, [statusFilter, sessionId]);
-
     // ── Shipments con estado van primero ────────────────────────────────────
     const sortedShipments = useMemo(() => {
         return [...shipments].sort((a, b) => {
@@ -281,7 +258,6 @@ function ListSection({ sessionId }) {
             return 0;
         });
     }, [shipments, statusByCode]);
-
     // ── Filtro por estado ────────────────────────────────────────────────────
     const displayShipments = useMemo(() => {
         if (statusFilter && filteredByStatus !== null) {
@@ -296,7 +272,6 @@ function ListSection({ sessionId }) {
         }
         return sortedShipments;
     }, [statusFilter, filteredByStatus, sortedShipments, shipments]);
-
     const toggleExpand = useCallback(async (shipment) => {
         const gc = buildGlobalCode(shipment.origenIcao, shipment.codigoPedido);
         if (expandedCode === gc) { setExpandedCode(null); return; }
@@ -311,10 +286,8 @@ function ListSection({ sessionId }) {
             } catch (e) { console.error(e); }
         }
     }, [expandedCode, hopsForCode, sessionId]);
-
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-
             {/* Búsqueda */}
             <div style={{ display: 'flex', gap: '4px' }}>
                 <input
@@ -328,7 +301,6 @@ function ListSection({ sessionId }) {
                     style={{ padding: '5px 10px', fontSize: '11px', background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer' }}
                 >↻</button>
             </div>
-
             {/* Filtros de estado — mismo diseño que EntitiesListPanel */}
             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                 {ESTADO_FILTERS.map(opt => (
@@ -349,13 +321,11 @@ function ListSection({ sessionId }) {
                     </button>
                 ))}
             </div>
-
             {!sessionId && (
                 <div style={{ fontSize: '10px', color: '#64748b', textAlign: 'center' }}>
                     Los estados aparecen durante una simulación activa
                 </div>
             )}
-
             {/* Lista */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', maxHeight: '360px', overflowY: 'auto' }}>
                 {loading && (
@@ -363,20 +333,16 @@ function ListSection({ sessionId }) {
                         Cargando...
                     </div>
                 )}
-
                 {displayShipments.map(s => {
                     const gc        = buildGlobalCode(s.origenIcao, s.codigoPedido);
                     const stateList = statusByCode[gc] || filteredStatusData[gc] || [];
                     const isExp     = expandedCode === gc;
-
                     const counts = {};
                     stateList.forEach(b => { counts[b.estado] = (counts[b.estado] || 0) + 1; });
                     const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
-
                     const hops     = hopsForCode[gc] || {};
                     const totalBags = s.cantidadMaletas || 0;
                     const bagIds   = Array.from({ length: totalBags }, (_, i) => `${gc}-${i + 1}`);
-
                     return (
                         <div key={s.id} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.04)' }}>
                             <div
@@ -393,7 +359,6 @@ function ListSection({ sessionId }) {
                   {s.cantidadMaletas} mals ›
                 </span>
                             </div>
-
                             {isExp && (
                                 <div style={{ padding: '6px 8px', borderTop: '1px solid rgba(255,255,255,0.04)', background: 'rgba(0,0,0,0.15)' }}>
                                     {bagIds.map(bagId => {
@@ -430,7 +395,6 @@ function ListSection({ sessionId }) {
                     );
                 })}
             </div>
-
             {/* Paginación */}
             {totalPages > 1 && (
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', fontSize: '11px' }}>
@@ -450,19 +414,15 @@ function ListSection({ sessionId }) {
         </div>
     );
 }
-
 // ── Sección: Gestión (Manual + TXT + Bandeja) ─────────────────────────────────
-
 function GestionSection() {
     const { airports } = useAirports();
     const [globalOrigenIcao] = useState(() => localStorage.getItem('profileAirport') || '');
     const [subTab, setSubTab] = useState('manual');
-
     const [tray, setTray] = useState(() => {
         try { return JSON.parse(localStorage.getItem('shipmentTray') || '[]'); } catch { return []; }
     });
     useEffect(() => { localStorage.setItem('shipmentTray', JSON.stringify(tray)); }, [tray]);
-
     const [form, setForm] = useState({
         idPedido: '', fecha: new Date().toLocaleDateString('en-CA'),
         hora: new Date().toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }),
@@ -472,7 +432,6 @@ function GestionSection() {
     const fileRef = useRef(null);
     const [status, setStatus] = useState({ type: '', msg: '' });
     const [uploading, setUploading] = useState(false);
-
     const addToTray = (e) => {
         e.preventDefault();
         if (!globalOrigenIcao || !form.destinoIcao) { setStatus({ type:'error', msg:'Selecciona origen y destino.' }); return; }
@@ -483,7 +442,6 @@ function GestionSection() {
         setStatus({ type:'', msg:'' });
         setForm(prev => ({ ...prev, idPedido:'', cantidadMaletas:'001', destinoIcao:'' }));
     };
-
     const uploadTray = async () => {
         if (!tray.length) return;
         setUploading(true);
@@ -498,7 +456,6 @@ function GestionSection() {
         if (fail === 0) { setStatus({ type:'success', msg:`${ok} envíos registrados.` }); setTray([]); }
         else setStatus({ type:'error', msg:`${fail} errores. ${ok} subidos.` });
     };
-
     const uploadFile = async () => {
         if (!selectedFile || !globalOrigenIcao) return;
         setUploading(true);
@@ -509,10 +466,8 @@ function GestionSection() {
         setStatus({ type: res.ok ? 'success' : 'error', msg: res.ok ? 'Archivo cargado correctamente.' : 'Error al procesar el archivo.' });
         if (res.ok) { setSelectedFile(null); if (fileRef.current) fileRef.current.value = ''; }
     };
-
     const inp = { flex:1, padding:'5px 8px', borderRadius:'4px', fontSize:'11px', background:'rgba(15,23,42,0.9)', border:'1px solid rgba(255,255,255,0.1)', color:'white', outline:'none', boxSizing:'border-box' };
     const statusColor = status.type === 'success' ? '#10b981' : status.type === 'error' ? '#ef4444' : '#38bdf8';
-
     return (
         <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
             {/* Origen */}
@@ -520,14 +475,12 @@ function GestionSection() {
                 <span style={{ color:'#38bdf8', fontWeight:'bold' }}>Aeropuerto origen: </span>
                 <span style={{ color: globalOrigenIcao ? '#f8fafc' : '#ef4444', fontWeight:'bold' }}>{globalOrigenIcao || '⚠ No definido (configure su perfil)'}</span>
             </div>
-
             {/* Sub-tabs */}
             <div style={{ display:'flex', gap:'4px' }}>
                 {[['manual','✏ Manual'],['txt','📁 TXT'],['bandeja','🗂 Bandeja']].map(([k,l]) => (
                     <button key={k} onClick={() => setSubTab(k)} style={{ flex:1, padding:'4px', fontSize:'10px', fontWeight:'bold', borderRadius:'4px', border:'none', cursor:'pointer', background: subTab===k ? '#0ea5e9' : 'rgba(255,255,255,0.05)', color: subTab===k ? '#0f172a' : '#94a3b8' }}>{l}{k==='bandeja' && tray.length>0 ? ` (${tray.length})` : ''}</button>
                 ))}
             </div>
-
             {subTab === 'manual' && globalOrigenIcao && (
                 <form onSubmit={addToTray} style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
                     <input placeholder="ID Pedido (opcional)" value={form.idPedido} onChange={e=>setForm(p=>({...p,idPedido:e.target.value}))} style={inp} />
@@ -548,7 +501,6 @@ function GestionSection() {
                     </button>
                 </form>
             )}
-
             {subTab === 'txt' && globalOrigenIcao && (
                 <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
                     <div style={{ fontSize:'10px', color:'#94a3b8' }}>Formato: <code>id_pedido-aaaammdd-hh-mm-dest-###-IdCliente</code></div>
@@ -560,7 +512,6 @@ function GestionSection() {
                     )}
                 </div>
             )}
-
             {subTab === 'bandeja' && (
                 <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
                     {tray.length === 0 ? (
@@ -586,7 +537,6 @@ function GestionSection() {
                     )}
                 </div>
             )}
-
             {status.msg && (
                 <div style={{ padding:'6px 10px', borderRadius:'4px', fontSize:'11px', background:`${statusColor}15`, color:statusColor, border:`1px solid ${statusColor}40` }}>
                     {status.msg}
@@ -595,18 +545,14 @@ function GestionSection() {
         </div>
     );
 }
-
 // ── Componente principal ──────────────────────────────────────────────────────
-
 const TABS = [
     { key: 'tracking', label: '🔍 Rastreo' },
     { key: 'list',     label: '📋 Listado' },
 ];
-
 export default function MergedShipmentPanel({ sessionId, airports, onSelectFlight, onAirportSelect }) {
     const [activeTab, setActiveTab] = useState('tracking');
     const [auditCount, setAuditCount] = useState(0);
-
     useEffect(() => {
         if (!sessionId) return;
         const check = async () => {
@@ -619,7 +565,6 @@ export default function MergedShipmentPanel({ sessionId, airports, onSelectFligh
         const id = setInterval(check, 8000);
         return () => clearInterval(id);
     }, [sessionId]);
-
     return (
         <div style={{ display:'flex', flexDirection:'column', height:'100%', color:'#e2e8f0' }}>
             {/* Tabs */}
@@ -636,7 +581,6 @@ export default function MergedShipmentPanel({ sessionId, airports, onSelectFligh
                     </div>
                 )}
             </div>
-
             {/* Contenido */}
             <div style={{ flex:1, overflowY:'auto', padding:'8px', minHeight:0 }}>
                 {activeTab === 'tracking' && <TrackingSection sessionId={sessionId} airports={airports} />}

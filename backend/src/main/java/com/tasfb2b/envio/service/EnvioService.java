@@ -193,9 +193,7 @@ public class EnvioService {
             return;
         }
 
-        String diaStr = dia.format(DateTimeFormatter.BASIC_ISO_DATE);
         java.nio.file.Path folder = java.nio.file.Path.of(dataPath);
-
         List<java.nio.file.Path> archivos = new ArrayList<>();
         try (java.nio.file.DirectoryStream<java.nio.file.Path> stream =
                      java.nio.file.Files.newDirectoryStream(folder, "_envios_*.txt")) {
@@ -204,34 +202,84 @@ public class EnvioService {
             throw new RuntimeException("Error leyendo directorio: " + folder, e);
         }
 
-        // Leer en paralelo, altamente IO/CPU bound
-        Map<String, List<String>> lineasPorArchivo = archivos.parallelStream()
-            .map(archivo -> {
-                List<String> lineasFecha = new ArrayList<>();
-                try (java.io.BufferedReader br = java.nio.file.Files.newBufferedReader(archivo)) {
-                    String linea;
-                    while ((linea = br.readLine()) != null) {
-                        int guion = linea.indexOf('-');
-                        if (guion < 0 || linea.length() <= guion + 8) continue;
-                        // Usar regionMatches es más rápido que substring() y no crea nuevos objetos String
-                        if (linea.regionMatches(guion + 1, diaStr, 0, 8)) {
-                            lineasFecha.add(linea);
-                        }
-                    }
-                } catch (Exception e) {
-                    log.error("Error leyendo archivo {}", archivo, e);
-                }
-                return Map.entry(archivo.getFileName().toString(), lineasFecha);
-            })
-            .filter(entry -> !entry.getValue().isEmpty())
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        Map<String, Aeropuerto> aeropuertoCache = aeropuertoRepo.findAll()
+                .stream()
+                .collect(Collectors.toMap(Aeropuerto::getIcaoCode, a -> a));
 
-        // Insertar secuencialmente para evitar bloqueos concurrentes en la DB H2
-        for (Map.Entry<String, List<String>> entry : lineasPorArchivo.entrySet()) {
-            cargarDesdeLineasArchivo(entry.getKey(), entry.getValue());
+        // Leer en paralelo, altamente IO/CPU bound. Ya NO filtramos por el
+        // string crudo del archivo (aaaammdd local) — ese filtro asumía que
+        // fecha local == fecha UTC, lo cual es FALSO para cualquier aeropuerto
+        // con offset GMT != 0 y horas cercanas a medianoche. Ahora parseamos y
+        // convertimos CADA línea a UTC primero, y filtramos por el resultado
+        // real. Sin esto, líneas cuya conversión cruza medianoche (ej. fecha
+        // local 02/03 00:26 con offset -5 -> UTC 01/03 05:26) se perdían
+        // silenciosamente: no calificaban para el día que el texto decía, ni
+        // para el día anterior (porque ese día ya se había cargado y marcado
+        // como completo antes de que esta línea llegara).
+        for (java.nio.file.Path archivo : archivos) {
+            String origenIcao = NombreArchivoParser.extraerIcao(archivo.getFileName().toString());
+            Aeropuerto origen = aeropuertoCache.get(origenIcao);
+            if (origen == null) {
+                log.error("[EnvioService] Origen no registrado, se omite: {}", archivo.getFileName());
+                continue;
+            }
+
+            Set<String> existentes = envioRepo.findCodigosByOrigenIcao(origenIcao);
+            Set<String> seenInBatch = new HashSet<>();
+            List<Envio> batch = new ArrayList<>(BATCH_SIZE);
+
+            try (java.io.BufferedReader br = java.nio.file.Files.newBufferedReader(archivo)) {
+                String linea;
+                while ((linea = br.readLine()) != null) {
+                    ParsedEnvio parsed;
+                    try {
+                        parsed = EnvioParser.parse(linea);
+                    } catch (Exception e) {
+                        continue;
+                    }
+                    if (parsed == null) continue;
+
+                    String codigo = parsed.codigo();
+                    if (existentes.contains(codigo) || !seenInBatch.add(codigo)) continue;
+
+                    Aeropuerto destino = aeropuertoCache.get(parsed.destinoIcao());
+                    if (destino == null) continue;
+
+                    LocalDateTime localDT = LocalDateTime.of(
+                            LocalDate.parse(parsed.fecha(), DateTimeFormatter.BASIC_ISO_DATE),
+                            LocalTime.parse(parsed.hora())
+                    );
+                    java.time.ZonedDateTime utcDT = localDT.atZone(java.time.ZoneId.ofOffset("GMT",
+                            java.time.ZoneOffset.ofHours(origen.getGmtOffset()))).withZoneSameInstant(java.time.ZoneOffset.UTC);
+
+                    // ← Filtro correcto: por la fecha UTC REAL, no por el texto crudo.
+                    if (!utcDT.toLocalDate().equals(dia)) continue;
+
+                    batch.add(Envio.builder()
+                            .codigoPedido(codigo)
+                            .fecha(utcDT.toLocalDate())
+                            .hora(utcDT.toLocalTime())
+                            .origen(origen)
+                            .destino(destino)
+                            .cantidadMaletas(parsed.cantidad())
+                            .clienteId(parsed.cliente())
+                            .build());
+
+                    if (batch.size() == BATCH_SIZE) {
+                        envioRepo.saveAll(batch);
+                        batch.clear();
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Error leyendo archivo {}", archivo, e);
+            }
+
+            if (!batch.isEmpty()) {
+                envioRepo.saveAll(batch);
+            }
         }
 
-        log.info("[Memoria] Cargados envíos del día {} a H2 (Multi-hilo)", dia);
+        log.info("[Memoria] Cargados envíos del día {} a H2 (filtrado por fecha UTC real)", dia);
     }
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
