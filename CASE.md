@@ -41,3 +41,4 @@ el de la simulación del periodo que debe tomar en ejecutarse entre 30 y 90 minu
 - Los dos algoritmos de la experimentación numérica deben ser del tipo metaheurísticos.
 - Usar colores de semáforo (verde, ámbar y rojo) en lo que se requiera y los rangos serán parámetros.
 - Se evalúa el proceso seguido utilizando NTP-ISO/IEC 29110-5-1-2 (VSE)
+- hola
