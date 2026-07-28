@@ -54,7 +54,7 @@ export const useControlTowerController = () => {
   const [isScenarioConfigOpen, setIsScenarioConfigOpen] = useState(false);
   const [selectedAlgorithm, setSelectedAlgorithm] = useState("alns");
   const [simState, setSimState] = useState("idle");
-  const [targetPlaybackMinutes, setTargetPlaybackMinutes] = useState(30);
+  const [targetPlaybackMinutes, setTargetPlaybackMinutes] = useState(5);
   const [cancelledFlights, setCancelledFlights] = useState([]);
   const [finalMasterPlan, setFinalMasterPlan] = useState([]);
 
@@ -155,11 +155,11 @@ export const useControlTowerController = () => {
     return () => clearInterval(interval);
   }, [simState]);
 
-// Interpolación ACOTADA por RAF: suaviza SOLO entre el frame anterior y el
-// actual recibidos del backend — nunca extrapola más allá del último dato
-// real (a diferencia del sistema viejo, que asumía una duración total fija
-// y podía "adelantarse" al backend). Esto es lo que da fluidez sin volver
-// a introducir el freeze de 30s.
+  // Interpolación ACOTADA por RAF: suaviza SOLO entre el frame anterior y el
+  // actual recibidos del backend — nunca extrapola más allá del último dato
+  // real (a diferencia del sistema viejo, que asumía una duración total fija
+  // y podía "adelantarse" al backend). Esto es lo que da fluidez sin volver
+  // a introducir el freeze de 30s.
   useEffect(() => {
     let raf;
     const tick = () => {
@@ -168,8 +168,8 @@ export const useControlTowerController = () => {
         if (anim.targetReceivedAt > 0) {
           const now = performance.now();
           const t = anim.interval > 0
-              ? Math.min(1, (now - anim.targetReceivedAt) / anim.interval)
-              : 1;
+            ? Math.min(1, (now - anim.targetReceivedAt) / anim.interval)
+            : 1;
           const displayEpoch = anim.prevEpoch + (anim.targetEpoch - anim.prevEpoch) * t;
           if (displayEpoch !== smoothSimTimeRef.current) {
             smoothSimTimeRef.current = displayEpoch;
@@ -644,14 +644,14 @@ export const useControlTowerController = () => {
           // con los valores viejos), no el último target crudo — así la
           // transición al nuevo dato siempre es continua.
           const currentDisplay = anim.targetReceivedAt > 0
-              ? anim.prevEpoch + (anim.targetEpoch - anim.prevEpoch) *
-              Math.min(1, (now - anim.targetReceivedAt) / anim.interval)
-              : f.epoch;
+            ? anim.prevEpoch + (anim.targetEpoch - anim.prevEpoch) *
+            Math.min(1, (now - anim.targetReceivedAt) / anim.interval)
+            : f.epoch;
 
           anim.prevEpoch = currentDisplay;
           anim.interval = anim.targetReceivedAt > 0
-              ? Math.min(2000, Math.max(150, now - anim.targetReceivedAt))
-              : 500;
+            ? Math.min(2000, Math.max(150, now - anim.targetReceivedAt))
+            : 500;
           anim.targetEpoch = f.epoch;
           anim.targetReceivedAt = now;
 

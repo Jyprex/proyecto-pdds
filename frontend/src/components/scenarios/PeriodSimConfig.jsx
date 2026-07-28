@@ -6,7 +6,7 @@ const MONTHS = [
   "Enero","Febrero","Marzo","Abril","Mayo","Junio",
   "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
 ];
-const YEARS = [2026, 2027, 2028, 2029];
+const YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
 const MAX_DIAS = 10;
 const DIAS_SIMULACION = 5;   // Siempre 5 días — valor académico fijo
 const CAPACIDAD_AVIONES_DIA = 946_000;
